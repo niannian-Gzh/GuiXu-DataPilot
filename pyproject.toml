@@ -1,0 +1,27 @@
+[project]
+name = "datapilot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "关梓鹤", email = "3401835026@qq.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.5.5",
+    "openai>=3.11.0",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.5",
+    "python-dotenv>=1.2.3",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+datapilot = "datapilot:main"
+
+[build-system]
+requires = ["uv_build>=0.12.12,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = false
