@@ -11,6 +11,7 @@ from delete_op import (
     BULK_THRESHOLD,
 )
 from create_op import execute_create, format_create_confirm
+from update_op import execute_update, format_update_confirm
 
 
 def handle_pending(session, question, trace, db_path, real_table) -> bool:
@@ -38,6 +39,19 @@ def handle_pending(session, question, trace, db_path, real_table) -> bool:
             print(f"\n[回答]\n请回复「确认」执行新增，或「取消」放弃。\n")
         return True
 
+    # ============ UPDATE 分支 ============
+    if pending.get("type") == "update":
+        if is_confirm(question):
+            execute_update(
+                pending["record"], pending["updates"], db_path, real_table,
+                pending["trace_id"], pending["user_input"],
+            )
+            session.clear_pending()
+            print(f"\n[回答]\n已修改项目「{pending['record']['project_name']}」。\n")
+        else:
+            print(f"\n[回答]\n请回复「确认」执行修改，或「取消」放弃。\n")
+        return True
+
     # ============ DELETE 分支（原有逻辑） ============
     n = len(pending["candidates"])
     if n <= BULK_THRESHOLD:
@@ -55,6 +69,8 @@ def handle_pending(session, question, trace, db_path, real_table) -> bool:
     else:
         print(f"\n[回答]\n确认未通过。请重新输入正确的确认信息，或回复「取消」。\n")
     return True
+
+
 
 
 def main():
@@ -87,7 +103,6 @@ def main():
             answer = run_agent(question, session, llm, db_path, cfg["table_name"], trace)
             print(f"\n[回答]\n{answer}\n")
         except UserInputRequired as e:
-            # 工具请求用户确认
             pending = e.pending_action
             session.set_pending(pending)
 
@@ -96,6 +111,8 @@ def main():
                 msg += "\n\n" + delete_confirm_prompt(pending["candidates"])
             elif pending["type"] == "create":
                 msg = format_create_confirm(pending["record"])
+            elif pending["type"] == "update":
+                msg = format_update_confirm(pending["record"], pending["updates"])
             else:
                 msg = "需要用户确认"
             print(f"\n[回答]\n{msg}\n")

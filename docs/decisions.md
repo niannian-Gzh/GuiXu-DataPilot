@@ -345,3 +345,36 @@ project_name 已存在（未删除）时，拒绝新增。
 2. **新增记录的类型**
    - is_submitted 默认 True（新增默认"已提交"）
    - 其他布尔字段默认 False
+
+
+## 修改功能实现（2026-09-11）
+
+### 设计
+- 新增 request_update 工具
+- 参数：keyword（定位记录）+ updates（要改的字段）
+- 只允许单条匹配（多条时拒绝，让用户明确指定）
+
+### 状态联动（关键）
+改 status_raw 时，自动重算五个布尔字段：
+is_pending / is_submitted / is_rejected / is_settled / is_certified
+
+否则会出现"status_raw 说已下证，但 is_certified 还是 false"的数据不一致。
+
+### 禁止修改的字段
+is_deleted / deleted_at / deleted_by / delete_trace_id
+（系统字段，不允许通过工具改）
+
+### 验证
+- 单条修改：owner 从"关梓鹤"改成"李四" ✅
+- 状态联动：status_raw 改成"已结算"，is_rejected 从 True 变 False ✅
+- 信息不全：模型追问"改什么" ✅
+- 审计日志：action: update ✅
+- 评测：15/15 ✅
+
+### CRUD 完成
+| 操作 | 工具 | 状态 |
+|---|---|---|
+| Create | request_create | ✅ |
+| Read | query_database | ✅ |
+| Update | request_update | ✅ |
+| Delete | request_delete | ✅ |
