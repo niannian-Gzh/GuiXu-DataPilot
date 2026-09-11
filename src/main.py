@@ -11,7 +11,10 @@ from delete_op import (
     BULK_THRESHOLD,
 )
 from update_op import execute_update, format_update_confirm
-from create_op import execute_create, format_create_confirm
+from create_op import (
+    execute_create, format_create_confirm,
+    execute_batch_create, format_batch_create_confirm,
+)
 
 
 def handle_pending(session, question, trace, db_path, real_table) -> bool:
@@ -39,6 +42,28 @@ def handle_pending(session, question, trace, db_path, real_table) -> bool:
             print(f"\n[回答]\n请回复「确认」执行新增，或「取消」放弃。\n")
         return True
 
+    # ============ BATCH_CREATE 分支 ============
+    if pending.get("type") == "batch_create":
+        n = len(pending["records"])
+        if n <= BULK_THRESHOLD:
+            valid = is_confirm(question)
+        else:
+            valid = is_bulk_confirm(question, n)
+
+        if valid:
+            count = execute_batch_create(
+                pending["records"], db_path, real_table,
+                pending["trace_id"], pending["user_input"],
+            )
+            session.clear_pending()
+            print(f"\n[回答]\n已新增 {count} 条记录。\n")
+        elif is_cancel(question):
+            session.clear_pending()
+            print(f"\n[回答]\n已取消新增操作。\n")
+        else:
+            print(f"\n[回答]\n确认未通过。请重新输入正确的确认信息，或回复「取消」。\n")
+        return True
+    
     # ============ UPDATE 分支 ============
     if pending.get("type") == "update":
         n = len(pending["candidates"])
@@ -120,6 +145,8 @@ def main():
                 msg += "\n\n" + delete_confirm_prompt(pending["candidates"])
             elif pending["type"] == "create":
                 msg = format_create_confirm(pending["record"])
+            elif pending["type"] == "batch_create":
+                msg = format_batch_create_confirm(pending["records"])
             elif pending["type"] == "update":
                 msg = format_update_confirm(pending["candidates"], pending["updates"])
             else:

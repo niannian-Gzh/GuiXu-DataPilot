@@ -35,7 +35,7 @@ TOOL_SCHEMAS = [
             },
         },
     },
-        {
+    {
         "type": "function",
         "function": {
             "name": "request_delete",
@@ -56,7 +56,7 @@ TOOL_SCHEMAS = [
             },
         },
     },
-        {
+    {
         "type": "function",
         "function": {
             "name": "request_create",
@@ -79,7 +79,39 @@ TOOL_SCHEMAS = [
             },
         },
     },
-        {
+    {
+        "type": "function",
+        "function": {
+            "name": "request_batch_create",
+            "description": (
+                "请求批量新增项目记录。当用户一次要求新增多条记录时使用。"
+                "系统会校验所有记录（必填字段、分类合法性、内部重复、数据库重复），"
+                "任何一条不通过则全部拒绝。校验通过后请求用户确认。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "records": {
+                        "type": "array",
+                        "description": "要新增的记录列表",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "project_name": {"type": "string", "description": "项目名称"},
+                                "owner": {"type": "string", "description": "负责人姓名"},
+                                "category": {"type": "string", "description": "分类，web 或 嵌入式"},
+                                "status_raw": {"type": "string", "description": "状态，默认'已提交'"},
+                                "issued_date": {"type": "string", "description": "下发时间 YYYY-MM-DD，默认今天"},
+                            },
+                            "required": ["project_name", "owner", "category"],
+                        },
+                    },
+                },
+                "required": ["records"],
+            },
+        },
+    },
+    {
         "type": "function",
         "function": {
             "name": "request_update",
@@ -234,12 +266,83 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
             pending_action=pending,
         )
 
+    def request_batch_create(records: list) -> str:
+        if not records:
+            return json.dumps({"error": "records 不能为空"}, ensure_ascii=False)
+
+        # 校验每条
+        errors = []
+        for i, r in enumerate(records, 1):
+            if not r.get("project_name"):
+                errors.append(f"第{i}条：缺少项目名")
+            if not r.get("owner"):
+                errors.append(f"第{i}条：缺少负责人")
+            if r.get("category") not in ("web", "嵌入式"):
+                errors.append(f"第{i}条：分类必须是 web 或 嵌入式，收到：{r.get('category')}")
+
+        if errors:
+            return json.dumps({"error": "；".join(errors)}, ensure_ascii=False)
+
+        # 内部重复检查
+        names = [r["project_name"] for r in records]
+        if len(names) != len(set(names)):
+            return json.dumps(
+                {"error": "本次新增的记录中存在重复的项目名"},
+                ensure_ascii=False,
+            )
+
+        # 数据库重复检查
+        con = duckdb.connect(db_path)
+        placeholders = ",".join(["?"] * len(names))
+        existing = con.execute(
+            f"SELECT project_name FROM {real_table} "
+            f"WHERE project_name IN ({placeholders}) AND is_deleted = false",
+            names,
+        ).fetchall()
+        con.close()
+
+        if existing:
+            existing_names = [e[0] for e in existing]
+            return json.dumps(
+                {"error": f"以下项目已存在，不能重复新增：{existing_names}"},
+                ensure_ascii=False,
+            )
+
+        # 构造完整记录
+        full_records = []
+        for r in records:
+            full_records.append({
+                "project_name": r["project_name"],
+                "owner": r["owner"],
+                "category": r["category"],
+                "status_raw": r.get("status_raw", "已提交"),
+                "issued_date": r.get("issued_date") or date.today().isoformat(),
+                "certified_date": None,
+                "resubmit_name": None,
+                "reject_date": None,
+                "resubmit_date": None,
+                "reject_count": 0,
+            })
+
+        pending = {
+            "type": "batch_create",
+            "stage": "confirm",
+            "records": full_records,
+            "user_input": trace.data["question"],
+            "trace_id": trace.id,
+        }
+        raise UserInputRequired(
+            question=f"待新增 {len(records)} 条，等待用户确认",
+            pending_action=pending,
+        )
+
 
     return {
         "query_database": query_database,
         "request_delete": request_delete,
         "request_create": request_create,
         "request_update": request_update,
+        "request_batch_create": request_batch_create,
     }
 
 
