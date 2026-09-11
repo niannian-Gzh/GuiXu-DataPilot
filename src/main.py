@@ -10,6 +10,7 @@ from delete_op import (
     is_confirm, is_cancel, is_bulk_confirm, execute_delete,
     BULK_THRESHOLD,
 )
+from create_op import execute_create, format_create_confirm
 
 
 def handle_pending(session, question, trace, db_path, real_table) -> bool:
@@ -18,11 +19,26 @@ def handle_pending(session, question, trace, db_path, real_table) -> bool:
     if not pending:
         return False
 
+    # 通用：取消
     if is_cancel(question):
         session.clear_pending()
-        print(f"\n[回答]\n已取消删除操作。\n")
+        print(f"\n[回答]\n已取消操作。\n")
         return True
 
+    # ============ CREATE 分支 ============
+    if pending.get("type") == "create":
+        if is_confirm(question):
+            execute_create(
+                pending["record"], db_path, real_table,
+                pending["trace_id"], pending["user_input"],
+            )
+            session.clear_pending()
+            print(f"\n[回答]\n已新增项目「{pending['record']['project_name']}」。\n")
+        else:
+            print(f"\n[回答]\n请回复「确认」执行新增，或「取消」放弃。\n")
+        return True
+
+    # ============ DELETE 分支（原有逻辑） ============
     n = len(pending["candidates"])
     if n <= BULK_THRESHOLD:
         valid = is_confirm(question)
@@ -75,8 +91,13 @@ def main():
             pending = e.pending_action
             session.set_pending(pending)
 
-            msg = format_candidates(pending["candidates"])
-            msg += "\n\n" + delete_confirm_prompt(pending["candidates"])
+            if pending["type"] == "delete":
+                msg = format_candidates(pending["candidates"])
+                msg += "\n\n" + delete_confirm_prompt(pending["candidates"])
+            elif pending["type"] == "create":
+                msg = format_create_confirm(pending["record"])
+            else:
+                msg = "需要用户确认"
             print(f"\n[回答]\n{msg}\n")
         except Exception as e:
             trace.set("error", str(e))

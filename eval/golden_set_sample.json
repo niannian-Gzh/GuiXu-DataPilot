@@ -1,0 +1,12 @@
+[
+  {"id": 1, "question": "已下证的项目有几个", "expected_answer_contains": ["2"]},
+  {"id": 2, "question": "已结算的项目有几个", "expected_answer_contains": ["6"]},
+  {"id": 3, "question": "被打回的项目有哪些", "expected_rows": 3},
+  {"id": 4, "question": "张三负责的项目有几个", "expected_answer_contains": ["3"]},
+  {"id": 5, "question": "打回次数最多的项目是哪个", "expected_answer_contains": ["数据分析可视化平台"]},
+  {"id": 6, "question": "待提交的项目有几个", "expected_answer_contains": ["1"]},
+  {"id": 7, "question": "打回次数大于等于2的项目有哪些", "expected_rows": 1},
+  {"id": 8, "question": "web类的项目有几个", "expected_answer_contains": ["6"]},
+  {"id": 9, "question": "嵌入式类的项目有几个", "expected_answer_contains": ["2"]},
+  {"id": 10, "question": "不存在的人的项目有哪些", "expected_rows": 0}
+]

@@ -1,13 +1,12 @@
 import sys
 import json
 from pathlib import Path
-from config import load_config, resolve
-
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from config import load_config, resolve
 from llm import LLM
-from nl2sql import load_config, get_schema, generate_sql_with_retry
+from nl2sql import get_schema, generate_sql_with_retry
 from execute import execute_sql
 
 
@@ -32,6 +31,8 @@ def run():
     schema = get_schema(db_path, cfg["table_name"])
 
     golden_path = Path(__file__).parent / "golden_set.json"
+    if not golden_path.exists():
+        golden_path = Path(__file__).parent / "golden_set_sample.json"
     with open(golden_path, "r", encoding="utf-8") as f:
         golden = json.load(f)
 

@@ -1,0 +1,10 @@
+[
+  {"id": 1, "question": "已下证的项目有几个", "expected_answer_contains": ["2"]},
+  {"id": 2, "question": "张三负责的项目有几个", "expected_answer_contains": ["3"]},
+  {"id": 3, "question": "被打回的项目有哪些", "expected_answer_contains_any": ["3", "三个", "数据分析", "移动端考勤", "环境监测"]},
+  {"id": 4, "question": "打回次数最多的项目是哪个", "expected_answer_contains": ["数据分析可视化平台"]},
+  {"id": 5, "question": "待提交的项目有几个", "expected_answer_contains": ["1"]},
+  {"id": 6, "question": "web类的项目有几个", "expected_answer_contains": ["6"]},
+  {"id": 7, "question": "打回次数超过2次的项目有哪些", "expected_answer_contains_any": ["0", "没有", "不存在", "未找到", "无"]},
+  {"id": 8, "question": "李四负责的项目有哪些", "expected_answer_contains_any": ["3", "三个", "数据分析", "移动端考勤", "智能仓储"]}
+]

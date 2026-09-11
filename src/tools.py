@@ -1,9 +1,11 @@
 import json
+import duckdb
 from nl2sql import get_schema, generate_sql_with_retry
 from execute import execute_sql
 from summarize import summarize
 from guard import SecurityError
 from delete_op import find_candidates
+from datetime import date
 
 
 class UserInputRequired(Exception):
@@ -53,6 +55,29 @@ TOOL_SCHEMAS = [
             },
         },
     },
+        {
+        "type": "function",
+        "function": {
+            "name": "request_create",
+            "description": (
+                "请求新增一条项目记录。需要提供项目名（project_name）、"
+                "负责人（owner）、分类（category）。其他字段可选。"
+                "系统会校验必填字段、检查重复，然后请求用户确认。"
+                "注意：只有当用户明确要求新增时才调用此工具。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_name": {"type": "string", "description": "项目名称"},
+                    "owner": {"type": "string", "description": "负责人姓名"},
+                    "category": {"type": "string", "description": "分类，web 或 嵌入式"},
+                    "status_raw": {"type": "string", "description": "状态，默认'已提交'"},
+                    "issued_date": {"type": "string", "description": "下发时间，格式 YYYY-MM-DD，默认今天"},
+                },
+                "required": ["project_name", "owner", "category"],
+            },
+        },
+    },
 ]
 
 
@@ -83,7 +108,6 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
                 {"status": "not_found", "message": "没有找到匹配的记录"},
                 ensure_ascii=False,
             )
-
         pending = {
             "type": "delete",
             "stage": "confirm",
@@ -96,9 +120,57 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
             pending_action=pending,
         )
 
+    def request_create(project_name: str, owner: str, category: str,
+                       status_raw: str = "已提交", issued_date: str = None):
+        if category not in ("web", "嵌入式"):
+            return json.dumps(
+                {"error": f"分类必须是 web 或 嵌入式，收到：{category}"},
+                ensure_ascii=False,
+            )
+
+        con = duckdb.connect(db_path)
+        exists = con.execute(
+            f"SELECT COUNT(*) FROM {real_table} "
+            f"WHERE project_name = ? AND is_deleted = false",
+            [project_name],
+        ).fetchone()[0]
+        con.close()
+
+        if exists > 0:
+            return json.dumps(
+                {"error": f"项目「{project_name}」已存在，不能重复新增"},
+                ensure_ascii=False,
+            )
+
+        new_record = {
+            "project_name": project_name,
+            "owner": owner,
+            "category": category,
+            "status_raw": status_raw,
+            "issued_date": issued_date or date.today().isoformat(),
+            "certified_date": None,
+            "resubmit_name": None,
+            "reject_date": None,
+            "resubmit_date": None,
+            "reject_count": 0,
+        }
+
+        pending = {
+            "type": "create",
+            "stage": "confirm",
+            "record": new_record,
+            "user_input": trace.data["question"],
+            "trace_id": trace.id,
+        }
+        raise UserInputRequired(
+            question=f"等待用户确认新增项目「{project_name}」",
+            pending_action=pending,
+        )
+
     return {
         "query_database": query_database,
         "request_delete": request_delete,
+        "request_create": request_create,
     }
 
 
