@@ -10,22 +10,15 @@ CONFIRM_WORDS = {"确认", "确定", "是", "对", "好", "可以", "删", "删�
 CANCEL_WORDS = {"取消", "不", "不要", "算了", "放弃", "no", "n", "cancel"}
 
 
-def find_candidates(keyword: str, db_path: str, real_table: str) -> list:
-    """模糊匹配 project_name。keyword 为空则匹配全部未删除记录。"""
-    con = duckdb.connect(db_path)
-    if keyword:
-        rows = con.execute(
-            f"SELECT project_name, owner, status_raw FROM {real_table} "
-            f"WHERE is_deleted = false AND project_name LIKE ?",
-            [f"%{keyword}%"],
-        ).fetchall()
-    else:
-        rows = con.execute(
-            f"SELECT project_name, owner, status_raw FROM {real_table} "
-            f"WHERE is_deleted = false"
-        ).fetchall()
-    con.close()
-    return [{"project_name": r[0], "owner": r[1], "status_raw": r[2]} for r in rows]
+from nl2sql import generate_filter_sql
+from execute import execute_sql
+
+
+def find_candidates(filter_question: str, llm, schema: str, db_path: str, table_name: str) -> list:
+    """用自然语言筛选条件查找候选记录。返回 dict 列表。"""
+    sql = generate_filter_sql(filter_question, llm, schema, table_name)
+    df = execute_sql(sql, db_path)
+    return df.to_dict("records")
 
 
 def format_candidates(candidates: list) -> str:

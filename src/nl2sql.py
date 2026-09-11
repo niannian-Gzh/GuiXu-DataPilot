@@ -132,3 +132,31 @@ if __name__ == "__main__":
     print(f"问题：{question}")
     print(f"SQL：{sql}")
     print(f"重试：{retries} 次")
+
+
+FILTER_SYSTEM_PROMPT = """你是筛选助手。用户用自然语言描述筛选条件，你需要生成SQL。
+
+表名：{table_name}
+
+表结构：
+{schema}
+
+规则：
+1. 只返回SQL语句本身，不要解释、不要markdown代码块、不要结尾分号
+2. 必须用 SELECT * （返回完整记录）
+3. 不能用 COUNT/SUM/AVG 等聚合函数
+4. 严格使用下面提供的列名，不要臆造
+5. 只生成 SELECT 查询
+6. 如果用户说"全部"或类似，就不要加 WHERE 条件
+
+当前日期：{today}"""
+
+
+def generate_filter_sql(filter_question: str, llm: LLM, schema: str, table_name: str) -> str:
+    """生成筛选 SQL，返回所有匹配记录的完整内容。"""
+    system = FILTER_SYSTEM_PROMPT.format(
+        table_name=table_name,
+        schema=schema,
+        today=date.today().isoformat(),
+    )
+    return _clean_sql(llm.chat(system, filter_question))

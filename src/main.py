@@ -10,8 +10,8 @@ from delete_op import (
     is_confirm, is_cancel, is_bulk_confirm, execute_delete,
     BULK_THRESHOLD,
 )
-from create_op import execute_create, format_create_confirm
 from update_op import execute_update, format_update_confirm
+from create_op import execute_create, format_create_confirm
 
 
 def handle_pending(session, question, trace, db_path, real_table) -> bool:
@@ -41,15 +41,24 @@ def handle_pending(session, question, trace, db_path, real_table) -> bool:
 
     # ============ UPDATE 分支 ============
     if pending.get("type") == "update":
-        if is_confirm(question):
-            execute_update(
-                pending["record"], pending["updates"], db_path, real_table,
+        n = len(pending["candidates"])
+        if n <= BULK_THRESHOLD:
+            valid = is_confirm(question)
+        else:
+            valid = is_bulk_confirm(question, n)
+
+        if valid:
+            count = execute_update(
+                pending["candidates"], pending["updates"], db_path, real_table,
                 pending["trace_id"], pending["user_input"],
             )
             session.clear_pending()
-            print(f"\n[回答]\n已修改项目「{pending['record']['project_name']}」。\n")
+            print(f"\n[回答]\n已修改 {count} 条记录。\n")
+        elif is_cancel(question):
+            session.clear_pending()
+            print(f"\n[回答]\n已取消修改操作。\n")
         else:
-            print(f"\n[回答]\n请回复「确认」执行修改，或「取消」放弃。\n")
+            print(f"\n[回答]\n确认未通过。请重新输入正确的确认信息，或回复「取消」。\n")
         return True
 
     # ============ DELETE 分支（原有逻辑） ============
@@ -112,7 +121,7 @@ def main():
             elif pending["type"] == "create":
                 msg = format_create_confirm(pending["record"])
             elif pending["type"] == "update":
-                msg = format_update_confirm(pending["record"], pending["updates"])
+                msg = format_update_confirm(pending["candidates"], pending["updates"])
             else:
                 msg = "需要用户确认"
             print(f"\n[回答]\n{msg}\n")

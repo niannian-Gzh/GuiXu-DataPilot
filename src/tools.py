@@ -1,6 +1,6 @@
 import json
 import duckdb
-from nl2sql import get_schema, generate_sql_with_retry
+from nl2sql import get_schema, generate_sql_with_retry, SCHEMA_DESC
 from execute import execute_sql
 from summarize import summarize
 from guard import SecurityError
@@ -35,24 +35,24 @@ TOOL_SCHEMAS = [
             },
         },
     },
-    {
+        {
         "type": "function",
         "function": {
             "name": "request_delete",
             "description": (
-                "请求删除符合关键词的项目记录。系统会搜索匹配记录并向用户展示候选、"
-                "请求确认。调用此工具后，操作会暂停等待用户确认。"
-                "注意：只有当用户明确要求删除时才调用此工具。"
+                "请求删除符合条件的项目记录。用户可以用自然语言描述筛选条件"
+                "（如'家装项目'、'所有 web 类项目'、'所有项目'）。"
+                "系统会搜索匹配记录、展示候选、请求确认。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "keyword": {
+                    "filter_question": {
                         "type": "string",
-                        "description": "项目名关键词。删除全部时传空字符串。",
+                        "description": "自然语言筛选条件。删除全部时传'所有项目'。",
                     },
                 },
-                "required": ["keyword"],
+                "required": ["filter_question"],
             },
         },
     },
@@ -84,28 +84,23 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "request_update",
             "description": (
-                "请求修改一条项目记录。需要提供 keyword 定位记录，"
-                "以及 updates 指明要改哪些字段和值。"
-                "系统会校验字段、展示改前改后对比，请求用户确认。"
-                "注意：只能修改唯一匹配的记录。如果匹配到多条，工具会返回错误，"
-                "你需要追问用户具体要改哪一条。"
+                "请求修改符合条件的项目记录。用户可以用自然语言描述筛选条件。"
+                "系统会搜索匹配记录，展示改前改后对比，请求用户确认。"
+                "注意：多条匹配时会执行批量修改。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "keyword": {
+                    "filter_question": {
                         "type": "string",
-                        "description": "用于定位记录的项目名关键词",
+                        "description": "自然语言筛选条件。",
                     },
                     "updates": {
                         "type": "object",
-                        "description": (
-                            "要修改的字段和值。字段名用英文，"
-                            "例如 owner, status_raw, category, issued_date 等。"
-                        ),
+                        "description": "要修改的字段和值。字段名用英文。",
                     },
                 },
-                "required": ["keyword", "updates"],
+                "required": ["filter_question", "updates"],
             },
         },
     },
@@ -132,17 +127,58 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
-    def request_delete(keyword: str) -> str:
-        candidates = find_candidates(keyword, db_path, real_table)
+    def request_delete(filter_question: str) -> str:
+        candidates = find_candidates(filter_question, llm, schema, db_path, table_name)
         if not candidates:
             return json.dumps(
                 {"status": "not_found", "message": "没有找到匹配的记录"},
                 ensure_ascii=False,
             )
+
         pending = {
             "type": "delete",
             "stage": "confirm",
             "candidates": candidates,
+            "user_input": trace.data["question"],
+            "trace_id": trace.id,
+        }
+        raise UserInputRequired(
+            question=f"找到 {len(candidates)} 条匹配，等待用户确认",
+            pending_action=pending,
+        )
+
+    def request_update(filter_question: str, updates: dict) -> str:
+        forbidden = {"is_deleted", "deleted_at", "deleted_by", "delete_trace_id"}
+        for field in updates:
+            if field in forbidden:
+                return json.dumps(
+                    {"error": f"字段 {field} 不允许修改"},
+                    ensure_ascii=False,
+                )
+
+        # 字段名校验：必须在表结构里
+        valid_fields = set(SCHEMA_DESC.keys())
+        for field in updates:
+            if field not in valid_fields:
+                return json.dumps(
+                    {
+                        "error": f"字段 {field} 不存在。可用字段：{sorted(valid_fields)}",
+                    },
+                    ensure_ascii=False,
+                )
+
+        candidates = find_candidates(filter_question, llm, schema, db_path, table_name)
+        if not candidates:
+            return json.dumps(
+                {"status": "not_found", "message": "没有找到匹配的记录"},
+                ensure_ascii=False,
+            )
+
+        pending = {
+            "type": "update",
+            "stage": "confirm",
+            "candidates": candidates,
+            "updates": updates,
             "user_input": trace.data["question"],
             "trace_id": trace.id,
         }
@@ -198,58 +234,6 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
             pending_action=pending,
         )
 
-    def request_update(keyword: str, updates: dict) -> str:
-        # 检查禁用字段
-        forbidden = {"is_deleted", "deleted_at", "deleted_by", "delete_trace_id"}
-        for field in updates:
-            if field in forbidden:
-                return json.dumps(
-                    {"error": f"字段 {field} 不允许修改"},
-                    ensure_ascii=False,
-                )
-
-        # 找候选
-        candidates = find_candidates(keyword, db_path, real_table)
-        if not candidates:
-            return json.dumps(
-                {"status": "not_found", "message": "没有找到匹配的记录"},
-                ensure_ascii=False,
-            )
-        if len(candidates) > 1:
-            names = [c["project_name"] for c in candidates]
-            return json.dumps(
-                {
-                    "status": "multiple_matches",
-                    "message": f"找到 {len(candidates)} 条匹配，请用户明确指定要修改哪一条",
-                    "candidates": names[:10],
-                },
-                ensure_ascii=False,
-            )
-
-        # 单条匹配：读完整记录
-        target_name = candidates[0]["project_name"]
-        con = duckdb.connect(db_path)
-        row = con.execute(
-            f"SELECT * FROM {real_table} "
-            f"WHERE project_name = ? AND is_deleted = false",
-            [target_name],
-        ).fetchdf()
-        con.close()
-
-        record = row.iloc[0].to_dict()
-
-        pending = {
-            "type": "update",
-            "stage": "confirm",
-            "record": record,
-            "updates": updates,
-            "user_input": trace.data["question"],
-            "trace_id": trace.id,
-        }
-        raise UserInputRequired(
-            question=f"等待用户确认修改「{target_name}」",
-            pending_action=pending,
-        )
 
     return {
         "query_database": query_database,
