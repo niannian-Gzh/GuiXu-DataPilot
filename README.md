@@ -1,15 +1,18 @@
 # DataPilot · 数据领航员
 
-用自然语言查询、分析项目数据的 AI Agent。
+用自然语言查询和操作项目数据的 AI Agent。
 
-输入「张三负责的项目有几个」，它会自动生成 SQL、执行查询、用自然语言回答你。
+输入「关梓鹤负责的项目有几个」，它会自己决定调用查询工具、生成 SQL、执行、用自然语言回答你。
+输入「删掉家装项目」，它会搜索候选、向你确认、执行软删除，全程记录审计日志。
 
 ## 特性
 
+- **Agent 架构**：基于 Tool Calling，模型自主决定调用哪个工具，而非固定流程
 - **自然语言转 SQL**：无需懂 SQL，用中文提问即可
-- **多轮对话**：支持「那李四呢」这类追问，自动补全上下文
-- **意图判断**：能区分「明确查询」和「模糊输入」，模糊时主动反问而非乱猜
-- **安全护栏**：拒绝所有写操作，SQL 层与意图层双重拦截
+- **多轮对话**：支持「那李津伊呢」这类追问，模型自动结合上下文
+- **安全删除**：双层确认（意图确认 + 操作确认），大批量需输入验证
+- **软删除**：删除的数据 7 天内可恢复，7 天后自动清理
+- **完整审计**：所有高危操作记录到 `logs/audit.jsonl`，可完全溯源
 - **自我修正**：SQL 执行失败时，带报错信息让模型自动修正
 - **完整可观测**：每次问答记录完整生命周期到 trace 日志
 - **评测驱动**：内置 Golden Set 和自动跑分脚本
@@ -23,27 +26,47 @@
 
 Golden Set 覆盖布尔筛选、数值筛选、聚合、分组、组合条件、空结果六类问题。
 
-> 注：一次通过率是关键指标。它衡量系统"不依赖自修正就能答对"的稳定性，比单纯的通过率更能反映系统的健康度。
+> 注：一次通过率是关键指标。它衡量系统"不依赖自修正就能答对"的稳定性。
 
 ## 架构
 
 ```
-用户问题
+用户输入
    ↓
-[接口层] main.py
+[入口层] main.py（读输入、处理待确认、调 agent）
    ↓
-[会话层] session.py ← 对话历史
+[Agent 层] agent.py（Agent Loop：模型自主决定调哪个工具）
    ↓
-[编排层] rewrite.py（多轮改写）→ intent.py（意图判断）
+[工具层] tools.py
+   ├─ query_database  → 查询
+   └─ request_delete  → 请求删除（触发用户确认）
    ↓
-[能力层] nl2sql.py（生成+自修正）→ execute.py（执行）→ summarize.py（总结）
+[能力层] nl2sql.py / execute.py / summarize.py / delete_op.py
    ↓
-[数据层] DuckDB
+[数据层] DuckDB（真实表 projects_all + 过滤视图 projects）
    ↓
-[横切] guard.py（安全）· trace.py（可观测）· eval/（评测）
+[横切] guard.py（安全）· trace.py（可观测）· audit.py（审计）· cleanup.py（清理）
 ```
 
-**设计原则**：编排层薄，能力层厚。每个模块单一职责，通过"接缝"隔离变化。
+**设计原则**：
+- Agent 层薄，工具层厚。模型只负责"决策"，工具负责"执行"
+- 能力由工具列表决定，没有工具就没有能力
+- 确认机制在 Loop 外部处理，因为它是跨轮次状态
+
+## 从 Workflow 到 Agent
+
+项目最初采用 workflow 架构（意图判断 → 改写 → 生成 SQL → 执行），后重构为 Agent。
+
+**暴露的问题**：
+1. 改写器会"过度改写"语义完整的问题
+2. 意图判断接不住指代（"删了吧"）
+3. 上下文被切碎，各模块各自为政
+4. 加功能要加模块，越来越繁琐
+
+**重构结果**：
+- 代码量减少（删除 intent.py + rewrite.py 共约 200 行）
+- "那李津伊呢"不再需要改写器，模型直接结合上下文
+- 加功能 = 加工具，不再加模块
 
 ## 快速开始
 
@@ -55,7 +78,7 @@ Golden Set 覆盖布尔筛选、数值筛选、聚合、分组、组合条件、
 ### 安装
 
 ```bash
-git clone https://github.com/你的用户名/datapilot.git
+git clone https://github.com/niannian-Gzh/datapilot.git
 cd datapilot
 uv sync
 ```
@@ -75,7 +98,7 @@ llm:
   provider: "deepseek"
   model: "deepseek-v4-flash"
   base_url: "https://api.deepseek.com"
-  max_tokens: 1024
+  max_tokens: 4096
   temperature: 0
 
 data:
@@ -86,11 +109,7 @@ data:
 
 ### 准备数据
 
-`data/projects_sample.xlsx` 是一个示例表格，包含以下列：
-
-| 项目名称 | 负责人 | 状态 | 项目下发时间 | ... |
-|---|---|---|---|---|
-| 项目A | 张三 | 已结算 | 2025-01-01 | ... |
+`data/projects_sample.xlsx` 是示例数据（8 行），已包含在仓库中。
 
 ### 导入数据
 
@@ -105,17 +124,22 @@ uv run src/main.py
 ```
 
 ```
-DataPilot · 数据领航员
+DataPilot · 数据领航员（Agent 版）
 输入问题，exit 退出
 
-你问：已下证的项目有几个？
-[SQL] SELECT COUNT(*) FROM projects WHERE is_certified = true
-[回答] 已下证的项目有 10 个。
+你问：已下证的项目有几个
+  [工具] query_database({"question": "已下证的项目有几个"})
+[回答] 已下证的项目共有 10 个。
 
-你问：那待提交的呢？
-  [改写] 待提交的项目有哪些？
-[SQL] SELECT * FROM projects WHERE is_pending = true
-[回答] 待提交的项目有 3 个：...
+你问：删掉家装项目
+  [工具] request_delete({"keyword": "家装"})
+[回答] 找到 1 条匹配：
+  1. 家装方案设计与客户运营综合平台（李沂松，已结算已下证）
+确认删除这 1 条吗？删除后 7 天内可恢复。
+回复「确认」执行删除，或回复「取消」放弃。
+
+你问：确认
+[回答] 已删除 1 条记录。7 天内可恢复。
 ```
 
 ### 跑评测
@@ -132,68 +156,77 @@ uv run python eval/run_eval.py
 | 包管理 | uv | 快、现代、锁文件可靠 |
 | 数据库 | DuckDB | 本地单文件，零运维，未来可换 Postgres |
 | 模型 | DeepSeek | 性价比高，中文好，兼容 OpenAI 接口 |
-| 编排 | 手写 | 拒绝 LangChain，保持对每一步的完全掌控 |
+| 编排 | 手写 Agent Loop | 拒绝 LangChain，保持对每一步的完全掌控 |
 
 ## 设计亮点
 
-### 1. 自修正机制（Reflexion）
+### 1. Agent Loop 替代 Workflow
 
-SQL 执行失败时，把「原始问题 + 错误 SQL + 数据库报错」发回给模型，让它修正。最多重试 2 次。
+核心循环不到 60 行：模型返回 tool_calls 就执行工具、把结果塞回消息、继续循环；没有 tool_calls 就返回最终答案。
 
-### 2. 安全边界：拒绝 ≠ 可修复
+### 2. 安全边界：确认机制在 Loop 外部
 
-自修正机制有一个已知陷阱：它会为了"通过检查"，把用户的非法操作（如 DELETE）"洗白"成合法操作（如 SELECT）。
+删除操作需要跨轮次确认（这轮问、下轮答）。Agent Loop 是单轮内循环，做不了跨轮次。所以确认机制在 `main.py` 里用 `pending_action` 处理，而不是做成工具。
 
-DataPilot 的解法：**安全拒绝不走自修正**。写操作在进入重试循环前就被 `guard.py` 拦截。
+### 3. 双层确认机制
 
-### 3. 表名显式传入
+- **A 级（意图确认）**：意图模糊时触发，引导用户澄清
+- **B 级（操作确认）**：增删改操作执行前触发
+- **B+ 级**：>20 条批量删除时，需用户输入"删除 N 条"确认
 
-初版 prompt 只给了表结构（列名），没给表名。模型每次都在猜表名，导致 8/15 题需要重试。
+原则：宁可多问，不可猜错。
 
-显式加入表名后，一次通过率从 **7/15 提升到 15/15**。
+### 4. 软删除 + 视图过滤
 
-### 4. 保守的查询改写
-
-多轮改写最大的风险不是"改得不够"，而是"改得太多"。改写器会把语义完整的问题（如"打回次数最多的项目"）错误地锁进历史上下文（改成"张三的项目中打回最多的"）。
-
-解法：**prompt 里明确"不确定就原样返回"，并加 few-shot 示例。**
+真实表 `projects_all` 存全部数据；视图 `projects` 自动过滤 `is_deleted = false`。模型和下游代码无感，过滤在数据库层保证。
 
 ### 5. 可观测作为证据链
 
-每次问答写一条 JSON 到 `logs/traces.jsonl`，只追加不修改。记录：
+每次问答写 `logs/traces.jsonl`，每次高危操作写 `logs/audit.jsonl`，都只追加不修改。
 
-```json
-{
-  "trace_id": "e8cd8ac4",
-  "timestamp": "2026-09-10T15:32:11",
-  "question": "那李四呢",
-  "standalone": "李四负责的项目有几个？",
-  "intent": "QUERY",
-  "sql": "SELECT COUNT(*) FROM projects WHERE owner = '李四'",
-  "retries": 0,
-  "row_count": 1,
-  "answer_head": "李四负责的项目有 76 个。",
-  "elapsed_ms": 2657,
-  "error": null
-}
+## 项目结构
+
+```
+src/
+├── main.py          入口层
+├── agent.py         Agent Loop
+├── tools.py         工具定义与分发
+├── nl2sql.py        自然语言 → SQL
+├── execute.py       执行 SQL
+├── summarize.py     结果转自然语言
+├── delete_op.py     删除操作
+├── llm.py           模型调用封装
+├── session.py       会话管理
+├── guard.py         安全检查
+├── trace.py         可观测
+├── audit.py         审计日志
+├── cleanup.py       过期数据清理
+├── config.py        配置与路径解析
+└── ingest.py        Excel → DuckDB
+
+tests/              测试脚本
+eval/               评测
+docs/               设计文档
 ```
 
 ## 已知限制
 
 - **仅支持单表查询**，多表关联未实现
-- **仅支持读操作**，写操作（增删改）会安全拒绝
+- **仅支持查询和删除**，修改/新增未实现
 - **无权限控制**，所有用户看到相同数据
 - **无 RAG 能力**，仅支持结构化数据查询
-- **无多租户支持**，为单用户场景设计
+- **评测未覆盖 Agent 层**，当前评测直接调能力层
 
 ## Roadmap
 
-- [x] MVP：NL2SQL + 多轮对话 + 意图判断 + 安全护栏
+- [x] MVP：NL2SQL + 多轮对话
 - [x] 评测体系：Golden Set + 自动跑分
-- [ ] 代码规范化与文档完善
-- [ ] 写操作确认流程（CRUD）
-- [ ] RAG 能力（文档检索 + 向量库）
-- [ ] 多表支持（表选择 + 动态 schema）
+- [x] Agent 架构：从 workflow 重构为 tool calling
+- [x] 删除功能：软删除 + 双层确认 + 审计
+- [ ] Agent 层评测
+- [ ] 修改/新增功能
+- [ ] RAG 能力（文档检索）
+- [ ] 多表支持
 - [ ] 可观测升级（接入 Langfuse）
 - [ ] 权限、成本、限流
 
