@@ -1,6 +1,5 @@
 import duckdb
 import pandas as pd
-import yaml
 from config import load_config, resolve
 
 COLUMN_MAP = {
@@ -17,10 +16,8 @@ COLUMN_MAP = {
 }
 
 
-
 def ingest():
     cfg = load_config()["data"]
-    
 
     # 1. 读 Excel（唯一读 Excel 的地方）
     df = pd.read_excel(resolve(cfg["excel_path"]))
@@ -49,15 +46,65 @@ def ingest():
     # 6. 打回次数空值填 0
     df["reject_count"] = df["reject_count"].fillna(0).astype(int)
 
-    # 7. 写入 DuckDB
+    # 7. 新增软删除与审计列（显式指定类型，避免 pandas 推断错误）
+    df["is_deleted"] = False
+    df["deleted_at"] = pd.Series([pd.NaT] * len(df), dtype="datetime64[ns]")
+    df["deleted_by"] = pd.Series([None] * len(df), dtype="object")
+    df["delete_trace_id"] = pd.Series([None] * len(df), dtype="object")
+
+    # 8. 写入 DuckDB：真实表 + 过滤视图
+    real_table = f"{cfg['table_name']}_all"
     con = duckdb.connect(resolve(cfg["db_path"]))
-    con.execute(f"DROP TABLE IF EXISTS {cfg['table_name']}")
+
+    # 清理旧对象：可能是表，也可能是视图（迁移期间两种都可能存在）
+    for stmt in [
+        f"DROP VIEW IF EXISTS {cfg['table_name']}",
+        f"DROP TABLE IF EXISTS {cfg['table_name']}",
+        f"DROP VIEW IF EXISTS {real_table}",
+        f"DROP TABLE IF EXISTS {real_table}",
+    ]:
+        try:
+            con.execute(stmt)
+        except Exception:
+            pass
+
+    # 建真实表
     con.register("df", df)
-    con.execute(f"CREATE TABLE {cfg['table_name']} AS SELECT * FROM df")
+    con.execute(f"""
+        CREATE TABLE {real_table} AS
+        SELECT
+            project_name,
+            owner,
+            status_raw,
+            issued_date,
+            certified_date,
+            category,
+            resubmit_name,
+            reject_date,
+            resubmit_date,
+            reject_count,
+            is_pending,
+            is_submitted,
+            is_rejected,
+            is_settled,
+            is_certified,
+            is_deleted,
+            CAST(deleted_at AS TIMESTAMP) AS deleted_at,
+            CAST(deleted_by AS VARCHAR) AS deleted_by,
+            CAST(delete_trace_id AS VARCHAR) AS delete_trace_id
+        FROM df
+    """)
+
+    # 建视图：自动过滤已删除
+    con.execute(f"""
+        CREATE VIEW {cfg['table_name']} AS
+        SELECT * FROM {real_table} WHERE is_deleted = false
+    """)
     con.close()
 
     print(f"✅ 导入 {len(df)} 行 → {cfg['db_path']}")
-    print(f"   列：{list(df.columns)}")
+    print(f"   真实表：{real_table}")
+    print(f"   视图：{cfg['table_name']}（已自动过滤 is_deleted）")
 
 
 if __name__ == "__main__":

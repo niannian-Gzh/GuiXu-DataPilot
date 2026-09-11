@@ -38,7 +38,34 @@ class LLM:
                 {"role": "user", "content": user},
             ],
         )
-        return resp.choices[0].message.content
+        content = resp.choices[0].message.content
+        if content is None:
+            finish_reason = resp.choices[0].finish_reason
+            raise RuntimeError(
+                f"模型返回空内容（finish_reason={finish_reason}）。"
+                f"可能是 max_tokens 不足或模型异常。"
+            )
+        return content
+
+    def chat_messages(self, messages: list, tools: list = None):
+        """支持完整 messages 数组和工具调用的对话。返回 message 对象。"""
+        if self.mock:
+            raise RuntimeError("mock 模式不支持 tool calling")
+
+        kwargs = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "messages": messages,
+        }
+        if tools:
+            kwargs["tools"] = tools
+
+        resp = self.client.chat.completions.create(**kwargs)
+
+        return resp.choices[0].message
+
+    
 
 
 if __name__ == "__main__":

@@ -1,23 +1,56 @@
 from llm import LLM
-from nl2sql import load_config, get_schema, generate_sql_with_retry
-from execute import execute_sql
-from summarize import summarize
 from session import Session
-from rewrite import rewrite
+from agent import run_agent
 from trace import Trace
-from guard import SecurityError
-from intent import classify
+from config import load_config, resolve
+from cleanup import cleanup
+from tools import UserInputRequired
+from delete_op import (
+    format_candidates, delete_confirm_prompt,
+    is_confirm, is_cancel, is_bulk_confirm, execute_delete,
+    BULK_THRESHOLD,
+)
+
+
+def handle_pending(session, question, trace, db_path, real_table) -> bool:
+    """处理待确认操作。返回 True 表示已处理。"""
+    pending = session.get_pending()
+    if not pending:
+        return False
+
+    if is_cancel(question):
+        session.clear_pending()
+        print(f"\n[回答]\n已取消删除操作。\n")
+        return True
+
+    n = len(pending["candidates"])
+    if n <= BULK_THRESHOLD:
+        valid = is_confirm(question)
+    else:
+        valid = is_bulk_confirm(question, n)
+
+    if valid:
+        count = execute_delete(
+            pending["candidates"], db_path, real_table,
+            pending["trace_id"], pending["user_input"],
+        )
+        session.clear_pending()
+        print(f"\n[回答]\n已删除 {count} 条记录。7 天内可恢复。\n")
+    else:
+        print(f"\n[回答]\n确认未通过。请重新输入正确的确认信息，或回复「取消」。\n")
+    return True
 
 
 def main():
-    from config import resolve
     cfg = load_config()["data"]
     db_path = resolve(cfg["db_path"])
+    real_table = f"{cfg['table_name']}_all"
     llm = LLM()
-    schema = get_schema(db_path, cfg["table_name"])
     session = Session()
 
-    print("DataPilot · 数据领航员")
+    cleanup()
+
+    print("DataPilot · 数据领航员（Agent 版）")
     print("输入问题，exit 退出\n")
 
     while True:
@@ -31,49 +64,20 @@ def main():
         trace = Trace(question)
 
         try:
-            standalone = rewrite(question, session, llm)
-            trace.set("standalone", standalone)
-            if standalone != question:
-                print(f"  [改写] {standalone}")
-
-            # 意图判断（内部包含写操作检查）
-            intent_result = classify(standalone, llm)
-            trace.set("intent", intent_result["intent"])
-
-            if intent_result["intent"] in ("CLARIFY", "CHITCHAT"):
-                answer = intent_result["message"]
-                print(f"\n[回答]\n{answer}\n")
-                session.add_user(standalone)
-                session.add_assistant(answer)
+            # 优先处理待确认操作
+            if handle_pending(session, question, trace, db_path, real_table):
                 continue
 
-            if intent_result["intent"] == "UNSUPPORTED":
-                raise SecurityError(intent_result["message"])
+            answer = run_agent(question, session, llm, db_path, cfg["table_name"], trace)
+            print(f"\n[回答]\n{answer}\n")
+        except UserInputRequired as e:
+            # 工具请求用户确认
+            pending = e.pending_action
+            session.set_pending(pending)
 
-            # QUERY：正常走 SQL 流程
-            sql, retries = generate_sql_with_retry(
-                standalone, llm, schema, db_path, cfg["table_name"], max_retries=2
-            )
-            trace.set("sql", sql)
-            trace.set("retries", retries)
-
-            df = execute_sql(sql, db_path)
-            trace.set("row_count", len(df))
-
-            answer = summarize(standalone, df, llm)
-            trace.set("answer_len", len(answer))
-            trace.set("answer_head", answer[:50])
-
-            session.add_user(standalone)
-            session.add_assistant(answer)
-
-            tag = "" if retries == 0 else f"（重试 {retries} 次）"
-            print(f"\n[SQL{tag}] {sql}\n")
-            print(f"[回答]\n{answer}\n")
-            print(f"[trace] {trace.id}\n")
-        except SecurityError as e:
-            trace.set("error", f"[安全拒绝] {e}")
-            print(f"\n[安全拒绝] {e}\n")
+            msg = format_candidates(pending["candidates"])
+            msg += "\n\n" + delete_confirm_prompt(pending["candidates"])
+            print(f"\n[回答]\n{msg}\n")
         except Exception as e:
             trace.set("error", str(e))
             print(f"[错误] {e}\n")

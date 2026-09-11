@@ -6,3 +6,4 @@ logs/*.jsonl
 data/软著项目申报管理系统.xlsx
 docs/PROJECT_STATE.md
 eval/golden_set.json
+legacy/
