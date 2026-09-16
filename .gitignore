@@ -2,6 +2,7 @@
 .venv/
 __pycache__/
 data/*.duckdb
+data/exports/
 logs/*.jsonl
 data/软著项目申报管理系统.xlsx
 eval/golden_set.json

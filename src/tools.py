@@ -4,6 +4,7 @@ from services import ServiceContext
 from services import query_service, delete_service, create_service, update_service
 from services import import_service
 from services import consistency_service
+from services import export_service
 
 
 TOOL_SCHEMAS = [
@@ -156,6 +157,28 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "export_to_excel",
+            "description": (
+                "把符合条件的记录导出为 Excel 文件。"
+                "filter_question 是模糊筛选条件，例如'所有 web 类项目'、'已下证的项目'。"
+                "导出是只读操作，不会修改数据，无需用户确认。"
+                "返回文件路径和导出的记录数。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filter_question": {
+                        "type": "string",
+                        "description": "模糊筛选条件，描述要导出哪些记录",
+                    },
+                },
+                "required": ["filter_question"],
+            },
+        },
+    },
 ]
 
 
@@ -187,6 +210,9 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
 
     def check_consistency():
         return consistency_service.run(ctx)
+
+    def export_to_excel(filter_question):
+        return export_service.run(filter_question, ctx)
     
     return {
         "query_database": query_database,
@@ -196,6 +222,7 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
         "request_batch_create": request_batch_create,
         "request_import": request_import,
         "check_consistency": check_consistency,
+        "export_to_excel": export_to_excel,
     }
 
 
