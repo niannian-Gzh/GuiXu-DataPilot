@@ -1,6 +1,7 @@
 import json
 from datetime import date
-from tools import TOOL_SCHEMAS, build_tool_functions, dispatch, UserInputRequired
+from tools import TOOL_SCHEMAS, build_tool_functions, dispatch
+from services import UserInputRequired
 
 
 SYSTEM_PROMPT = """你是 DataPilot，一个数据助手。你可以调用工具来完成任务。

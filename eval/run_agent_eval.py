@@ -8,7 +8,7 @@ from llm import LLM
 from agent import run_agent
 from session import Session
 from trace import Trace
-from tools import UserInputRequired
+from services import UserInputRequired
 from config import load_config, resolve
 
 
