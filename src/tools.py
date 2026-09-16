@@ -2,6 +2,7 @@ import json
 from nl2sql import get_schema
 from services import ServiceContext
 from services import query_service, delete_service, create_service, update_service
+from services import import_service
 
 
 TOOL_SCHEMAS = [
@@ -102,6 +103,27 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_import",
+            "description": (
+                "请求从 Excel 文件导入项目数据。会扫描文件与数据库的差异，"
+                "可能包括：新记录、字段冲突、已删除记录。"
+                "系统会展示差异并请求用户确认后执行导入。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Excel 文件路径",
+                    },
+                },
+                "required": ["file_path"],
+            },
+        },
+    },
 ]
 
 
@@ -127,13 +149,16 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
 
     def request_batch_create(records):
         return create_service.request_batch_create(records, ctx)
-
+    def request_import(file_path):
+        return import_service.request_import(file_path, ctx)
+    
     return {
         "query_database": query_database,
         "request_delete": request_delete,
         "request_create": request_create,
         "request_update": request_update,
         "request_batch_create": request_batch_create,
+        "request_import": request_import,
     }
 
 

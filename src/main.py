@@ -32,7 +32,7 @@ def main():
 
         try:
             # 优先处理待确认操作
-            handled, msg = pending_service.handle_pending(question, session, db_path, real_table)
+            handled, msg = pending_service.handle_pending(question, session, db_path, real_table, llm)
             if handled:
                 print(f"\n[回答]\n{msg}\n")
                 continue

@@ -1,8 +1,9 @@
 from services import BULK_THRESHOLD
 from services import delete_service, create_service, update_service
+from services import import_service
 
 
-def handle_pending(question: str, session, db_path: str, real_table: str):
+def handle_pending(question: str, session, db_path: str, real_table: str, llm=None):
     """处理待确认操作。返回 (handled: bool, message: str)。"""
     pending = session.get_pending()
     if not pending:
@@ -22,6 +23,8 @@ def handle_pending(question: str, session, db_path: str, real_table: str):
         return _handle_batch_create(question, session, pending, db_path, real_table)
     if ptype == "update":
         return _handle_update(question, session, pending, db_path, real_table)
+    if ptype == "import":
+        return _handle_import(question, session, pending, db_path, real_table, llm)
 
     return False, ""
 
@@ -89,6 +92,47 @@ def _handle_update(question, session, pending, db_path, real_table):
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
+def _handle_import(question, session, pending, db_path, real_table, llm):
+    scan_result = pending["scan_result"]
+    parsed = import_service.parse_user_answer(question, scan_result, llm)
+
+    action = parsed.get("action")
+
+    if action == "cancel":
+        session.clear_pending()
+        return True, "已取消导入。"
+
+    if action == "show_detail":
+        detail_type = parsed.get("detail_type", "")
+        msg = import_service.format_detail(scan_result, detail_type)
+        msg += "\n\n请继续回答之前的确认问题。"
+        return True, msg
+
+    if action == "submit":
+        rename_map = parsed.get("rename_map", {})
+        deleted_action = parsed.get("deleted_action", "keep")
+        conflict_action = parsed.get("conflict_action", "db")
+
+        stats = import_service.execute_import(
+            scan_result, rename_map, deleted_action, conflict_action,
+            db_path, real_table, pending["trace_id"], pending["user_input"],
+        )
+        session.clear_pending()
+
+        parts = ["导入完成。\n"]
+        if stats["renamed"]:
+            parts.append(f"- 改名：{stats['renamed']} 条")
+        if stats["restored"]:
+            parts.append(f"- 恢复删除：{stats['restored']} 条")
+        if stats["inserted"]:
+            parts.append(f"- 新增：{stats['inserted']} 条")
+        if stats["updated"]:
+            parts.append(f"- 更新：{stats['updated']} 条")
+        return True, "\n".join(parts)
+
+    return True, "抱歉，我没理解你的回答。请回答之前的问题，或回复「取消」。"
+
+
 def format_pending_display(pending: dict) -> str:
     """根据 pending 类型，格式化展示消息。"""
     ptype = pending.get("type")
@@ -103,5 +147,6 @@ def format_pending_display(pending: dict) -> str:
         return create_service.format_batch_create_confirm(pending["records"])
     if ptype == "update":
         return update_service.format_update_confirm(pending["candidates"], pending["updates"])
-
+    if ptype == "import":
+        return import_service.format_import_summary(pending["scan_result"])
     return "需要用户确认"
