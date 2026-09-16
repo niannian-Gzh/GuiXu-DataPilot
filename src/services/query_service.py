@@ -65,6 +65,6 @@ def run(question: str, ctx) -> str:
 
         return json.dumps(result, ensure_ascii=False)
     except SecurityError as e:
-        return json.dumps({"error": f"安全拒绝：{e}"}, ensure_ascii=False)
+        return json.dumps({"error": f"安全拒绝：{e}", "is_security": True}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)

@@ -4,16 +4,21 @@ from tools import TOOL_SCHEMAS, build_tool_functions, dispatch
 from services import UserInputRequired
 
 
+READ_TOOL_LIMIT = 3
+WRITE_TOOL_LIMIT = 2
+WRITE_TOOLS = {"request_create", "request_update", "request_delete", "request_batch_create"}
+
+
 SYSTEM_PROMPT = """你是 DataPilot，一个数据助手。你可以调用工具来完成任务。
 
 规则：
 1. 需要查询数据时，调用 query_database 工具。
-2. 用户要求删除数据时，调用 request_delete，传入 filter_question（自然语言筛选条件）。
-3. 用户要求修改数据时，调用 request_update，传入 filter_question 和 updates。
-   如果用户没说清楚改什么，追问用户。
-4. 如果用户要求新增数据，调用 request_create；用户一次要求新增多条记录时，调用 request_batch_create，传入 records 数组。
-5. 不要擅自改变用户请求的性质。如果用户要求修改数据（如改成、更新为、新增、添加），
-   但你没有任何修改工具，请明确告知无法完成，不要降级成查询。
+2. 用户明确要求删除数据时，调用 request_delete 工具。
+3. 用户明确要求修改数据时，调用 request_update 工具。
+4. 用户明确要求新增数据时：
+   - 单条用 request_create
+   - 多条用 request_batch_create
+5. 不要擅自改变用户请求的性质。如果用户要求不支持的操作，明确告知。
 6. 如果用户的问题不明确，直接向用户提问，不要猜测。
 7. 不要编造数据。所有数据必须来自工具返回。
 8. 用简洁的中文回答。
@@ -22,22 +27,25 @@ SYSTEM_PROMPT = """你是 DataPilot，一个数据助手。你可以调用工具
 10. 不要陷入自我怀疑：同一个工具连续成功调用 2 次后，
     应当基于已有信息回答用户，或向用户说明情况，而不是继续尝试。
 11. 如果工具返回中包含 ambiguous: true 和 branches 字段，
-    说明这个查询有两种合理解读，请把两个分支都展示给用户，
-    让用户自己判断。
+    说明这个查询有两种合理解读，请把两个分支都展示给用户。
+12. 如果工具返回 is_security: true，说明这是安全拒绝，不要重试，
+    直接告知用户无法完成。
 
 当前日期：{today}"""
 
 
-READ_TOOL_LIMIT = 3
-WRITE_TOOL_LIMIT = 2
-WRITE_TOOLS = {"request_create", "request_update", "request_delete", "request_batch_create"}
-
-
 def _is_success(result_str: str) -> bool:
-    """判断工具返回是否成功（无 error 字段）。"""
     try:
         data = json.loads(result_str)
         return "error" not in data
+    except json.JSONDecodeError:
+        return False
+
+
+def _is_security_error(result_str: str) -> bool:
+    try:
+        data = json.loads(result_str)
+        return bool(data.get("is_security", False))
     except json.JSONDecodeError:
         return False
 
@@ -50,8 +58,8 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
     messages.extend(session.get_history())
     messages.append({"role": "user", "content": user_input})
 
-    # 思维熔断计数：只统计"成功"的工具调用
     success_counts = {}
+    failure_counts = {}
 
     for i in range(max_iterations):
         msg = llm.chat_messages(messages, tools=TOOL_SCHEMAS)
@@ -75,6 +83,7 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
 
             for tc in msg.tool_calls:
                 name = tc.function.name
+                limit = WRITE_TOOL_LIMIT if name in WRITE_TOOLS else READ_TOOL_LIMIT
 
                 print(f"  [工具] {name}({tc.function.arguments})")
                 try:
@@ -84,11 +93,9 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
 
                 result = dispatch(name, args, functions)
 
-                # 思维熔断：只对"成功"的调用计数
                 if _is_success(result):
+                    # 思维熔断：成功的调用
                     success_counts[name] = success_counts.get(name, 0) + 1
-                    limit = WRITE_TOOL_LIMIT if name in WRITE_TOOLS else READ_TOOL_LIMIT
-
                     if success_counts[name] > limit:
                         return (
                             f"抱歉，我在处理这个请求时反复尝试了多次，"
@@ -96,6 +103,19 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
                             f"但结果始终未能让流程继续。\n\n"
                             f"最后一次工具返回：{result[:200]}\n\n"
                             f"建议：请确认你的请求是否明确，或换一种说法再试。"
+                        )
+                elif _is_security_error(result):
+                    # 安全拒绝：不计数，交由 agent 处理
+                    pass
+                else:
+                    # 异常熔断：失败的调用
+                    failure_counts[name] = failure_counts.get(name, 0) + 1
+                    if failure_counts[name] > limit:
+                        return (
+                            f"抱歉，工具「{name}」已连续失败 {failure_counts[name]} 次，"
+                            f"无法完成请求。\n\n"
+                            f"最后一次错误：{result[:200]}\n\n"
+                            f"建议：请检查请求是否合理，或稍后重试。"
                         )
 
                 messages.append({

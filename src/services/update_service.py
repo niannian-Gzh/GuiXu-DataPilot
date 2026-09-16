@@ -22,7 +22,10 @@ def recompute_status_flags(status_raw: str) -> dict:
 def request_update(filter_question: str, updates: dict, ctx) -> str:
     for field in updates:
         if field in FORBIDDEN_FIELDS:
-            return json.dumps({"error": f"字段 {field} 不允许修改"}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"字段 {field} 不允许修改", "is_security": True},
+                ensure_ascii=False,
+            )
 
     valid_fields = set(SCHEMA_DESC.keys())
     for field in updates:
