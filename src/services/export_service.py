@@ -8,7 +8,19 @@ from nl2sql import generate_filter_sql
 from execute import execute_sql
 from audit import log
 from config import PROJECT_ROOT
+import re
 
+
+def _sanitize_filename(text: str, max_len: int = 30) -> str:
+    """把用户输入变成合法的文件名片段。"""
+    # 去掉 Windows 非法字符
+    cleaned = re.sub(r'[\\/:*?"<>|]', "", text)
+    # 去掉多余空格
+    cleaned = re.sub(r"\s+", "_", cleaned.strip())
+    # 截断
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len]
+    return cleaned or "导出数据"
 
 EXPORT_DIR = PROJECT_ROOT / "data" / "exports"
 
@@ -51,7 +63,10 @@ def run(filter_question: str, ctx) -> str:
     # 写文件
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"export_{timestamp}.xlsx"
+
+    # 文件名用筛选条件，清洗非法字符
+    name_part = _sanitize_filename(filter_question)
+    filename = f"{name_part}_{timestamp}.xlsx"
     file_path = EXPORT_DIR / filename
 
     df.to_excel(file_path, index=False)

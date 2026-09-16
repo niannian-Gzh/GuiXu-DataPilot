@@ -3,6 +3,7 @@
 __pycache__/
 data/*.duckdb
 data/exports/
+data/reports/
 logs/*.jsonl
 data/软著项目申报管理系统.xlsx
 eval/golden_set.json

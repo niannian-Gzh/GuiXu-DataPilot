@@ -5,6 +5,7 @@ from services import query_service, delete_service, create_service, update_servi
 from services import import_service
 from services import consistency_service
 from services import export_service
+from services import report_service
 
 
 TOOL_SCHEMAS = [
@@ -179,6 +180,38 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_report",
+            "description": (
+                "生成日/周/月报（PDF，含图表和明细）。"
+                "period：day/week/month；items 是要包含的事件，"
+                "取值：issued（下发）/ certified（下证）/ rejected（打回）/ resubmitted（重提）。"
+                "如果用户没指定 items，默认用 ['issued', 'certified', 'rejected']。"
+                "如果用户说'上个/上次/昨天/上周/上个月'，用 offset=-1；"
+                "'上上/前天'用 offset=-2。"
+                "如果用户指定了自定义时间段，传 custom_start 和 custom_end（YYYY-MM-DD）。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {"type": "string", "enum": ["day", "week", "month"]},
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["issued", "certified", "rejected", "resubmitted"]},
+                    },
+                    "custom_start": {"type": "string"},
+                    "custom_end": {"type": "string"},
+                                        "offset": {
+                        "type": "integer",
+                        "description": "偏移量。0=当前（本周/本月/今天），-1=上一个（上周/上个月/昨天），-2=上上个。"
+                    },
+                },
+                "required": ["period"],
+            },
+        },
+    },
 ]
 
 
@@ -213,6 +246,9 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
 
     def export_to_excel(filter_question):
         return export_service.run(filter_question, ctx)
+
+    def generate_report(period, items=None, custom_start=None, custom_end=None, offset=0):
+        return report_service.run(period, items or [], ctx, custom_start, custom_end, offset)
     
     return {
         "query_database": query_database,
@@ -223,6 +259,7 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
         "request_import": request_import,
         "check_consistency": check_consistency,
         "export_to_excel": export_to_excel,
+        "generate_report": generate_report,
     }
 
 

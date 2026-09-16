@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+
+  @page {
+    size: A4;
+    margin: 20mm 15mm;
+  }
+
+  body {
+    font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    color: #1e293b;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0;
+    font-size: 14px;
+  }
+
+  .header {
+    border-bottom: 3px solid #2563eb;
+    padding-bottom: 16px;
+    margin-bottom: 28px;
+  }
+
+  .header h1 {
+    margin: 0 0 8px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #0f172a;
+    letter-spacing: 0.5px;
+  }
+
+  .header .period {
+    color: #64748b;
+    font-size: 13px;
+  }
+
+  .summary-card {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border-left: 4px solid #2563eb;
+    padding: 18px 22px;
+    border-radius: 8px;
+    margin-bottom: 32px;
+    font-size: 14px;
+    line-height: 1.8;
+    color: #1e40af;
+  }
+
+  .summary-card .label {
+    font-weight: 600;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: #1d4ed8;
+  }
+
+  h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #0f172a;
+    margin: 36px 0 16px 0;
+    padding-left: 12px;
+    border-left: 4px solid #2563eb;
+  }
+
+  h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #475569;
+    margin: 24px 0 12px 0;
+  }
+
+  .chart {
+    text-align: center;
+    margin: 16px 0;
+    padding: 16px;
+    background: #f8fafc;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+  }
+
+  .chart img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0 20px 0;
+    font-size: 13px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  th {
+    background: #2563eb;
+    color: white;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 500;
+    font-size: 13px;
+  }
+
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid #e2e8f0;
+    color: #334155;
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  tr:nth-child(even) td { background: #f8fafc; }
+
+  .stat-grid {
+    display: flex;
+    gap: 12px;
+    margin: 16px 0 20px 0;
+  }
+
+  .stat-card {
+    flex: 1;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-top: 3px solid #2563eb;
+    border-radius: 8px;
+    padding: 18px 12px;
+    text-align: center;
+  }
+
+  .stat-card .value {
+    font-size: 30px;
+    font-weight: 700;
+    color: #2563eb;
+    margin-bottom: 6px;
+    line-height: 1;
+  }
+
+  .stat-card .label {
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 500;
+  }
+
+  .event-section {
+    margin-bottom: 32px;
+    padding: 20px 22px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+  }
+
+  .event-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .event-header .name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0f172a;
+  }
+
+  .event-header .badge {
+    background: #2563eb;
+    color: white;
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .empty {
+    text-align: center;
+    padding: 24px;
+    color: #94a3b8;
+    font-size: 13px;
+    font-style: italic;
+    background: #f8fafc;
+    border-radius: 6px;
+  }
+
+  .footer {
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid #e2e8f0;
+    text-align: center;
+    color: #94a3b8;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>{{ period_type_label }}</h1>
+    <div class="period">统计周期：{{ period.start }} 至 {{ period.end }}</div>
+  </div>
+
+  {% if summary %}
+  <div class="summary-card">
+    <div class="label">📋 本期概述</div>
+    {{ summary }}
+  </div>
+  {% endif %}
+
+  <h2>事件总览</h2>
+  <div class="stat-grid">
+    {% for e in events %}
+    <div class="stat-card">
+      <div class="value">{{ e.count }}</div>
+      <div class="label">{{ e.label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="chart">
+    <img src="data:image/png;base64,{{ event_chart }}">
+  </div>
+
+  {% for e in events %}
+  <div class="event-section">
+    <div class="event-header">
+      <span class="name">{{ e.label }}</span>
+      <span class="badge">{{ e.count }} 条</span>
+    </div>
+
+    {% if e.details %}
+    <table>
+      <thead>
+        <tr><th>项目名称</th><th>负责人</th><th>分类</th><th>时间</th></tr>
+      </thead>
+      <tbody>
+        {% for d in e.details %}
+        <tr>
+          <td>{{ d.project_name }}</td>
+          <td>{{ d.owner }}</td>
+          <td>{{ d.category }}</td>
+          <td>{{ d.date }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">本期无{{ e.label }}事件</div>
+    {% endif %}
+
+    {% if e.by_owner %}
+    <h3>按负责人分布</h3>
+    <div class="chart">
+      <img src="data:image/png;base64,{{ e.owner_chart }}">
+    </div>
+    <table>
+      <thead>
+        <tr><th>负责人</th><th>数量</th><th>项目</th></tr>
+      </thead>
+      <tbody>
+        {% for o in e.by_owner %}
+        <tr>
+          <td>{{ o.owner }}</td>
+          <td>{{ o.count }}</td>
+          <td>{{ o.projects | join('、') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if e.by_category %}
+    <h3>按分类分布</h3>
+    <table>
+      <thead>
+        <tr><th>分类</th><th>数量</th><th>项目</th></tr>
+      </thead>
+      <tbody>
+        {% for c in e.by_category %}
+        <tr>
+          <td>{{ c.category }}</td>
+          <td>{{ c.count }}</td>
+          <td>{{ c.projects | join('、') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="footer">
+    报告由 DataPilot 自动生成 · {{ generated_at }}
+  </div>
+</body>
+</html>
