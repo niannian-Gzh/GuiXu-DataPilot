@@ -84,4 +84,13 @@ class LLM:
             return self.client.chat.completions.create(**kwargs)
 
         resp = _call_with_retry(_call)
-        return resp.choices[0].message
+
+        usage = None
+        if getattr(resp, "usage", None):
+            usage = {
+                "prompt_tokens": resp.usage.prompt_tokens,
+                "completion_tokens": resp.usage.completion_tokens,
+                "total_tokens": resp.usage.total_tokens,
+            }
+
+        return resp.choices[0].message, usage

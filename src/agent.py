@@ -9,6 +9,8 @@ READ_TOOL_LIMIT = 3
 WRITE_TOOL_LIMIT = 2
 WRITE_TOOLS = {"request_create", "request_update", "request_delete", "request_batch_create"}
 LOOP_TIMEOUT = 240     # Agent Loop 总超时（秒）
+COMPACT_THRESHOLD = 500_000    # 50% of 1M
+KEEP_RECENT_TURNS = 6
 
 
 SYSTEM_PROMPT = """你是 DataPilot，一个数据助手。工具是你与数据世界交互的途径。
@@ -44,6 +46,12 @@ def _is_security_error(result_str: str) -> bool:
 
 def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trace, max_iterations: int = 10):
     """Agent 主循环。"""
+    # 压缩检查
+    if session.should_compact(COMPACT_THRESHOLD):
+        print(f"  [上下文压缩] 归档并压缩历史对话")
+        session.archive(reason="token_threshold")
+        session.compact(llm, keep_recent=KEEP_RECENT_TURNS)
+
     start_time = time.time()
     functions = build_tool_functions(llm, db_path, table_name, trace)
 
@@ -58,7 +66,9 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
         if time.time() - start_time > LOOP_TIMEOUT:
             return f"处理超时（超过 {LOOP_TIMEOUT} 秒），请简化请求或稍后重试。"
 
-        msg = llm.chat_messages(messages, tools=TOOL_SCHEMAS)
+        msg, usage = llm.chat_messages(messages, tools=TOOL_SCHEMAS)
+        if usage:
+            session.set_prompt_tokens(usage["prompt_tokens"])
 
         if msg.tool_calls:
             messages.append({

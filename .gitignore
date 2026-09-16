@@ -5,6 +5,7 @@ data/*.duckdb
 data/exports/
 data/reports/
 logs/*.jsonl
+logs/sessions/
 data/软著项目申报管理系统.xlsx
 eval/golden_set.json
 eval/golden_set_agent.json
