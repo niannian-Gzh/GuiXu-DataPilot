@@ -1,72 +1,71 @@
 # DataPilot · 数据领航员
 
-用自然语言查询和操作项目数据的 AI Agent。
+用自然语言完成数据的查询、新增、修改、删除、导入、导出、检查和报告生成。
 
-输入「关梓鹤负责的项目有几个」，它会自己决定调用查询工具、生成 SQL、执行、用自然语言回答你。
-输入「删掉家装项目」，它会搜索候选、向你确认、执行软删除。
-输入「新增一个项目，叫智能测试系统，负责人关梓鹤，分类 web」，它会校验字段、确认、写入。
-输入「把智能测试系统的负责人改成李四」，它会展示改前改后、确认、更新。
+- 输入「关梓鹤负责的项目有几个」→ 自动生成 SQL、执行、回答
+- 输入「删掉家装项目」→ 搜索候选、确认、软删除
+- 输入「从 data/新数据.xlsx 导入」→ 扫描差异、确认、导入
+- 输入「给我一份上个月的月报」→ 统计、画图、生成 PDF
 
 ## 特性
 
-- **Agent 架构**：基于 Tool Calling，模型自主决定调用哪个工具，而非固定流程
-- **完整 CRUD**：查询 / 新增 / 修改 / 删除，全部通过自然语言完成
-- **安全删除**：双层确认（意图确认 + 操作确认），大批量需输入验证
-- **软删除**：删除的数据 7 天内可恢复，7 天后自动清理
-- **状态联动**：修改状态字符串时，自动重算五个布尔字段
-- **完整审计**：所有写操作记录到 `logs/audit.jsonl`，可完全溯源
-- **自我修正**：SQL 执行失败时，带报错信息让模型自动修正
-- **完整可观测**：每次问答记录完整生命周期到 trace 日志
-- **评测驱动**：底层评测 + Agent 层评测，双评测体系
+- **Agent 架构**：基于 Tool Calling，模型自主决定调用哪个工具
+- **完整 CRUD**：查询 / 新增 / 修改 / 删除，支持单条和批量
+- **Excel 导入**：扫描差异（新记录 / 冲突 / 软删除），三阶段确认，支持追问详情
+- **Excel 导出**：中文列名、日期格式化、中文文件名
+- **一致性检查**：发现状态字段矛盾、日期顺序异常
+- **日/周/月报**：统计 + 图表 + LLM 概述，输出 PDF
+- **安全删除**：双层确认 + 软删除（7 天可恢复）
+- **状态联动**：修改状态字符串时自动重算五个布尔字段
+- **完整审计**：所有写操作记录到 `logs/audit.jsonl`
+- **多层防护**：LLM 重试、熔断、行数上限、SQL 超时、Loop 超时
+- **评测驱动**：底层评测 + Agent 层评测
 
 ## 评测结果
 
-| 指标 | 结果 |
-|---|---|
-| 底层评测 | **15/15** |
-| Agent 层评测 | **12/12** |
+| 评测 | 用例数 | 结果 |
+|---|---|---|
+| 底层评测 | 34 | **34/34** |
+| Agent 层评测 | 15 | **15/15** |
+
+底层评测覆盖布尔筛选、数值筛选、聚合、分组、组合条件、空结果、排序七类问题。
 
 ## 架构
 
 ```
 用户输入
    ↓
-[入口层] main.py（读输入、处理待确认、调 agent）
+[入口层] main.py（读输入、处理待确认、打印输出）
    ↓
-[Agent 层] agent.py（Agent Loop：模型自主决定调哪个工具）
+[Agent 层] agent.py（Loop：决策 + 熔断 + 超时）
    ↓
-[工具层] tools.py
-   ├─ query_database   → 查询
-   ├─ request_create   → 新增（校验 + 查重 + 确认）
-   ├─ request_update   → 修改（展示 diff + 确认）
-   └─ request_delete   → 删除（展示候选 + 双层确认）
+[工具层] tools.py（菜单 + 传话筒）
+   ├─ query_database       查询
+   ├─ request_create       新增（单条）
+   ├─ request_batch_create 新增（批量）
+   ├─ request_update       修改
+   ├─ request_delete       删除
+   ├─ request_import       导入
+   ├─ export_to_excel      导出
+   ├─ check_consistency    一致性检查
+   └─ generate_report      报告生成
    ↓
-[能力层] nl2sql / execute / summarize / create_op / update_op / delete_op
+[服务层] services/（业务逻辑）
+   ├── query / create / update / delete / pending
+   ├── import / consistency / export
+   └── report（stats + charts + render + templates）
    ↓
-[数据层] DuckDB（真实表 projects_all + 过滤视图 projects）
+[数据层] DuckDB
+   ├─ projects_all（真实表）
+   └─ projects（视图，自动过滤软删除）
    ↓
-[横切] guard.py（安全）· trace.py（可观测）· audit.py（审计）· cleanup.py（清理）
+[横切] guard（安全）· trace（可观测）· audit（审计）· cleanup（清理）· display（展示）
 ```
 
 **设计原则**：
-- Agent 层薄，工具层厚。模型只负责"决策"，工具负责"执行"
-- 能力由工具列表决定，没有工具就没有能力
-- 确认机制在 Loop 外部处理，因为它是跨轮次状态
-
-## 从 Workflow 到 Agent
-
-项目最初采用 workflow 架构（意图判断 → 改写 → 生成 SQL → 执行），后重构为 Agent。
-
-**暴露的问题**：
-1. 改写器会"过度改写"语义完整的问题
-2. 意图判断接不住指代（"删了吧"）
-3. 上下文被切碎，各模块各自为政
-4. 加功能要加模块，越来越繁琐
-
-**重构结果**：
-- 代码量减少（删除 intent.py + rewrite.py 共约 200 行）
-- "那李津伊呢"不再需要改写器，模型直接结合上下文
-- 加功能 = 加工具，不再加模块
+- Agent 层薄、工具层薄、服务层厚
+- 工具是 Agent 与世界交互的途径，不是限制
+- 确认机制在 Loop 外部处理（跨轮次状态）
 
 ## 快速开始
 
@@ -74,6 +73,7 @@
 
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv)
+- **Microsoft Edge**（用于报告 PDF 渲染，Windows 自带）
 
 ### 安装
 
@@ -91,25 +91,7 @@ uv sync
 DEEPSEEK_API_KEY=你的key
 ```
 
-编辑 `config.yaml`：
-
-```yaml
-llm:
-  provider: "deepseek"
-  model: "deepseek-v4-flash"
-  base_url: "https://api.deepseek.com"
-  max_tokens: 4096
-  temperature: 0
-
-data:
-  excel_path: "data/projects_sample.xlsx"
-  db_path: "data/projects.duckdb"
-  table_name: "projects"
-```
-
-### 准备数据
-
-`data/projects_sample.xlsx` 是示例数据（8 行），已包含在仓库中。
+`config.yaml` 默认指向示例数据，可直接跑。
 
 ### 导入数据
 
@@ -131,43 +113,18 @@ DataPilot · 数据领航员（Agent 版）
   [工具] query_database({"question": "已下证的项目有几个"})
 [回答] 已下证的项目共有 2 个。
 
-你问：新增一个项目，叫智能测试系统，负责人张三，分类 web
-  [工具] request_create({"project_name": "智能测试系统", "owner": "张三", "category": "web"})
-[回答] 即将新增以下记录：
-  项目名称：智能测试系统
-  负责人：张三
-  分类：web
-  状态：已提交
-  下发时间：2026-09-11
-确认新增吗？回复「确认」执行，或「取消」放弃。
-
-你问：确认
-[回答] 已新增项目「智能测试系统」。
-
-你问：把智能测试系统的负责人改成李四
-  [工具] request_update({"keyword": "智能测试系统", "updates": {"owner": "李四"}})
-[回答] 即将修改以下记录：
-  项目名称：智能测试系统
-  修改内容：
-    owner: 张三 → 李四
-确认修改吗？
-
-你问：确认
-[回答] 已修改项目「智能测试系统」。
-
-你问：删掉智能测试系统
-  [工具] request_delete({"keyword": "智能测试系统"})
-[回答] 找到 1 条匹配：...
-确认删除这 1 条吗？删除后 7 天内可恢复。
+你问：给我一份本周周报
+  [工具] generate_report({"period": "week"})
+[回答] 周报已生成：data\reports\2026年9月第3周周报_xxx.pdf
 ```
 
 ### 跑评测
 
 ```bash
-# 底层评测（直接测能力层）
+# 底层评测
 uv run python eval/run_eval.py
 
-# Agent 层评测（走完整 Agent 流程）
+# Agent 层评测
 uv run python eval/run_agent_eval.py
 ```
 
@@ -175,68 +132,100 @@ uv run python eval/run_agent_eval.py
 
 | 组件 | 选择 | 理由 |
 |---|---|---|
-| 语言 | Python 3.12 | Agent 生态最成熟 |
-| 包管理 | uv | 快、现代、锁文件可靠 |
-| 数据库 | DuckDB | 本地单文件，零运维，未来可换 Postgres |
-| 模型 | DeepSeek | 性价比高，中文好，兼容 OpenAI 接口 |
-| 编排 | 手写 Agent Loop | 拒绝 LangChain，保持对每一步的完全掌控 |
+| 语言 | Python 3.12 | Agent 生态成熟 |
+| 包管理 | uv | 快、锁文件可靠 |
+| 数据库 | DuckDB | 本地单文件，零运维 |
+| 模型 | DeepSeek | 性价比高，中文好 |
+| 编排 | 手写 Agent Loop | 拒绝 LangChain，掌控每一步 |
+| PDF 渲染 | Edge 无头 | 零依赖，中文完美 |
+| 图表 | matplotlib | 成熟稳定 |
 
 ## 设计亮点
 
 ### 1. Agent Loop 替代 Workflow
 
-核心循环不到 60 行：模型返回 tool_calls 就执行工具、把结果塞回消息、继续循环；没有 tool_calls 就返回最终答案。
+核心循环不到 100 行：模型返回 tool_calls 就执行工具、把结果塞回消息、继续循环；没有就返回最终答案。
 
-### 2. 安全边界：确认机制在 Loop 外部
+### 2. 工具是"交互途径"，不是"限制"
 
-写操作需要跨轮次确认。Agent Loop 是单轮内循环，做不了跨轮次。所以确认机制在 `main.py` 里用 `pending_action` 处理。
+Agent 可以自主组合工具（删除时没找到目标 → 用查询搜索候选 → 问用户确认 → 再删除）。这是合理规划，不是降级。唯一的底线是"不欺骗用户"。
 
-### 3. 双层确认机制
+### 3. 分层：tools 薄、services 厚
 
-- **A 级（意图确认）**：意图模糊时触发
-- **B 级（操作确认）**：增删改操作执行前触发
-- **B+ 级**：>20 条批量删除时，需输入"删除 N 条"确认
+工具只做"菜单 + 传话筒"，所有业务逻辑在 services。加新功能 = 加 service + 在 tools 里注册。
+
+### 4. 三层确认机制
+
+- **A1（意图模糊）**：引导澄清
+- **A2（方向不唯一）**：≤3 种全展示，>3 种触发澄清
+- **B（操作确认）**：增删改执行前二次确认
+- **B+（大批量）**：>20 条需输入式确认
 
 原则：宁可多问，不可猜错。
 
-### 4. 状态联动
+### 5. 报告生成的三层架构
 
-修改 `status_raw` 时，自动重算 `is_pending / is_submitted / is_rejected / is_settled / is_certified`。避免"状态说已下证，布尔字段说没有"的数据不一致。
+- **统计层**（硬编码）：口径固定，可信
+- **编排层**（Agent 决定）：要哪些项、什么时间窗
+- **渲染层**（HTML → PDF）：样式统一，未来 WebUI 可复用
 
-### 5. 软删除 + 视图过滤
+报告 = 数据（硬编码）+ 概述（LLM 生成）。
 
-真实表 `projects_all` 存全部数据；视图 `projects` 自动过滤 `is_deleted = false`。模型和下游代码无感，过滤在数据库层保证。
+### 6. 多层防护
 
-### 6. 可观测作为证据链
+| 层 | 机制 |
+|---|---|
+| 底层 | LLM 重试、SQL 超时、行数上限 |
+| 中层 | 思维熔断、异常熔断 |
+| 顶层 | Loop 总超时 |
+
+### 7. 可观测作为证据链
 
 - `logs/traces.jsonl`：每次问答的完整链路
-- `logs/audit.jsonl`：所有写操作（增/改/删）
+- `logs/audit.jsonl`：所有写操作（增/改/删/导入）
 
 ## 项目结构
 
 ```
 src/
-├── main.py          入口层
-├── agent.py         Agent Loop
-├── tools.py         工具定义与分发
-├── nl2sql.py        自然语言 → SQL
-├── execute.py       执行 SQL
-├── summarize.py     结果转自然语言
-├── create_op.py     新增操作
-├── update_op.py     修改操作
-├── delete_op.py     删除操作
-├── llm.py           模型调用封装
-├── session.py       会话管理
-├── guard.py         安全检查
-├── trace.py         可观测
-├── audit.py         审计日志
-├── cleanup.py       过期数据清理
-├── config.py        配置与路径解析
-└── ingest.py        Excel → DuckDB
+├── main.py             入口层
+├── agent.py            Agent Loop
+├── tools.py            工具定义与分发
+├── display.py          统一 markdown 展示
+│
+├── services/           业务逻辑
+│   ├── __init__.py     共享：异常、上下文、常量
+│   ├── query_service.py
+│   ├── create_service.py
+│   ├── update_service.py
+│   ├── delete_service.py
+│   ├── pending_service.py
+│   ├── import_service.py
+│   ├── consistency_service.py
+│   ├── export_service.py
+│   ├── report_service.py
+│   └── report/
+│       ├── stats.py       原子统计
+│       ├── charts.py      图表生成
+│       ├── render.py      HTML → PDF
+│       └── templates/
+│           └── report.html
+│
+├── nl2sql.py           自然语言 → SQL
+├── execute.py          执行 SQL（含超时和上限）
+├── summarize.py        结果 → 自然语言
+├── llm.py              模型调用（含重试）
+├── session.py          会话管理
+├── guard.py            安全检查
+├── trace.py            可观测
+├── audit.py            审计日志
+├── cleanup.py          过期数据清理
+├── config.py           配置与路径解析
+└── ingest.py           Excel → DuckDB
 
-tests/              测试脚本
-eval/               评测
-docs/               设计文档
+tests/                  测试脚本
+eval/                   评测
+docs/                   设计文档
 ```
 
 ## 已知限制
@@ -244,20 +233,27 @@ docs/               设计文档
 - **仅支持单表操作**，多表关联未实现
 - **无权限控制**，所有用户看到相同数据
 - **无 RAG 能力**，仅支持结构化数据查询
-- **修改仅支持单条**，批量修改未实现
 - **无 Web UI**，仅命令行
+- **会话不持久化**，程序重启后对话历史丢失
+- **报告依赖 Edge**，Linux/Mac 需要额外配置
 
 ## Roadmap
 
-- [x] MVP：NL2SQL + 多轮对话
-- [x] 评测体系：Golden Set + 自动跑分
-- [x] Agent 架构：从 workflow 重构为 tool calling
-- [x] 完整 CRUD：查询 / 新增 / 修改 / 删除
-- [x] 双层确认 + 软删除 + 审计
-- [ ] 批量修改
-- [ ] RAG 能力（文档检索）
+- [x] Agent 架构（从 workflow 重构为 tool calling）
+- [x] 完整 CRUD（单条 + 批量）
+- [x] 多层确认机制（A1/A2/B/B+）
+- [x] 软删除 + 审计 + 过期清理
+- [x] Excel 导入（差异扫描 + 三阶段确认）
+- [x] Excel 导出
+- [x] 一致性检查
+- [x] 日/周/月报（PDF + 图表）
+- [x] 多层防护（重试、熔断、超时）
+- [ ] 上下文压缩 + 对话归档
+- [ ] 会话持久化
+- [ ] 容器化（Dockerfile）
+- [ ] Playwright 替代系统 Edge
+- [ ] RAG（文档检索）
 - [ ] 多表支持
-- [ ] 可观测升级（接入 Langfuse）
 - [ ] Web UI
 - [ ] 权限、成本、限流
 
