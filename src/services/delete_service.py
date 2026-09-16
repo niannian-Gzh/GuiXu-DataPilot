@@ -4,6 +4,7 @@ import duckdb
 from services import UserInputRequired, BULK_THRESHOLD
 from services._filters import find_candidates
 from audit import log
+from display import format_table
 
 
 CONFIRM_WORDS = {"确认", "确定", "是", "对", "好", "可以", "删", "删除", "删吧", "yes", "y", "ok"}
@@ -30,18 +31,28 @@ def request_delete(filter_question: str, ctx) -> str:
     )
 
 
+DISPLAY_ALL_THRESHOLD = 20
+DISPLAY_SAMPLE_COUNT = 10
+
+
 def format_candidates(candidates: list) -> str:
     n = len(candidates)
-    if n <= BULK_THRESHOLD:
-        lines = [f"找到 {n} 条匹配："]
-        for i, c in enumerate(candidates, 1):
-            lines.append(f"  {i}. {c['project_name']}（{c.get('owner', '')}，{c.get('status_raw', '')}）")
-        return "\n".join(lines)
-    lines = [f"找到 {n} 条匹配，以下是前 10 条："]
-    for i, c in enumerate(candidates[:10], 1):
-        lines.append(f"  {i}. {c['project_name']}（{c.get('owner', '')}，{c.get('status_raw', '')}）")
-    lines.append(f"  ...（共 {n} 条）")
-    return "\n".join(lines)
+    if n <= DISPLAY_ALL_THRESHOLD:
+        shown = candidates
+        note = ""
+    else:
+        shown = candidates[:DISPLAY_SAMPLE_COUNT]
+        note = f"\n\n（共 {n} 条，此处仅显示前 {DISPLAY_SAMPLE_COUNT} 条）"
+
+    rows = [
+        {
+            "项目名称": c.get("project_name", ""),
+            "负责人": c.get("owner", "") or "",
+            "状态": c.get("status_raw", "") or "",
+        }
+        for c in shown
+    ]
+    return f"找到 **{n}** 条匹配：\n\n" + format_table(rows) + note
 
 
 def delete_confirm_prompt(candidates: list) -> str:

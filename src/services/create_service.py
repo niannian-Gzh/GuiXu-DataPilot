@@ -3,6 +3,7 @@ import duckdb
 from datetime import date
 from services import UserInputRequired, BULK_THRESHOLD
 from audit import log
+from display import format_table
 
 
 def _validate_record(record):
@@ -105,16 +106,18 @@ def request_batch_create(records: list, ctx):
 
 
 def format_create_confirm(record: dict) -> str:
-    return "\n".join([
-        "即将新增以下记录：",
-        f"  项目名称：{record['project_name']}",
-        f"  负责人：{record['owner']}",
-        f"  分类：{record['category']}",
-        f"  状态：{record['status_raw']}",
-        f"  下发时间：{record['issued_date']}",
-        "",
-        "确认新增吗？回复「确认」执行，或「取消」放弃。",
-    ])
+    rows = [{
+        "项目名称": record["project_name"],
+        "负责人": record["owner"],
+        "分类": record["category"],
+        "状态": record["status_raw"],
+        "下发时间": record["issued_date"],
+    }]
+    return (
+        "即将新增以下记录：\n\n"
+        + format_table(rows)
+        + "\n\n确认新增吗？回复「确认」执行，或「取消」放弃。"
+    )
 
 
 def format_batch_create_confirm(records: list) -> str:

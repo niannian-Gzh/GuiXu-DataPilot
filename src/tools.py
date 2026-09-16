@@ -24,8 +24,10 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "request_delete",
             "description": (
-                "请求删除符合条件的项目记录。用户用自然语言描述筛选条件。"
-                "调用后操作会暂停等待用户确认。"
+                "请求删除符合条件的项目记录。"
+                "filter_question 是模糊筛选条件，系统会做模糊搜索并展示候选，"
+                "请用户确认后执行删除。"
+                "例：'家装项目'、'所有 web 类项目'、'所有项目'。"
             ),
             "parameters": {
                 "type": "object",
@@ -58,7 +60,11 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "request_update",
-            "description": "请求修改符合条件的项目记录。",
+            "description": (
+                "请求修改符合条件的项目记录。"
+                "filter_question 是模糊筛选条件，系统会搜索匹配记录、"
+                "展示改前改后对比、请用户确认。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

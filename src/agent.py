@@ -13,24 +13,34 @@ LOOP_TIMEOUT = 240     # Agent Loop 总超时（秒）
 
 SYSTEM_PROMPT = """你是 DataPilot，一个数据助手。你可以调用工具来完成任务。
 
+工具是你与数据世界交互的途径。你可以自主组合工具来达成用户目标。
+
 规则：
-1. 需要查询数据时，调用 query_database 工具。
-2. 用户明确要求删除数据时，调用 request_delete 工具。
-3. 用户明确要求修改数据时，调用 request_update 工具。
-4. 用户明确要求新增数据时：
+1. 需要查询数据时，调用 query_database。
+2. 用户要求删除数据时，调用 request_delete。
+3. 用户要求修改数据时，调用 request_update。
+4. 用户要求新增数据时：
    - 单条用 request_create
    - 多条用 request_batch_create
-5. 不要擅自改变用户请求的性质。如果用户要求不支持的操作，明确告知。
-6. 如果用户的问题不明确，直接向用户提问，不要猜测。
-7. 不要编造数据。所有数据必须来自工具返回。
-8. 用简洁的中文回答。
-9. 信任工具结果：工具返回中包含 hint 字段时，说明工具已完整执行，
-   请信任该结果，不要换问法反复查询同一个问题。
-10. 不要陷入自我怀疑：同一个工具连续成功调用 2 次后，
-    应当基于已有信息回答用户，或向用户说明情况，而不是继续尝试。
-11. 如果工具返回中包含 ambiguous: true 和 branches 字段，
+
+5. 【自主组合】你可以灵活组合工具来达成目标。例如：
+   - 删除时没找到目标 → 用 query_database 搜索候选 → 问用户确认 → 再删除
+   - 修改时不确定改哪条 → 先查询确认 → 再修改
+   这不是"降级"，是合理规划。
+
+6. 【如实汇报】底线是：不允许欺骗用户。
+   不要用查询冒充删除/修改。目标没达成时，如实告知当前进展。
+
+7. 如果用户的问题不明确，直接向用户提问，不要猜测。
+8. 不要编造数据。所有数据必须来自工具返回。
+9. 用简洁的中文回答。
+10. 信任工具结果：工具返回包含 hint 字段时，说明工具已完整执行，
+    请信任该结果，不要换问法反复查询同一个问题。
+11. 不要陷入自我怀疑：同一个工具连续成功调用 2 次后，
+    应当基于已有信息回答用户，或向用户说明情况。
+12. 如果工具返回包含 ambiguous: true 和 branches 字段，
     说明这个查询有两种合理解读，请把两个分支都展示给用户。
-12. 如果工具返回 is_security: true，说明这是安全拒绝，不要重试，
+13. 如果工具返回 is_security: true，说明这是安全拒绝，不要重试，
     直接告知用户无法完成。
 
 当前日期：{today}"""
@@ -104,11 +114,9 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
                     success_counts[name] = success_counts.get(name, 0) + 1
                     if success_counts[name] > limit:
                         return (
-                            f"抱歉，我在处理这个请求时反复尝试了多次，"
-                            f"工具「{name}」已成功调用 {success_counts[name]} 次，"
-                            f"但结果始终未能让流程继续。\n\n"
-                            f"最后一次工具返回：{result[:200]}\n\n"
-                            f"建议：请确认你的请求是否明确，或换一种说法再试。"
+                            f"抱歉，我在处理这个请求时反复尝试了多次，未能完成。\n\n"
+                            f"> 工具「{name}」已成功调用 {success_counts[name]} 次，结果始终不理想\n\n"
+                            f"**建议**：请确认你的请求是否明确，或换一种说法再试。"
                         )
                 elif _is_security_error(result):
                     # 安全拒绝：不计数，交由 agent 处理
@@ -118,10 +126,9 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
                     failure_counts[name] = failure_counts.get(name, 0) + 1
                     if failure_counts[name] > limit:
                         return (
-                            f"抱歉，工具「{name}」已连续失败 {failure_counts[name]} 次，"
-                            f"无法完成请求。\n\n"
-                            f"最后一次错误：{result[:200]}\n\n"
-                            f"建议：请检查请求是否合理，或稍后重试。"
+                            f"抱歉，工具「{name}」已连续失败 {failure_counts[name]} 次，无法完成请求。\n\n"
+                            f"> 最后一次错误：{result[:200]}\n\n"
+                            f"**建议**：请检查请求是否合理，或稍后重试。"
                         )
 
                 messages.append({

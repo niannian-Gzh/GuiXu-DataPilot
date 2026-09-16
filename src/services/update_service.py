@@ -4,6 +4,7 @@ from services import UserInputRequired, BULK_THRESHOLD
 from services._filters import find_candidates
 from nl2sql import SCHEMA_DESC
 from audit import log
+from display import format_table
 
 
 FORBIDDEN_FIELDS = {"is_deleted", "deleted_at", "deleted_by", "delete_trace_id"}
@@ -59,38 +60,45 @@ def format_update_confirm(candidates: list, updates: dict) -> str:
 
     if n == 1:
         record = candidates[0]
-        lines = ["即将修改以下记录：", "", f"  项目名称：{record['project_name']}", "", "  修改内容："]
+        rows = []
         for field, new_value in updates.items():
             if field in skip:
                 continue
-            lines.append(f"    {field}: {record.get(field, '（空）')} → {new_value}")
-        lines.append("")
-        lines.append("确认修改吗？回复「确认」执行，或「取消」放弃。")
-        return "\n".join(lines)
+            rows.append({
+                "字段": field,
+                "原值": str(record.get(field, "") or "（空）"),
+                "新值": str(new_value),
+            })
+        text = f"即将修改记录「**{record['project_name']}**」：\n\n"
+        text += format_table(rows)
+        text += "\n\n确认修改吗？回复「确认」执行，或「取消」放弃。"
+        return text
 
-    lines = [f"即将修改 {n} 条记录：", "", "  修改内容："]
-    for field, new_value in updates.items():
-        if field in skip:
-            continue
-        lines.append(f"    {field} → {new_value}")
-    lines.append("")
-    lines.append("  改前分布：")
+    # 批量
+    dist_rows = []
     for field in updates:
         if field in skip:
             continue
         dist = {}
         for c in candidates:
-            v = c.get(field, "（空）")
+            v = str(c.get(field, "") or "（空）")
             dist[v] = dist.get(v, 0) + 1
         for value, count in dist.items():
-            lines.append(f"    {field}={value}: {count} 条")
-    lines.append("")
+            dist_rows.append({"字段": field, "当前值": value, "条数": count})
+
+    text = f"即将修改 **{n}** 条记录。\n\n**修改内容：**\n\n"
+    for field, new_value in updates.items():
+        if field in skip:
+            continue
+        text += f"- {field} → {new_value}\n"
+
+    text += "\n**改前分布：**\n\n" + format_table(dist_rows)
+
     if n <= BULK_THRESHOLD:
-        lines.append(f"确认修改这 {n} 条吗？回复「确认」执行，或「取消」放弃。")
+        text += f"\n\n确认修改这 {n} 条吗？回复「确认」执行，或「取消」放弃。"
     else:
-        lines.append("⚠️ 批量修改警告")
-        lines.append(f"如确认，请输入「修改{n}条」；或回复「取消」放弃。")
-    return "\n".join(lines)
+        text += "\n\n**⚠️ 批量修改警告**\n如确认，请输入「修改{n}条」；或回复「取消」放弃。"
+    return text
 
 
 def execute_update(candidates, updates, db_path, real_table, trace_id, user_input):
