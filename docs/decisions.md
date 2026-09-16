@@ -378,3 +378,12 @@ is_deleted / deleted_at / deleted_by / delete_trace_id
 | Read | query_database | ✅ |
 | Update | request_update | ✅ |
 | Delete | request_delete | ✅ |
+
+
+[素材] A2 分叉管理：用户说"已结算"有两种合理解读（包含匹配141 vs 精确匹配76）。系统检测到这种天然歧义时，两个分支都展示，让用户自己判断。这比"触发澄清"更高效——用户不用多一轮交互。
+
+[素材] 修了NL2SQL的状态筛选歧义：模型把"已结算"理解成status_raw精确匹配，漏掉了"已结算已下证"。修法是在SCHEMA_DESC里明确"status_raw是组合状态"，并在prompt里引导优先用布尔字段。
+
+[素材] 思维熔断设计：不是压制 agent 的怀疑，是给怀疑一个出口（hint 验证）和终点（成功调用上限）。实测：空结果场景从4次调用降到1次；用户质疑场景被正确识别为"验证需求"而非"重试"。
+
+[素材] 评测从15题扩到31题，靠纯SQL算期望值，不靠拍脑袋。Agent层精选15题，覆盖7大类。

@@ -1,12 +1,202 @@
 [
-  {"id": 1, "question": "已下证的项目有几个", "expected_answer_contains": ["2"]},
-  {"id": 2, "question": "已结算的项目有几个", "expected_answer_contains": ["6"]},
-  {"id": 3, "question": "被打回的项目有哪些", "expected_rows": 3},
-  {"id": 4, "question": "张三负责的项目有几个", "expected_answer_contains": ["3"]},
-  {"id": 5, "question": "打回次数最多的项目是哪个", "expected_answer_contains": ["数据分析可视化平台"]},
-  {"id": 6, "question": "待提交的项目有几个", "expected_answer_contains": ["1"]},
-  {"id": 7, "question": "打回次数大于等于2的项目有哪些", "expected_rows": 1},
-  {"id": 8, "question": "web类的项目有几个", "expected_answer_contains": ["6"]},
-  {"id": 9, "question": "嵌入式类的项目有几个", "expected_answer_contains": ["2"]},
-  {"id": 10, "question": "不存在的人的项目有哪些", "expected_rows": 0}
+  {
+    "id": 1,
+    "category": "布尔筛选",
+    "question": "已下证的项目有几个",
+    "expected_answer_contains": [
+      "2"
+    ]
+  },
+  {
+    "id": 2,
+    "category": "布尔筛选",
+    "question": "已结算的项目有多少个",
+    "expected_answer_contains": [
+      "6"
+    ]
+  },
+  {
+    "id": 3,
+    "category": "布尔筛选",
+    "question": "待提交的项目有几个",
+    "expected_answer_contains": [
+      "1"
+    ]
+  },
+  {
+    "id": 4,
+    "category": "布尔筛选",
+    "question": "已提交的项目有几个",
+    "expected_answer_contains": [
+      "1"
+    ]
+  },
+  {
+    "id": 5,
+    "category": "布尔筛选",
+    "question": "被打回的项目有多少个",
+    "expected_answer_contains": [
+      "2"
+    ]
+  },
+  {
+    "id": 6,
+    "category": "布尔筛选",
+    "question": "已结算但未下证的项目有多少个",
+    "expected_answer_contains": [
+      "4"
+    ]
+  },
+  {
+    "id": 7,
+    "category": "数值筛选",
+    "question": "打回次数为0的项目有多少个",
+    "expected_answer_contains": [
+      "5"
+    ]
+  },
+  {
+    "id": 8,
+    "category": "数值筛选",
+    "question": "打回次数为1的项目有多少个",
+    "expected_answer_contains": [
+      "2"
+    ]
+  },
+  {
+    "id": 9,
+    "category": "数值筛选",
+    "question": "打回次数大于0的项目有多少个",
+    "expected_answer_contains": [
+      "3"
+    ]
+  },
+  {
+    "id": 10,
+    "category": "数值筛选",
+    "question": "打回次数大于等于2的项目有多少个",
+    "expected_answer_contains": [
+      "1"
+    ]
+  },
+  {
+    "id": 11,
+    "category": "数值筛选",
+    "question": "打回次数等于3的项目有几个",
+    "expected_answer_contains": [
+      "0"
+    ]
+  },
+  {
+    "id": 12,
+    "category": "数值筛选",
+    "question": "打回次数最多的项目是哪个",
+    "expected_answer_contains": [
+      "数据分析可视化平台"
+    ]
+  },
+  {
+    "id": 13,
+    "category": "聚合",
+    "question": "张三负责的项目有多少个",
+    "expected_answer_contains": [
+      "3"
+    ]
+  },
+  {
+    "id": 14,
+    "category": "聚合",
+    "question": "李四负责的项目有多少个",
+    "expected_answer_contains": [
+      "3"
+    ]
+  },
+  {
+    "id": 15,
+    "category": "聚合",
+    "question": "王五负责的项目有多少个",
+    "expected_answer_contains": [
+      "2"
+    ]
+  },
+  {
+    "id": 16,
+    "category": "分组",
+    "question": "每个负责人分别负责多少个项目",
+    "expected_rows": 3
+  },
+  {
+    "id": 17,
+    "category": "分组",
+    "question": "web类和嵌入式类各有几个项目",
+    "expected_rows": 2
+  },
+  {
+    "id": 18,
+    "category": "分组",
+    "question": "每种状态分别有多少个项目",
+    "expected_rows": 5
+  },
+  {
+    "id": 19,
+    "category": "分组",
+    "question": "各打回次数的项目分布是怎样的",
+    "expected_rows": 3
+  },
+  {
+    "id": 20,
+    "category": "组合条件",
+    "question": "李四负责的已下证项目有几个",
+    "expected_answer_contains": [
+      "0"
+    ]
+  },
+  {
+    "id": 21,
+    "category": "组合条件",
+    "question": "张三负责的被打回项目有几个",
+    "expected_answer_contains": [
+      "1"
+    ]
+  },
+  {
+    "id": 22,
+    "category": "组合条件",
+    "question": "web类已结算的项目有多少个",
+    "expected_answer_contains": [
+      "5"
+    ]
+  },
+  {
+    "id": 23,
+    "category": "组合条件",
+    "question": "嵌入式类已下证的项目有几个",
+    "expected_answer_contains": [
+      "0"
+    ]
+  },
+  {
+    "id": 24,
+    "category": "空结果",
+    "question": "不存在的人负责的项目有哪些",
+    "expected_rows": 0
+  },
+  {
+    "id": 25,
+    "category": "空结果",
+    "question": "打回次数超过10次的项目有哪些",
+    "expected_rows": 0
+  },
+  {
+    "id": 26,
+    "category": "排序",
+    "question": "项目下发时间最早的3个项目是哪些",
+    "expected_rows": 3
+  },
+  {
+    "id": 27,
+    "category": "排序",
+    "question": "最近下发的5个项目是哪些",
+    "expected_rows": 5
+  }
 ]

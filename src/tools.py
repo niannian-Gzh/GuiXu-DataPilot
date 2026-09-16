@@ -138,6 +138,45 @@ TOOL_SCHEMAS = [
     },
 ]
 
+AMBIGUOUS_FIELD_MAP = {
+    "is_settled = true": ("status_raw = '已结算'", "精确匹配：状态恰好是'已结算'"),
+    "is_certified = true": ("status_raw = '已下证'", "精确匹配：状态恰好是'已下证'"),
+    "is_rejected = true": ("status_raw = '已打回'", "精确匹配：状态恰好是'已打回'"),
+    "is_pending = true": ("status_raw = '待提交'", "精确匹配：状态恰好是'待提交'"),
+    "is_submitted = true": ("status_raw = '已提交'", "精确匹配：状态恰好是'已提交'"),
+}
+
+
+def _detect_ambiguity(sql: str, df, db_path: str):
+    """检测 SQL 是否有歧义解读。只在 SQL 用了布尔字段时检测。"""
+    for old, (new, description) in AMBIGUOUS_FIELD_MAP.items():
+        if old in sql:
+            alt_sql = sql.replace(old, new)
+            try:
+                alt_df = execute_sql(alt_sql, db_path)
+            except Exception:
+                continue
+
+            if df.to_string() != alt_df.to_string():
+                def extract_value(d):
+                    if d.shape == (1, 1):
+                        return str(d.iloc[0, 0])
+                    return f"{d.shape[0]} 行"
+
+                return {
+                    "ambiguous": True,
+                    "branches": [
+                        {
+                            "interpretation": f"包含匹配（默认，含组合状态）",
+                            "value": extract_value(df),
+                        },
+                        {
+                            "interpretation": description,
+                            "value": extract_value(alt_df),
+                        },
+                    ],
+                }
+    return None
 
 def build_tool_functions(llm, db_path: str, table_name: str, trace):
     schema = get_schema(db_path, table_name)
@@ -145,15 +184,35 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
 
     def query_database(question: str) -> str:
         try:
-            sql, retries = generate_sql_with_retry(
+            sql, _ = generate_sql_with_retry(
                 question, llm, schema, db_path, table_name, max_retries=2
             )
             df = execute_sql(sql, db_path)
             answer = summarize(question, df, llm)
-            return json.dumps(
-                {"sql": sql, "row_count": len(df), "answer": answer},
-                ensure_ascii=False,
-            )
+
+            result = {
+                "sql": sql,
+                "row_count": len(df),
+                "answer": answer,
+            }
+
+            # A2：检测歧义
+            ambiguity = _detect_ambiguity(sql, df, db_path)
+            if ambiguity:
+                result.update(ambiguity)
+
+            # 空结果
+            if len(df) == 0:
+                con = duckdb.connect(db_path, read_only=True)
+                total = con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+                con.close()
+                result["total_records_in_table"] = total
+                result["hint"] = (
+                    f"查询已完整执行，无报错。表中共有 {total} 条记录，"
+                    f"符合当前筛选条件的为 0 条。这个结果是可信的。"
+                )
+
+            return json.dumps(result, ensure_ascii=False)
         except SecurityError as e:
             return json.dumps({"error": f"安全拒绝：{e}"}, ensure_ascii=False)
         except Exception as e:
