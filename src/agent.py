@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import date
 from tools import TOOL_SCHEMAS, build_tool_functions, dispatch
 from services import UserInputRequired
@@ -7,6 +8,7 @@ from services import UserInputRequired
 READ_TOOL_LIMIT = 3
 WRITE_TOOL_LIMIT = 2
 WRITE_TOOLS = {"request_create", "request_update", "request_delete", "request_batch_create"}
+LOOP_TIMEOUT = 240     # Agent Loop 总超时（秒）
 
 
 SYSTEM_PROMPT = """你是 DataPilot，一个数据助手。你可以调用工具来完成任务。
@@ -52,6 +54,7 @@ def _is_security_error(result_str: str) -> bool:
 
 def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trace, max_iterations: int = 10):
     """Agent 主循环。"""
+    start_time = time.time()
     functions = build_tool_functions(llm, db_path, table_name, trace)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT.format(today=date.today().isoformat())}]
@@ -62,6 +65,9 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
     failure_counts = {}
 
     for i in range(max_iterations):
+        if time.time() - start_time > LOOP_TIMEOUT:
+            return f"处理超时（超过 {LOOP_TIMEOUT} 秒），请简化请求或稍后重试。"
+
         msg = llm.chat_messages(messages, tools=TOOL_SCHEMAS)
 
         if msg.tool_calls:
