@@ -20,7 +20,7 @@ def test_edge_pdf():
     </style>
     </head>
     <body>
-        <h1>数据领航员 · 周报测试</h1>
+        <h1>数据处理 Agent · 周报测试</h1>
         <p>这是一段中文测试。如果能看到，说明 PDF 中文没问题。</p>
         <table>
             <tr><th>项目</th><th>负责人</th></tr>

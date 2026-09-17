@@ -93,4 +93,6 @@ class LLM:
                 "total_tokens": resp.usage.total_tokens,
             }
 
-        return resp.choices[0].message, usage
+        message = resp.choices[0].message
+        reasoning = getattr(message, "reasoning_content", None)
+        return message, usage, reasoning

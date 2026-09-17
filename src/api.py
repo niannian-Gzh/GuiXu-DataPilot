@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
     _sessions.clear()
 
 
-app = FastAPI(title="DataPilot API", lifespan=lifespan)
+app = FastAPI(title="DataPilot 数据处理 Agent API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

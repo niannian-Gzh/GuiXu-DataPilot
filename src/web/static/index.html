@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DataPilot · 数据领航员</title>
+<title>DataPilot · 数据处理 Agent</title>
 <script>
   (function () {
     var t = localStorage.getItem('dp_theme') || 'dark';
@@ -14,10 +14,6 @@
     }
   })();
 </script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- text= 只取「数据领航员」五个字的字形，否则整个思源宋体有十几 MB -->
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600&text=%E6%95%B0%E6%8D%AE%E9%A2%86%E8%88%AA%E5%91%98&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
@@ -475,14 +471,18 @@
     filter: drop-shadow(0 0 10px rgba(47, 108, 224, 0.22));
   }
 
-  /* 副标题：宋体。上面 DataPilot 是 DIN 系的窄体无衬线，
-     下面换成衬线，一横一竖拉开对比；「申报台账」这行当也压得住宋体的文书气 */
+  /* 副标题：与正文同族的无衬线。
+     原先用宋体是为配「数据领航员」的文人气质，名字换成功能性表述后那点书卷气
+     反而成了累赘；且 Agent 是拉丁字母，宋体对它不生效会 fallback，
+     中英混排会断成两种字体。改用无衬线后靠字号和透明度降级即可——
+     字重和字距也一并收回来，600 配 0.14em 是宋体的参数，
+     落到无衬线上会又重又散 */
   .brand-tag {
-    font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC',
-                 'SimSun', serif;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.14em;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
     color: var(--fg-sub);
     margin-top: 3px;
   }
@@ -1111,6 +1111,58 @@
     animation: spin 0.7s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 思考气泡：模型的思维链。比工具卡片更"轻"——它是过程不是结果，
+     不该跟真正做事的工具调用抢注意力，所以用虚线框 + 无底色区分 */
+  .think {
+    margin-bottom: 12px;
+    border-radius: var(--r);
+    border: 1px dashed var(--edge);
+    overflow: hidden;
+    animation: rise 0.3s var(--ease);
+  }
+  .think-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 7px 12px;
+    text-align: left;
+    font-size: 12px;
+    color: var(--fg-dim);
+    transition: background 0.16s var(--ease);
+  }
+  .think-head:hover { background: var(--glass-lift); }
+  .think-head .caret {
+    width: 10px; height: 10px;
+    color: var(--fg-faint);
+    transition: transform 0.22s var(--ease);
+    flex: none;
+  }
+  .think.open .caret { transform: rotate(90deg); }
+  .think-label { flex: none; letter-spacing: 0.02em; }
+  .think-gist {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .think-body {
+    padding: 4px 14px 12px;
+    border-top: 1px solid var(--edge-soft);
+    font-size: 12.5px;
+    line-height: 1.72;
+    color: var(--fg-dim);
+    /* 思维链自带换行，且可能很长——限高可滚，不撑破整页 */
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 320px;
+    overflow-y: auto;
+    animation: rise 0.24s var(--ease);
+  }
 
   .tool-body {
     padding: 0 12px 12px;
@@ -1932,7 +1984,7 @@
         <span style="animation-delay:.52s">O</span>
         <span style="animation-delay:.58s">T</span>
       </div>
-      <div class="boot-sub" style="text-align:center;margin-top:9px">DATA NAVIGATOR</div>
+      <div class="boot-sub" style="text-align:center;margin-top:9px">DATA PROCESSING AGENT</div>
     </div>
 
     <div class="boot-stats" v-cloak id="bootStats">
@@ -1968,7 +2020,7 @@
       </div>
       <div style="flex:1;min-width:0">
         <div class="brand-name">DataPilot</div>
-        <div class="brand-tag">数据领航员</div>
+        <div class="brand-tag">数据处理 Agent</div>
       </div>
     </div>
 
@@ -2186,8 +2238,8 @@
               </g>
             </svg>
           </div>
-          <h2>领航你的申报数据</h2>
-          <p>用自然语言查台账、改状态、导报表</p>
+          <h2>今天想问点什么？</h2>
+          <p>用一句话，处理你的数据</p>
           <div class="hello-chips">
             <button class="chip" v-for="q in samples" :key="q" @click="ask(q)">{{ q }}</button>
           </div>
@@ -2224,9 +2276,27 @@
                 {{ t.stage }}
               </div>
 
+              <!-- 思考与工具共用一条时间线。
+                   它们本来就是先后发生的，按 SSE 到达顺序排就够了，
+                   不必再按轮次重组——重组反而要处理历史会话缺 round 的情况 -->
+              <template v-for="(tool, i) in t.tools" :key="i">
+
+              <!-- 思考气泡（模型的思维链） -->
+              <div v-if="tool.kind === 'think'" class="think"
+                   :class="{open: tool.open}">
+                <button class="think-head" @click="tool.open = !tool.open">
+                  <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                  <span class="think-label">{{ tool.round ? '思考 · 第 ' + tool.round + ' 轮' : '思考' }}</span>
+                  <span class="think-gist">{{ thinkGist(tool.text) }}</span>
+                </button>
+                <div class="think-body" v-if="tool.open">{{ tool.text }}</div>
+              </div>
+
               <!-- 工具调用 -->
-              <div v-for="(tool, i) in t.tools" :key="i"
-                   class="tool" :class="{open: tool.open}">
+              <div v-else class="tool" :class="{open: tool.open}">
                 <button class="tool-head" @click="tool.open = !tool.open">
                   <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                        stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -2280,6 +2350,8 @@
                   <div class="rawbox" v-else-if="tool.raw">{{ tool.raw }}</div>
                 </div>
               </div>
+
+              </template>
 
               <!-- 确认卡片 -->
               <div v-if="t.confirm" class="confirm" :class="{resolved: t.confirm.resolved}">
@@ -2789,29 +2861,36 @@ createApp({
     const lastElapsed = ref(null);
     const streamEl = ref(null);
 
+    // 领域无关的引导语，从查 → 改 → 导出 → 检查 → 报告，由简到繁
     const samples = [
-      '已下证的项目有几个',
-      '把所有已下证的项目导成 Excel',
-      '给我一份本周周报',
-      '上周打回了哪些项目',
-      '检查一下数据有没有问题',
+      '这张表里有多少条记录',
+      '把某条记录的状态改一下',
+      '把所有数据导出成 Excel',
+      '看看数据有没有问题',
+      '给我一份本周报告',
     ];
 
     /* ---------------- 派生 ---------------- */
     const currentTitle = computed(() => turns.value[0]?.question || '新会话');
     const allArtifacts = computed(() => turns.value.flatMap((t) => t.artifacts || []));
-    const allTools = computed(() => turns.value.flatMap((t) => t.tools || []));
+    // 轨迹面板统计的是"调了什么工具"，思考节点不算
+    const allTools = computed(() =>
+      turns.value.flatMap((t) => (t.tools || []).filter((x) => x.kind !== 'think')));
 
     /* 轨迹按「轮次」分组：光看一串扁平的调用，读不出
        「这一问花了多久、走了几步」，而那才是用户关心的单位 */
     const roundsWithTools = computed(() =>
       turns.value
-        .map((t, i) => ({
-          roundIndex: i,
-          question: t.question,
-          tools: t.tools || [],
-          totalMs: (t.tools || []).reduce((s, x) => s + (x.ms || 0), 0),
-        }))
+        .map((t, i) => {
+          // 同一数组里混着思考节点，这里只要工具调用
+          const tools = (t.tools || []).filter((x) => x.kind !== 'think');
+          return {
+            roundIndex: i,
+            question: t.question,
+            tools,
+            totalMs: tools.reduce((s, x) => s + (x.ms || 0), 0),
+          };
+        })
         .filter((r) => r.tools.length));
 
     const stateCount = computed(() => {
@@ -2925,6 +3004,21 @@ createApp({
       const v = a.question || a.filter_question || '';
       return v ? String(v).slice(0, 70) : '';
     };
+
+    /* 思考节点的唯一构造入口。实时推送和历史回放都从这里出——
+       两条路径各写一份的话，迟早会漂移成一个有 round 一个没有、
+       一个有 open 一个没 open，界面上就长得不一样了 */
+    const makeThinkNode = (round, text) => ({
+      kind: 'think',
+      round: round ?? null,
+      text: text || '',
+      open: false,
+    });
+
+    /* 折叠状态下的一行预览。思维链开头多是"我们需要…"这类套话，
+       信息量不高，但至少能让人判断值不值得展开 */
+    const thinkGist = (text) =>
+      String(text || '').replace(/\s+/g, ' ').trim().slice(0, 70);
 
     const confirmColumns = (c) => (c.rows && c.rows.length ? Object.keys(c.rows[0]) : []);
     const confirmTitle = (c) => {
@@ -3199,6 +3293,12 @@ createApp({
           turn.stage = ev.round === 1 ? '正在理解你的问题…' : '正在整理结果…';
           break;
 
+        case 'reasoning':
+          // 思考节点也进 tools 数组：界面要的是「先想后做」的时间线，
+          // 单独存一份再合并，反而要多一层结构和一个排序步骤
+          turn.tools.push(makeThinkNode(ev.round, ev.text));
+          break;
+
         case 'compact':
           turn.stage = ev.message;
           break;
@@ -3388,7 +3488,21 @@ createApp({
         } else if (m.role === 'assistant' && cur) {
           cur.answer = m.content;
 
-          for (const t of (m.dp_tools || [])) {
+          // 思考链和工具是两条独立记录，各自带轮次，合起来按轮次排。
+          // 直接全堆在前面的话，回放出来的顺序会和实时看到的不一样
+          const timeline = [
+            ...(m.dp_reasonings || []).map((r) => ({ kind: 'think', round: r.round, src: r })),
+            ...(m.dp_tools || []).map((t) => ({ kind: 'tool', round: t.round, src: t })),
+          ];
+          // sort 在现代 JS 里是稳定的，同轮次内 think 排在 tool 之前
+          timeline.sort((a, b) => (a.round ?? 0) - (b.round ?? 0));
+
+          for (const item of timeline) {
+            if (item.kind === 'think') {
+              cur.tools.push(makeThinkNode(item.round, item.src.text));
+              continue;
+            }
+            const t = item.src;
             const tool = {
               callId: '',
               name: t.name,
@@ -3656,7 +3770,7 @@ createApp({
       toast, notify,
       autoGrow, setTheme, toggleRail,
       md, escapeHtml, prettyJson, highlightSql, fmtVal, shortTime,
-      toolGist, confirmColumns, confirmTitle,
+      toolGist, thinkGist, confirmColumns, confirmTitle,
     };
   },
 }).mount('#app');

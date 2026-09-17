@@ -7,16 +7,21 @@ from services.report.render import render_html, html_to_pdf
 from datetime import date
 
 
+# 品牌名。文件名那里要把它从标题里剥掉，两处必须同源——
+# 各写一遍的话，改了标题忘了文件名，导出的 PDF 就带着品牌前缀
+BRAND = "数据处理 Agent"
+
+
 def _period_label(period_type: str, start: str) -> str:
     d = date.fromisoformat(start)
     if period_type == "day":
-        return f"数据领航员 · {d.year}年{d.month}月{d.day}日日报"
+        return f"{BRAND} · {d.year}年{d.month}月{d.day}日日报"
     if period_type == "week":
         week_num = (d.day - 1) // 7 + 1
-        return f"数据领航员 · {d.year}年{d.month}月第{week_num}周周报"
+        return f"{BRAND} · {d.year}年{d.month}月第{week_num}周周报"
     if period_type == "month":
-        return f"数据领航员 · {d.year}年{d.month}月月报"
-    return "数据领航员 · 报告"
+        return f"{BRAND} · {d.year}年{d.month}月月报"
+    return f"{BRAND} · 报告"
 
 REPORT_DIR = PROJECT_ROOT / "data" / "reports"
 
@@ -46,7 +51,7 @@ def run(period: str, items: list, ctx, custom_start: str = None, custom_end: str
 
     if custom_start and custom_end:
         start, end = custom_start, custom_end
-        period_label = f"数据领航员 · {start} 至 {end} 的总结报告"
+        period_label = f"{BRAND} · {start} 至 {end} 的总结报告"
     else:
         start, end = stats.get_period(period, offset)
         period_label = _period_label(period, start)
@@ -80,7 +85,7 @@ def run(period: str, items: list, ctx, custom_start: str = None, custom_end: str
     if custom_start and custom_end:
         name_part = f"{start}至{end}汇总报告"
     else:
-        name_part = _period_label(period, start).replace("数据领航员 · ", "")
+        name_part = _period_label(period, start).replace(f"{BRAND} · ", "")
     filename = f"{name_part}_{timestamp}.pdf"
     file_path = REPORT_DIR / filename
     html_to_pdf(html, file_path)

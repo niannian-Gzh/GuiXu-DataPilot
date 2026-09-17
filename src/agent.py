@@ -9,7 +9,7 @@ from config import setting
 WRITE_TOOLS = {"request_create", "request_update", "request_delete", "request_batch_create"}
 
 
-SYSTEM_PROMPT = """你是 DataPilot，一个数据助手。工具是你与数据世界交互的途径。
+SYSTEM_PROMPT = """你是 DataPilot，一个数据处理 Agent。工具是你与数据世界交互的途径。
 
 原则：
 1. 自主组合工具达成目标，这是合理规划，不是降级。
@@ -19,7 +19,7 @@ SYSTEM_PROMPT = """你是 DataPilot，一个数据助手。工具是你与数据
 5. 信任工具结果，不要反复重试同一个操作。
 6. 如果工具返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。
 
-用简洁的中文回答。
+用简洁的中文回答，思考过程也必须用中文。
 
 输出用 Markdown：**加粗**、表格、列表、`行内代码` 都可用。
 不要用 *斜体* 和 _下划线_ 做强调——中文句子里这些标记经常识别不出来，
@@ -82,18 +82,21 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
     success_counts = {}
     failure_counts = {}
     tool_log = []       # 这一轮走过的工具，存进会话供界面回看
+    reasoning_log = []  # 这一轮的思考链，同上
 
     for i in range(max_iterations):
         if time.time() - start_time > loop_timeout:
             return _finish(emit, f"处理超时（超过 {loop_timeout} 秒），请简化请求或稍后重试。")
 
         _emit(emit, "think", round=i + 1)
-        msg, usage = llm.chat_messages(messages, tools=TOOL_SCHEMAS)
+        msg, usage, reasoning = llm.chat_messages(messages, tools=TOOL_SCHEMAS)
         if usage:
             session.set_prompt_tokens(usage["prompt_tokens"])
-
+        if reasoning:
+            _emit(emit, "reasoning", round=i + 1, text=reasoning)
+            reasoning_log.append({"round": i + 1, "text": reasoning})
         if msg.tool_calls:
-            messages.append({
+            assistant_msg = {
                 "role": "assistant",
                 "content": msg.content or "",
                 "tool_calls": [
@@ -107,7 +110,10 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
                     }
                     for tc in msg.tool_calls
                 ],
-            })
+            }
+            if reasoning:
+                assistant_msg["reasoning_content"] = reasoning
+            messages.append(assistant_msg)
 
             for tc in msg.tool_calls:
                 name = tc.function.name
@@ -133,6 +139,7 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
                       raw=result[:tool_result_limit])
 
                 tool_log.append({
+                    "round": i + 1,     # 回放时靠它把思考插回原位，否则顺序对不上
                     "name": name,
                     "args": args,
                     "ok": _is_success(result),
@@ -172,7 +179,7 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
 
         answer = msg.content or ""
         session.add_user(user_input)
-        session.add_assistant(answer, tools=tool_log)
+        session.add_assistant(answer, tools=tool_log, reasonings=reasoning_log)
         return _finish(emit, answer)
 
     return _finish(emit, "[达到最大循环次数，强制结束]")

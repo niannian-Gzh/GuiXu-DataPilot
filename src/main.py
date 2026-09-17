@@ -17,7 +17,7 @@ def main():
 
     cleanup()
 
-    print("DataPilot · 数据领航员（Agent 版）")
+    print("DataPilot · 数据处理 Agent")
     print("输入问题，exit 退出\n")
 
     while True:

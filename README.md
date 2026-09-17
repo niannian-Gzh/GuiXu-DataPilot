@@ -1,4 +1,4 @@
-# DataPilot · 数据领航员
+# DataPilot · 数据处理 Agent
 
 用自然语言完成数据的查询、新增、修改、删除、导入、导出、检查和报告生成。
 
@@ -110,7 +110,7 @@ uv run src/main.py
 ```
 
 ```
-DataPilot · 数据领航员（Agent 版）
+DataPilot · 数据处理 Agent
 输入问题，exit 退出
 
 你问：已下证的项目有几个

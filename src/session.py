@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -6,6 +7,17 @@ from config import PROJECT_ROOT
 
 
 ARCHIVE_DIR = PROJECT_ROOT / "logs" / "sessions"
+
+# 打招呼类开头，取标题时跳过
+GREETING_PREFIXES = (
+    "你好", "您好", "早上好", "中午好", "下午好", "晚上好",
+    "在吗", "在不在",
+)
+
+# 英文单独走词边界：纯前缀匹配会把 history / high / his 一并吃掉，
+# 而表名列名这类词在数据场景里并不罕见，误判又是静默的——
+# 标题错了，没人知道是为什么
+_GREETING_EN = re.compile(r"^(?:hi|hello|hey)\b", re.IGNORECASE)
 
 
 class Session:
@@ -19,11 +31,14 @@ class Session:
     def add_user(self, text: str):
         self.messages.append({"role": "user", "content": text})
 
-    def add_assistant(self, text: str, tools: list = None):
-        """tools 是这一轮的工具调用记录，只供界面回看，不发给模型。"""
+    def add_assistant(self, text: str, tools: list = None, reasonings: list = None):
+        """tools 是这一轮的工具调用记录，reasonings 是这一轮的思考链，
+        都只供界面回看，不发给模型。"""
         msg = {"role": "assistant", "content": text}
         if tools:
             msg["dp_tools"] = tools
+        if reasonings:
+            msg["dp_reasonings"] = reasonings
         self.messages.append(msg)
 
     def get_history(self) -> list:
@@ -43,6 +58,11 @@ class Session:
 
         for m in self.messages:
             tools = m.get("dp_tools")
+            # dp_reasonings 只给界面回看，必须剥掉：这里原样 append 的话，
+            # 纯对话轮（没有 dp_tools）的思考链会跟着进 prompt——
+            # 动辄上千字，每轮都带上，成本和噪音都不划算
+            if "dp_reasonings" in m:
+                m = {k: v for k, v in m.items() if k != "dp_reasonings"}
             if not tools:
                 result.append(m)
                 continue
@@ -87,11 +107,22 @@ class Session:
         self.prompt_tokens = n
 
     def title(self) -> str:
-        """会话标题取第一条用户消息。"""
+        """会话标题取第一条有实际意图的用户消息，跳过打招呼类。
+
+        全打招呼时回退到第一条，而不是返回「新会话」——
+        那样列表里会堆一片同名的「新会话」，比看到「早上好」还难认。
+        """
+        fallback = None
         for m in self.messages:
-            if m["role"] == "user":
-                return m["content"][:30]
-        return "新会话"
+            if m["role"] != "user":
+                continue
+            text = m["content"].strip()
+            if fallback is None:
+                fallback = text[:30]
+            if text.startswith(GREETING_PREFIXES) or _GREETING_EN.match(text):
+                continue
+            return text[:30]
+        return fallback or "新会话"
 
     def save(self) -> Path:
         """把会话落盘，供 webui 的会话列表读回。"""
