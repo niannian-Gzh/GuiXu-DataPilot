@@ -3,25 +3,25 @@ import time
 import yaml
 from dotenv import load_dotenv
 from openai import OpenAI, APITimeoutError, APIConnectionError, RateLimitError
-from config import PROJECT_ROOT
+from config import PROJECT_ROOT, setting
 
 load_dotenv()
 
 
 RETRYABLE_EXCEPTIONS = (APITimeoutError, APIConnectionError, RateLimitError)
-MAX_RETRIES = 3
 
 
 def _call_with_retry(fn):
     """带指数退避的重试。仅对可重试异常生效。"""
-    for attempt in range(MAX_RETRIES + 1):
+    max_retries = setting("agent.max_retries")
+    for attempt in range(max_retries + 1):
         try:
             return fn()
         except RETRYABLE_EXCEPTIONS as e:
-            if attempt == MAX_RETRIES:
+            if attempt == max_retries:
                 raise
             wait = 2 ** attempt
-            print(f"  [LLM重试 {attempt + 1}/{MAX_RETRIES}] {type(e).__name__}，{wait}秒后重试")
+            print(f"  [LLM重试 {attempt + 1}/{max_retries}] {type(e).__name__}，{wait}秒后重试")
             time.sleep(wait)
 
 

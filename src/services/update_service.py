@@ -1,6 +1,6 @@
 import json
 import duckdb
-from services import UserInputRequired, BULK_THRESHOLD
+from services import UserInputRequired, bulk_threshold
 from services._filters import find_candidates
 from nl2sql import SCHEMA_DESC
 from audit import log
@@ -94,7 +94,7 @@ def format_update_confirm(candidates: list, updates: dict) -> str:
 
     text += "\n**改前分布：**\n\n" + format_table(dist_rows)
 
-    if n <= BULK_THRESHOLD:
+    if n <= bulk_threshold():
         text += f"\n\n确认修改这 {n} 条吗？回复「确认」执行，或「取消」放弃。"
     else:
         text += "\n\n**⚠️ 批量修改警告**\n如确认，请输入「修改{n}条」；或回复「取消」放弃。"

@@ -1,6 +1,6 @@
-from services import BULK_THRESHOLD
+from services import bulk_threshold
 from services import delete_service, create_service, update_service
-from services import import_service
+from services import import_service, restore_service
 
 
 def handle_pending(question: str, session, db_path: str, real_table: str, llm=None):
@@ -17,6 +17,8 @@ def handle_pending(question: str, session, db_path: str, real_table: str, llm=No
 
     if ptype == "delete":
         return _handle_delete(question, session, pending, db_path, real_table)
+    if ptype == "restore":
+        return _handle_restore(question, session, pending, db_path, real_table)
     if ptype == "create":
         return _handle_create(question, session, pending, db_path, real_table)
     if ptype == "batch_create":
@@ -31,7 +33,7 @@ def handle_pending(question: str, session, db_path: str, real_table: str, llm=No
 
 def _handle_delete(question, session, pending, db_path, real_table):
     n = len(pending["candidates"])
-    if n <= BULK_THRESHOLD:
+    if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
     else:
         valid = delete_service.is_bulk_confirm(question, n)
@@ -43,6 +45,23 @@ def _handle_delete(question, session, pending, db_path, real_table):
         )
         session.clear_pending()
         return True, f"已删除 {count} 条记录。7 天内可恢复。"
+    return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
+
+
+def _handle_restore(question, session, pending, db_path, real_table):
+    n = len(pending["candidates"])
+    if n <= bulk_threshold():
+        valid = delete_service.is_confirm(question)
+    else:
+        valid = delete_service.is_bulk_confirm(question, n)
+
+    if valid:
+        count = restore_service.execute_restore(
+            pending["candidates"], db_path, real_table,
+            pending["trace_id"], pending["user_input"],
+        )
+        session.clear_pending()
+        return True, f"已恢复 {count} 条记录，它们已重新出现在项目台账里。"
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
@@ -60,7 +79,7 @@ def _handle_create(question, session, pending, db_path, real_table):
 
 def _handle_batch_create(question, session, pending, db_path, real_table):
     n = len(pending["records"])
-    if n <= BULK_THRESHOLD:
+    if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
     else:
         valid = delete_service.is_bulk_confirm(question, n)
@@ -77,7 +96,7 @@ def _handle_batch_create(question, session, pending, db_path, real_table):
 
 def _handle_update(question, session, pending, db_path, real_table):
     n = len(pending["candidates"])
-    if n <= BULK_THRESHOLD:
+    if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
     else:
         valid = delete_service.is_bulk_confirm(question, n)
@@ -140,6 +159,10 @@ def format_pending_display(pending: dict) -> str:
     if ptype == "delete":
         msg = delete_service.format_candidates(pending["candidates"])
         msg += "\n\n" + delete_service.delete_confirm_prompt(pending["candidates"])
+        return msg
+    if ptype == "restore":
+        msg = restore_service.format_candidates(pending["candidates"])
+        msg += "\n\n" + restore_service.restore_confirm_prompt(pending["candidates"])
         return msg
     if ptype == "create":
         return create_service.format_create_confirm(pending["record"])

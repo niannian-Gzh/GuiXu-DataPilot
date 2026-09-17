@@ -1,3 +1,5 @@
+
+from config import setting
 from llm import LLM
 
 
@@ -27,7 +29,6 @@ EMPTY_ANSWER = """没有找到符合条件的数据。
 - 数据中不存在符合该条件的记录
 - 查询条件描述可能有歧义，请尝试换一种说法"""
 
-MAX_LLM_ROWS = 20
 
 
 def summarize(question: str, df, llm: LLM) -> str:
@@ -38,7 +39,7 @@ def summarize(question: str, df, llm: LLM) -> str:
         return EMPTY_ANSWER
 
     # 情况2：1-20 行 → LLM 组织语言
-    if total <= MAX_LLM_ROWS:
+    if total <= setting("display.max_llm_rows"):
         data_str = df.to_string(index=False)
         prompt = SUMMARIZE_PROMPT.format(
             question=question, total=total, data=data_str
@@ -46,14 +47,14 @@ def summarize(question: str, df, llm: LLM) -> str:
         return llm.chat("你是一个数据助手", prompt)
 
     # 情况3：>20 行 → 程序截断 + LLM 一句总结
-    preview = df.head(MAX_LLM_ROWS).to_string(index=False)
+    preview = df.head(setting("display.max_llm_rows")).to_string(index=False)
     prompt = BIG_RESULT_PROMPT.format(
-        question=question, total=total, shown=MAX_LLM_ROWS, data=preview
+        question=question, total=total, shown=setting("display.max_llm_rows"), data=preview
     )
     summary = llm.chat("你是一个数据助手", prompt)
     return (
         f"{summary}\n\n"
-        f"（共 {total} 条记录，此处仅显示前 {MAX_LLM_ROWS} 条。"
+        f"（共 {total} 条记录，此处仅显示前 {setting("display.max_llm_rows")} 条。"
         f"如需完整数据，请缩小查询范围。）"
     )
 

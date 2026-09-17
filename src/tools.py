@@ -2,7 +2,7 @@ import json
 from nl2sql import get_schema
 from services import ServiceContext
 from services import query_service, delete_service, create_service, update_service
-from services import import_service
+from services import import_service, restore_service
 from services import consistency_service
 from services import export_service
 from services import report_service
@@ -49,6 +49,32 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "filter_question": {"type": "string", "description": "自然语言筛选条件"},
+                },
+                "required": ["filter_question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_restore",
+            "description": (
+                "恢复之前被软删除的项目记录。"
+                "filter_question 是模糊筛选条件，系统会在已删除的记录里搜索、"
+                "展示候选，请用户确认后恢复。"
+                "【何时用】用户说'恢复'、'撤销删除'、'把刚才删的找回来'、'还原'时。"
+                "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filter_question": {
+                        "type": "string",
+                        "description": (
+                            "自然语言筛选条件。用户说'刚才删的/最近删的'时传'最近删除的'；"
+                            "说'全部/所有'时传'全部'；也可传项目名或负责人做模糊匹配"
+                        ),
+                    },
                 },
                 "required": ["filter_question"],
             },
@@ -229,6 +255,9 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
     def request_delete(filter_question):
         return delete_service.request_delete(filter_question, ctx)
 
+    def request_restore(filter_question):
+        return restore_service.request_restore(filter_question, ctx)
+
     def request_create(project_name, owner, category, status_raw="已提交", issued_date=None):
         return create_service.request_create(project_name, owner, category, status_raw, issued_date, ctx)
 
@@ -253,6 +282,7 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
     return {
         "query_database": query_database,
         "request_delete": request_delete,
+        "request_restore": request_restore,
         "request_create": request_create,
         "request_update": request_update,
         "request_batch_create": request_batch_create,

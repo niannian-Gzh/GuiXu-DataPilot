@@ -4,9 +4,9 @@ import pandas as pd
 from services import UserInputRequired
 from display import format_table
 from audit import log
+from config import setting
 
 
-CONFLICT_SAMPLE_COUNT = 20
 
 COLUMN_MAP = {
     "项目名称": "project_name",
@@ -165,29 +165,29 @@ def format_import_summary(scan_result: dict) -> str:
 
     new_records = scan_result["new_records"]
     if new_records:
-        shown = new_records[:CONFLICT_SAMPLE_COUNT]
+        shown = new_records[:setting("display.conflict_sample_count")]
         rows = [{"项目名称": r["project_name"], "负责人": r["owner"], "分类": r["category"]} for r in shown]
         parts.append(f"## {idx}. 新记录 {len(new_records)} 条\n")
         parts.append(format_table(rows))
-        if len(new_records) > CONFLICT_SAMPLE_COUNT:
-            parts.append(f"\n（共 {len(new_records)} 条，此处仅显示前 {CONFLICT_SAMPLE_COUNT} 条）")
+        if len(new_records) > setting("display.conflict_sample_count"):
+            parts.append(f"\n（共 {len(new_records)} 条，此处仅显示前 {setting("display.conflict_sample_count")} 条）")
         parts.append("")
         idx += 1
 
     deleted = scan_result["deleted_in_db"]
     if deleted:
-        shown = deleted[:CONFLICT_SAMPLE_COUNT]
+        shown = deleted[:setting("display.conflict_sample_count")]
         rows = [{"项目名称": r["project_name"]} for r in shown]
         parts.append(f"## {idx}. 已删除记录 {len(deleted)} 条（数据库中为软删除状态）\n")
         parts.append(format_table(rows))
-        if len(deleted) > CONFLICT_SAMPLE_COUNT:
+        if len(deleted) > setting("display.conflict_sample_count"):
             parts.append(f"\n（共 {len(deleted)} 条）")
         parts.append("")
         idx += 1
 
     conflicts = scan_result["conflicts"]
     if conflicts:
-        shown = conflicts[:CONFLICT_SAMPLE_COUNT]
+        shown = conflicts[:setting("display.conflict_sample_count")]
         rows = []
         for c in shown:
             for field, change in c["changes"].items():
@@ -199,18 +199,18 @@ def format_import_summary(scan_result: dict) -> str:
                 })
         parts.append(f"## {idx}. 字段冲突 {len(conflicts)} 条\n")
         parts.append(format_table(rows))
-        if len(conflicts) > CONFLICT_SAMPLE_COUNT:
-            parts.append(f"\n（共 {len(conflicts)} 条，此处仅显示前 {CONFLICT_SAMPLE_COUNT} 条的字段变化）")
+        if len(conflicts) > setting("display.conflict_sample_count"):
+            parts.append(f"\n（共 {len(conflicts)} 条，此处仅显示前 {setting("display.conflict_sample_count")} 条的字段变化）")
         parts.append("")
 
     missing = scan_result["missing_from_excel"]
     if missing and new_records:
-        shown = missing[:CONFLICT_SAMPLE_COUNT]
+        shown = missing[:setting("display.conflict_sample_count")]
         rows = [{"项目名称": r["project_name"]} for r in shown]
         parts.append(f"## 数据库中以下 {len(missing)} 条记录未出现在 Excel 中\n")
         parts.append("（如果其中有改名，请一并指出）\n")
         parts.append(format_table(rows))
-        if len(missing) > CONFLICT_SAMPLE_COUNT:
+        if len(missing) > setting("display.conflict_sample_count"):
             parts.append(f"\n（共 {len(missing)} 条）")
         parts.append("")
 

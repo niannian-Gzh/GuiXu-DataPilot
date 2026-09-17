@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any
 
+from config import setting
+
 
 class UserInputRequired(Exception):
     """需要用户输入才能继续。"""
@@ -21,4 +23,6 @@ class ServiceContext:
     trace: Any
 
 
-BULK_THRESHOLD = 20
+def bulk_threshold() -> int:
+    """影响多少条以上时，确认方式升级为手打「删除 N 条」。"""
+    return setting("display.bulk_threshold")

@@ -12,3 +12,5 @@ eval/golden_set_agent.json
 eval/gen_expected.py
 docs/
 legacy/
+data/uploads/
+.playwright-mcp/

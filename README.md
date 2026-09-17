@@ -73,7 +73,8 @@
 
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv)
-- **Microsoft Edge**（用于报告 PDF 渲染，Windows 自带）
+
+报告中转 PDF 用的是 Playwright 自带的 Chromium，不依赖系统浏览器 —— 装过之后到哪都一样。
 
 ### 安装
 
@@ -81,6 +82,9 @@
 git clone https://github.com/niannian-Gzh/datapilot.git
 cd datapilot
 uv sync
+
+# 下载报告 PDF 渲染用的 Chromium（约 115MB，只需一次）
+uv run playwright install chromium
 ```
 
 ### 配置
@@ -137,7 +141,7 @@ uv run python eval/run_agent_eval.py
 | 数据库 | DuckDB | 本地单文件，零运维 |
 | 模型 | DeepSeek | 性价比高，中文好 |
 | 编排 | 手写 Agent Loop | 拒绝 LangChain，掌控每一步 |
-| PDF 渲染 | Edge 无头 | 零依赖，中文完美 |
+| PDF 渲染 | Playwright + Chromium | 浏览器版本锁定，不受系统环境摆布 |
 | 图表 | matplotlib | 成熟稳定 |
 
 ## 设计亮点
@@ -233,9 +237,7 @@ docs/                   设计文档
 - **仅支持单表操作**，多表关联未实现
 - **无权限控制**，所有用户看到相同数据
 - **无 RAG 能力**，仅支持结构化数据查询
-- **无 Web UI**，仅命令行
-- **会话不持久化**，程序重启后对话历史丢失
-- **报告依赖 Edge**，Linux/Mac 需要额外配置
+- **工具返回存的是截断版**（8000 字符），超长结果在历史会话里回看时不全
 
 ## Roadmap
 
@@ -248,10 +250,11 @@ docs/                   设计文档
 - [x] 一致性检查
 - [x] 日/周/月报（PDF + 图表）
 - [x] 多层防护（重试、熔断、超时）
-- [ ] 上下文压缩 + 对话归档
-- [ ] 会话持久化
+- [x] 上下文压缩 + 对话归档
+- [x] 会话持久化
+- [x] Web UI（三栏布局 + SSE 流式执行可视化）
+- [x] Playwright 替代系统 Edge
 - [ ] 容器化（Dockerfile）
-- [ ] Playwright 替代系统 Edge
 - [ ] RAG（文档检索）
 - [ ] 多表支持
 - [ ] Web UI

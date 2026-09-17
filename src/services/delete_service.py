@@ -1,10 +1,11 @@
 import json
 import re
 import duckdb
-from services import UserInputRequired, BULK_THRESHOLD
+from services import UserInputRequired, bulk_threshold
 from services._filters import find_candidates
 from audit import log
 from display import format_table
+from config import setting
 
 
 CONFIRM_WORDS = {"确认", "确定", "是", "对", "好", "可以", "删", "删除", "删吧", "yes", "y", "ok"}
@@ -31,18 +32,16 @@ def request_delete(filter_question: str, ctx) -> str:
     )
 
 
-DISPLAY_ALL_THRESHOLD = 20
-DISPLAY_SAMPLE_COUNT = 10
-
-
 def format_candidates(candidates: list) -> str:
     n = len(candidates)
-    if n <= DISPLAY_ALL_THRESHOLD:
+    all_threshold = setting("display.display_all_threshold")
+    sample_count = setting("display.display_sample_count")
+    if n <= all_threshold:
         shown = candidates
         note = ""
     else:
-        shown = candidates[:DISPLAY_SAMPLE_COUNT]
-        note = f"\n\n（共 {n} 条，此处仅显示前 {DISPLAY_SAMPLE_COUNT} 条）"
+        shown = candidates[:sample_count]
+        note = f"\n\n（共 {n} 条，此处仅显示前 {sample_count} 条）"
 
     rows = [
         {
@@ -57,7 +56,7 @@ def format_candidates(candidates: list) -> str:
 
 def delete_confirm_prompt(candidates: list) -> str:
     n = len(candidates)
-    if n <= BULK_THRESHOLD:
+    if n <= bulk_threshold():
         return (
             f"确认删除这 {n} 条吗？\n"
             f"删除后 7 天内可恢复，之后永久清理。\n"

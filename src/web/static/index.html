@@ -1,0 +1,3665 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataPilot · 数据领航员</title>
+<script>
+  (function () {
+    var t = localStorage.getItem('dp_theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+    // 冷启动才播开机动画，刷新回来看过的就跳过
+    if (sessionStorage.getItem('dp_booted') === '1') {
+      document.documentElement.setAttribute('data-boot', 'skip');
+    }
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- text= 只取「数据领航员」五个字的字形，否则整个思源宋体有十几 MB -->
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600&text=%E6%95%B0%E6%8D%AE%E9%A2%86%E8%88%AA%E5%91%98&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  /* ===================== 设计令牌 ===================== */
+  :root {
+    /* 宝石蓝：色相从 228° 收到 218°（去掉那股紫），饱和度顶满。
+       原来的 #6b9dff 亮度过高，在暗场上发白，像蒙了层雾，不像宝石 */
+    --acc:          #3d7dff;
+    --acc-lift:     #6b9dff;
+    --acc-soft:     rgba(61, 125, 255, 0.14);
+    --acc-line:     rgba(61, 125, 255, 0.34);
+
+    /* 深邃黑：底压得足够暗，辉光和扫描弧才跳得出来。
+       层次仍靠「谁比谁亮一档」，但整体基准往下移了一大截。
+       不用半透明：背景是纯色，模糊一层纯色还是纯色 */
+    --bg:           #0a0c10;   /* 最底：近黑，微冷 */
+    --glass:        #12151b;   /* 面板 */
+    --glass-lift:   #1a1e26;   /* 卡片 / 悬停 */
+    --glass-deep:   #0b0e13;   /* 输入框 / 代码块，比面板沉一档 */
+    --sheen:        rgba(255, 255, 255, 0.045);
+    --edge:         #232a35;
+    --edge-soft:    #1a1f28;
+
+    --fg:           #dde3ee;
+    --fg-sub:       #a6afbf;
+    --fg-dim:       #7c8697;
+    --fg-faint:     #5c6472;
+
+    --ok:           #3ddc97;
+    --warn:         #fbbf24;
+    --err:          #f87272;
+
+    --mark:         #6b9dff;
+
+    --r-sm: 7px;
+    --r:    11px;
+    --r-lg: 14px;
+
+    --mono: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  [data-theme="light"] {
+    --acc:        #2f6ce0;
+    --acc-lift:   #2458c8;
+    --acc-soft:   rgba(47, 108, 224, 0.10);
+    --acc-line:   rgba(47, 108, 224, 0.30);
+
+    --bg:         #eef0f5;
+    --glass:      #ffffff;
+    --glass-lift: #f2f4f9;
+    --glass-deep: #f7f8fb;
+    --sheen:      rgba(255, 255, 255, 0.9);
+    --edge:       #dde1ea;
+    --edge-soft:  #e8ebf1;
+
+    --fg:         #1c2130;
+    --fg-sub:     #4a5364;
+    --fg-dim:     #66707f;
+    --fg-faint:   #8b93a2;
+
+    --ok:         #0f9d63;
+    --warn:       #b7791f;
+    --err:        #d64545;
+
+    --mark:       #2f6ce0;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    font-size: 13.5px;
+    line-height: 1.62;
+    color: var(--fg);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection { background: rgba(61, 125, 255, 0.30); }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--edge);
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--fg-faint); background-clip: content-box; }
+
+  [v-cloak] { display: none; }
+
+  /* 极淡的全局噪点。但它同时也是「雾感」的来源之一——
+     feTurbulence 出的是彩色噪声，叠在暗场上会把黑提成灰。
+     压到 0.016：质感还在，不至于把底子弄脏 */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.016;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  [data-theme="light"] body::after { opacity: 0.02; }
+
+  /* ===================== 面板 ===================== */
+  /* 实色分层，不投影。三栏之间只有 12px 的缝，
+     任何带模糊半径的阴影都会糊进缝里积成脏边 */
+  .glass {
+    position: relative;
+    background: var(--glass);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    /* 顶边 1px 硬高光：纯色块面需要一道光来说明"哪面朝上"。
+       用 1px 而不是渐变雾，是因为三块面板等高，渐变会首尾相接成一条横带 */
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  }
+  [data-theme="light"] .glass {
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
+  }
+
+  /* ===================== 按钮 ===================== */
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 13px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge);
+    background: var(--glass-lift);
+    color: var(--fg-dim);
+    font-size: 12.5px;
+    transition: all 0.18s var(--ease);
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    color: var(--fg);
+    border-color: var(--acc-line);
+    background: var(--acc-soft);
+  }
+  .btn:disabled { opacity: 0.38; cursor: not-allowed; }
+  .btn.primary {
+    background: linear-gradient(135deg, var(--acc), var(--acc-lift));
+    border-color: transparent;
+    color: #fff;
+    font-weight: 500;
+    box-shadow: 0 4px 16px -4px var(--acc-line);
+  }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn.danger {
+    color: var(--err);
+    border-color: rgba(248, 114, 114, 0.3);
+  }
+  .btn.danger:hover:not(:disabled) {
+    background: rgba(248, 114, 114, 0.12);
+    border-color: rgba(248, 114, 114, 0.5);
+    color: var(--err);
+  }
+  .btn.ghost { background: transparent; border-color: transparent; }
+  .btn.ghost:hover:not(:disabled) { background: var(--glass-lift); }
+  .btn svg { width: 14px; height: 14px; flex: none; }
+
+  .icon-btn {
+    display: grid;
+    place-items: center;
+    width: 30px; height: 30px;
+    border-radius: var(--r-sm);
+    color: var(--fg-dim);
+    transition: all 0.18s var(--ease);
+  }
+  .icon-btn:hover { color: var(--fg); background: var(--glass-lift); }
+  .icon-btn svg { width: 15px; height: 15px; }
+
+  /* ===================== 开机动画 ===================== */
+  #boot {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    display: grid;
+    place-items: center;
+    background: radial-gradient(ellipse at 50% 45%, #131a2e 0%, #080a12 62%);
+    transition: opacity 0.72s var(--ease), transform 0.72s var(--ease);
+  }
+  html[data-boot="skip"] #boot { display: none; }
+  #boot.done {
+    opacity: 0;
+    transform: scale(1.06);
+    pointer-events: none;
+  }
+
+  .boot-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 30px;
+  }
+
+  .compass {
+    position: relative;
+    width: 146px; height: 146px;
+  }
+  .compass svg { width: 100%; height: 100%; overflow: visible; }
+
+  /* 刻度盘：12 段短弧，一边旋转一边展开 */
+  .compass .ticks {
+    fill: none;
+    stroke: var(--mark);
+    stroke-width: 2.6;
+    opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: rotate(-90deg) scale(0.82);
+    animation: ticks-in 1.15s cubic-bezier(0.22, 1, 0.36, 1) 0.10s forwards;
+  }
+  @keyframes ticks-in {
+    to { opacity: 0.45; transform: rotate(-90deg) scale(1); }
+  }
+
+  .compass .ring-inner {
+    fill: none;
+    stroke: var(--mark);
+    stroke-width: 0.8;
+    opacity: 0;
+    animation: fade-in 0.8s var(--ease) 0.35s forwards;
+  }
+  @keyframes fade-in {
+    to { opacity: 0.14; }
+  }
+
+  /* 中心点跟北方同时起落，同 2.40s 收尾 */
+  .compass .rose-core {
+    fill: var(--mark);
+    opacity: 0;
+    animation: core-in 0.42s var(--ease) 1.98s forwards;
+  }
+  @keyframes core-in {
+    to { opacity: 1; }
+  }
+
+  /* 航迹弧绕盘旋转一圈半（540°）后停在东北方，落点跟着一起转。
+     末尾用 ease-out 减速，像指针扫过半圈后咬合到位 */
+  .compass .helm-spin {
+    transform-origin: 24px 24px;
+    opacity: 0;
+    animation: helm-spin 1.50s cubic-bezier(0.25, 0.9, 0.3, 1) 0.90s forwards;
+  }
+  @keyframes helm-spin {
+    0%   { opacity: 0; transform: rotate(-540deg); }
+    12%  { opacity: 1; }
+    100% { opacity: 1; transform: rotate(0deg); }
+  }
+
+  .compass .helm-arc {
+    fill: none;
+    stroke: var(--mark);
+    stroke-width: 1.7;
+    stroke-linecap: round;
+  }
+
+  .compass .helm-dot { fill: #b8ceff; }
+
+  /* ---------- 四个芒尖顺时针依次点亮 ----------
+     东 -> 南 -> 西 -> 北，每个亮到顶再落回本色；
+     北方是终点，不回撤，常亮并且最亮——它就是「航向锁定」的那一刻。
+     基础亮度各不同（北 1 / 东西 0.5 / 南 0.28），所以用 --base 传进去 */
+  .compass .tip {
+    fill: var(--mark);
+    opacity: 0;
+    animation: tip-flash 0.30s ease-out var(--d) forwards;
+  }
+  /* 东/南/西首尾相接依次亮灭 */
+  .compass .tip-e { --base: 0.5;  --d: 1.08s; }
+  .compass .tip-s { --base: 0.28; --d: 1.38s; }
+  .compass .tip-w { --base: 0.5;  --d: 1.68s; }
+
+  /* 北方跟航迹弧、日期同一个时间窗口：0.90s 起，2.40s 止。
+     前段只留一道极淡的轮廓（0.05→0.16），不抢东/南/西的依次感；
+     72%（即 1.98s）它们都熄了，才开始向最亮冲，最后 2.40s 锁定 */
+  .compass .tip-n {
+    --base: 1;
+    animation: tip-stay 1.50s ease-out 0.90s forwards;
+  }
+
+  @keyframes tip-flash {
+    0%   { opacity: var(--base); }
+    45%  { opacity: 1; filter: drop-shadow(0 0 7px rgba(150, 190, 255, 0.85)); }
+    100% { opacity: var(--base); filter: none; }
+  }
+  @keyframes tip-stay {
+    0%   { opacity: 0.05; filter: none; }
+    72%  { opacity: 0.16; filter: none; }
+    88%  { opacity: 1;    filter: drop-shadow(0 0 12px rgba(178, 210, 255, 1)); }
+    100% { opacity: 1;    filter: drop-shadow(0 0 5px rgba(150, 190, 255, 0.6)); }
+  }
+
+  .boot-word {
+    display: flex;
+    gap: 1px;
+    font-size: 25px;
+    font-weight: 300;
+    letter-spacing: 0.32em;
+    color: #f2f5ff;
+    text-indent: 0.32em;
+  }
+  .boot-word span {
+    opacity: 0;
+    animation: word-in 0.62s var(--ease) forwards;
+  }
+  @keyframes word-in {
+    from { opacity: 0; transform: translateY(9px); filter: blur(5px); }
+    to   { opacity: 1; transform: translateY(0); filter: blur(0); }
+  }
+
+  .boot-sub {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.44em;
+    text-indent: 0.44em;
+    color: rgba(152, 162, 186, 0.75);
+    opacity: 0;
+    animation: word-in 0.7s var(--ease) 0.62s forwards;
+  }
+
+  .boot-stats {
+    display: flex;
+    align-items: center;
+    gap: 26px;
+    height: 34px;
+  }
+  .boot-stat { text-align: center; opacity: 0; animation: word-in 0.6s var(--ease) forwards; }
+  .boot-stat b {
+    display: block;
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 500;
+    color: #fff;
+    letter-spacing: -0.01em;
+  }
+  .boot-stat span {
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    color: rgba(152, 162, 186, 0.8);
+  }
+  .boot-stat + .boot-stat { padding-left: 26px; border-left: 1px solid rgba(255,255,255,0.09); }
+
+  .boot-line {
+    width: 190px;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.09);
+    overflow: hidden;
+    border-radius: 1px;
+  }
+  .boot-line i {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, transparent, var(--acc-lift));
+    transition: width 0.42s var(--ease);
+  }
+
+  /* ===================== 主布局 ===================== */
+  /* 注意：这层必须留在 #app 里面。#app 是 Vue 的挂载容器，
+     容器自身的属性不参与模板编译，:class 写在上面等于没写 */
+  .shell {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 254px minmax(0, 1fr) 0px;
+    gap: 12px;
+    height: 100vh;
+    padding: 12px;
+    transition: grid-template-columns 0.34s var(--ease);
+  }
+  .shell.right-open { grid-template-columns: 254px minmax(0, 1fr) 262px; }
+  .shell.left-shut { grid-template-columns: 0px minmax(0, 1fr) 0px; }
+  .shell.left-shut.right-open { grid-template-columns: 0px minmax(0, 1fr) 262px; }
+
+  .col {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    transition: opacity 0.24s var(--ease);
+  }
+  .col.hidden { opacity: 0; pointer-events: none; }
+
+  /* ===================== 左栏 ===================== */
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 16px 16px 14px;
+  }
+  .brand-mark {
+    display: grid;
+    place-items: center;
+    width: 35px; height: 35px;
+    color: var(--mark);
+    flex: none;
+    /* 辉光要小半径、低频率。半径一大，罗盘那圈刻度就先糊成一团光斑了 */
+    animation: mark-breathe 5.5s ease-in-out infinite;
+  }
+  .brand-mark svg { width: 34px; height: 34px; }
+  /* 幅度收窄：0.28→0.58 的起伏在小图标上像在闪，0.34→0.50 才是"活着" */
+  @keyframes mark-breathe {
+    0%, 100% { filter: drop-shadow(0 0 5px rgba(107, 157, 255, 0.34)); }
+    50%      { filter: drop-shadow(0 0 8px rgba(107, 157, 255, 0.50)); }
+  }
+
+  /* 品牌字：Bahnschrift 是 Windows 自带的 DIN 风格可变字体，
+     窄、硬、刻度感强，正合仪表盘调性，且不依赖任何外部字体源。
+     配渐变填充 + 一点冷光，做出「艺术字」的分量 */
+  .brand-name {
+    font-family: 'Bahnschrift', 'DIN Alternate', 'Segoe UI Variable Display', system-ui, sans-serif;
+    font-size: 20px;
+    font-weight: 600;
+    font-stretch: 95%;
+    line-height: 1.05;
+    letter-spacing: 0.075em;
+    padding-right: 5px;              /* 字距会让末字贴边，留一点 */
+    /* 四段渐变：冷白起、亮蓝过、靛紫收，再回一抹淡紫。
+       单段两色渐变在这个字号下几乎看不出层次 */
+    background: linear-gradient(102deg,
+      #ffffff 0%, #cbd8ff 26%, #8c9cff 52%, #7f6ef0 74%, #bcaaff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter:
+      drop-shadow(0 1px 0 rgba(8, 11, 20, 0.5))
+      drop-shadow(0 0 13px rgba(107, 157, 255, 0.42));
+  }
+  [data-theme="light"] .brand-name {
+    background: linear-gradient(102deg,
+      #0e1326 0%, #2b3fbb 34%, #5b4fd8 62%, #8b6cf0 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 0 10px rgba(47, 108, 224, 0.22));
+  }
+
+  /* 副标题：宋体。上面 DataPilot 是 DIN 系的窄体无衬线，
+     下面换成衬线，一横一竖拉开对比；「申报台账」这行当也压得住宋体的文书气 */
+  .brand-tag {
+    font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC',
+                 'SimSun', serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    color: var(--fg-sub);
+    margin-top: 3px;
+  }
+
+  .side-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 12px; }
+
+  /* 新对话：从品牌区那个小 + 挪出来做成显式按钮。
+     它是左栏最高频的动作，不该藏成一个需要认的图标 */
+  .new-chat {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    flex: none;
+    margin: 0 12px 10px;
+    padding: 9px 0;
+    border-radius: var(--r-sm);
+    background: var(--acc-soft);
+    border: 1px solid var(--acc-line);
+    color: var(--acc-lift);
+    font-size: 12.5px;
+    transition: all 0.18s var(--ease);
+  }
+  .new-chat:hover {
+    background: var(--acc);
+    border-color: var(--acc);
+    color: #fff;
+  }
+  .new-chat svg { width: 14px; height: 14px; flex: none; }
+
+  /* 左栏顶部的主视图切换：会话 / 轨迹 */
+  .side-tabs {
+    display: flex;
+    gap: 2px;
+    margin: 0 12px 6px;
+    padding: 2px;
+    border-radius: var(--r-sm);
+    background: var(--glass-deep);
+    border: 1px solid var(--edge-soft);
+    flex: none;
+  }
+  .side-tabs button {
+    flex: 1;
+    padding: 6px 0;
+    border-radius: 5px;
+    font-size: 12px;
+    color: var(--fg-faint);
+    transition: all 0.16s var(--ease);
+  }
+  .side-tabs button:hover { color: var(--fg-dim); }
+  .side-tabs button.on { background: var(--acc-soft); color: var(--fg); }
+
+  /* 轨迹里的轮次导航 */
+  .round-nav {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 11px;
+    margin-bottom: 3px;
+    border-radius: var(--r-sm);
+    border: 1px solid transparent;
+    transition: all 0.16s var(--ease);
+  }
+  .round-nav:hover { background: var(--glass-lift); }
+  .round-nav .q {
+    font-size: 12.5px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .round-nav .m {
+    margin-top: 3px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+  }
+
+  /* ===================== 轨迹页 ===================== */
+  .trace-page { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px 40px; }
+  .trace-page-inner { max-width: 820px; margin: 0 auto; }
+
+  .trace-summary {
+    display: flex;
+    gap: 26px;
+    padding: 14px 18px;
+    margin-bottom: 22px;
+    border-radius: var(--r);
+    background: var(--glass-lift);
+    border: 1px solid var(--edge-soft);
+  }
+  .trace-summary dt { font-size: 10.5px; color: var(--fg-faint); letter-spacing: 0.06em; }
+  .trace-summary dd {
+    font-family: var(--mono);
+    font-size: 19px;
+    color: var(--fg);
+    margin-top: 2px;
+  }
+
+  .trace-round { margin-bottom: 26px; }
+  .trace-round-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding-bottom: 9px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--edge-soft);
+  }
+  .trace-round-head .no {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--acc-lift);
+    flex: none;
+  }
+  .trace-round-head .q {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .trace-round-head .m {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    flex: none;
+  }
+
+  .trace-step {
+    position: relative;
+    padding: 0 0 14px 18px;
+    border-left: 1px solid var(--edge-soft);
+  }
+  .trace-step:last-child { border-left-color: transparent; padding-bottom: 0; }
+  .trace-step::before {
+    content: '';
+    position: absolute;
+    left: -3.5px; top: 6px;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--fg-faint);
+  }
+  .trace-step.ok::before     { background: var(--ok); }
+  .trace-step.err::before    { background: var(--err); }
+  .trace-step.warn::before   { background: var(--warn); }
+  .trace-step.wait::before   { background: var(--warn); }
+  .trace-step.cancel::before { background: var(--fg-faint); }
+  .trace-step.run::before    { background: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); }
+
+  .step-head {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+  .step-head:hover .step-name { color: var(--acc-lift); }
+  .step-name {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--fg);
+    flex: none;
+  }
+  .step-arg {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .step-ms {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+    flex: none;
+  }
+  .step-state {
+    font-size: 10.5px;
+    flex: none;
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .step-state.ok     { color: var(--ok);   background: rgba(61,220,151,0.12); }
+  .step-state.err    { color: var(--err);  background: rgba(248,114,114,0.12); }
+  .step-state.warn,
+  .step-state.wait   { color: var(--warn); background: rgba(251,191,36,0.12); }
+  .step-state.cancel { color: var(--fg-dim); background: rgba(134,142,156,0.12); }
+  .step-state.run    { color: var(--acc-lift); background: var(--acc-soft); }
+
+  .step-body {
+    margin-top: 6px;
+    padding-left: 2px;
+    animation: rise 0.24s var(--ease);
+  }
+  .step-bar {
+    height: 3px;
+    margin-top: 7px;
+    border-radius: 2px;
+    background: var(--edge-soft);
+    overflow: hidden;
+    max-width: 320px;
+  }
+  .step-bar i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--acc), var(--acc-lift));
+  }
+  .step-bar i.err  { background: var(--err); }
+  .step-bar i.warn,
+  .step-bar i.wait { background: var(--warn); }
+  .step-bar i.cancel { background: var(--fg-faint); }
+
+  .side-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 4px 7px;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    color: var(--fg-faint);
+    text-transform: uppercase;
+  }
+
+  .sess {
+    position: relative;
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 9px 11px;
+    margin-bottom: 3px;
+    border-radius: var(--r-sm);
+    border: 1px solid transparent;
+    transition: all 0.16s var(--ease);
+  }
+  .sess:hover { background: var(--glass-lift); }
+  .sess.on {
+    background: var(--acc-soft);
+    border-color: var(--acc-line);
+  }
+  .sess-title {
+    font-size: 12.5px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-right: 20px;
+  }
+  .sess-meta {
+    display: flex;
+    gap: 7px;
+    margin-top: 3px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+  }
+  .sess-del {
+    position: absolute;
+    top: 50%; right: 7px;
+    transform: translateY(-50%);
+    display: grid;
+    place-items: center;
+    width: 21px; height: 21px;
+    border-radius: 6px;
+    color: var(--fg-faint);
+    opacity: 0;
+    transition: all 0.16s var(--ease);
+  }
+  .sess:hover .sess-del { opacity: 1; }
+  .sess-del:hover { color: var(--err); background: rgba(248,114,114,0.14); }
+  .sess-del svg { width: 12px; height: 12px; }
+  /* 二次确认态：从图标展开成一行文字 */
+  .sess-del.confirming {
+    opacity: 1;
+    width: auto;
+    padding: 0 8px;
+    color: var(--err);
+    background: rgba(248,114,114,0.18);
+    font-size: 10.5px;
+    font-family: var(--mono);
+  }
+
+  .empty-note {
+    padding: 18px 12px;
+    text-align: center;
+    font-size: 11.5px;
+    color: var(--fg-faint);
+  }
+
+  /* ===================== 中栏 ===================== */
+  .chat-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--edge-soft);
+    flex: none;
+  }
+  .chat-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--fg-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 对话区下部：左边对话流，右边预览，并排 */
+  .chat-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .stream {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 22px 20px 8px;
+    scroll-behavior: smooth;
+  }
+
+  /* ---------- 分屏预览 ---------- */
+  .split-view {
+    width: 52%;
+    min-width: 300px;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--edge-soft);
+    background: var(--glass-deep);
+    animation: split-in 0.26s var(--ease);
+  }
+  @keyframes split-in {
+    from { opacity: 0; transform: translateX(16px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  .split-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--edge-soft);
+    flex: none;
+  }
+  .split-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 12.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .split-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  /* max-content 让表格按内容撑开，而不是被分屏宽度压扁——
+     否则「已结算已下证」这种会被折成三行竖排 */
+  .split-table {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .split-table th {
+    position: sticky;
+    top: 0;
+    padding: 7px 10px;
+    text-align: left;
+    font-weight: 500;
+    color: var(--fg-dim);
+    background: var(--glass-deep);
+    border-bottom: 1px solid var(--edge);
+    white-space: nowrap;
+  }
+  .split-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--edge-soft);
+    color: var(--fg-dim);
+    white-space: nowrap;
+  }
+  .split-frame {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    border: none;
+    background: #fff;
+  }
+  .split-note {
+    padding: 10px 12px;
+    font-size: 11.5px;
+    color: var(--fg-faint);
+  }
+  /* 窄屏改成上下排 */
+  @media (max-width: 1080px) {
+    .chat-body { flex-direction: column; }
+    .split-view {
+      width: 100%;
+      min-width: 0;
+      max-height: 46%;
+      border-left: none;
+      border-top: 1px solid var(--edge-soft);
+    }
+    @keyframes split-in {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  }
+  .stream-inner {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    max-width: 780px;
+    margin: 0 auto;
+  }
+
+  /* 欢迎屏 */
+  .hello { text-align: center; padding: 30px 20px; margin: auto; }
+  .hello-mark {
+    display: grid;
+    place-items: center;
+    width: 84px; height: 84px;
+    margin: 0 auto 14px;
+    color: var(--mark);
+    /* 光晕做成静态的。之前那层是会缩放呼吸的实心圆，
+       又大过罗盘本体，看起来像罗盘压在一个脉动的蓝盘上 */
+    filter: drop-shadow(0 0 26px rgba(61, 125, 255, 0.22));
+  }
+  .hello-mark svg { width: 84px; height: 84px; }
+
+  .hello-mark .hm-rose { opacity: 0.92; }
+
+  /* 整幅画面上只留一个主运动：扫描弧匀速绕盘。
+     呼吸降级到光点上——周期取旋转的一半，每扫半圈亮一次，有拍点但不抢戏 */
+  .hello-mark .hm-sweep {
+    transform-origin: 24px 24px;
+    animation: sweep-rot 4.6s linear infinite;
+  }
+  @keyframes sweep-rot {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  .hello-mark .hm-sweep-arc {
+    filter: drop-shadow(0 0 3.5px rgba(107, 157, 255, 0.75));
+  }
+  .hello-mark .hm-sweep-glow { filter: blur(1.8px); }
+  .hello-mark .hm-sweep-dot {
+    animation: dot-pulse 2.3s ease-in-out infinite;
+  }
+  @keyframes dot-pulse {
+    0%, 100% { filter: drop-shadow(0 0 3px rgba(150, 185, 255, 0.65)); }
+    50%      { filter: drop-shadow(0 0 9px rgba(175, 202, 255, 1)); }
+  }
+  .hello h2 { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
+  .hello p { margin-top: 7px; font-size: 12.5px; color: var(--fg-faint); }
+  .hello-chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 24px;
+  }
+  .chip {
+    padding: 7px 13px;
+    border-radius: 999px;
+    border: 1px solid var(--edge);
+    background: var(--glass-lift);
+    font-size: 12px;
+    color: var(--fg-dim);
+    transition: all 0.18s var(--ease);
+  }
+  .chip:hover {
+    color: var(--fg);
+    border-color: var(--acc-line);
+    background: var(--acc-soft);
+    transform: translateY(-1px);
+  }
+
+  /* 消息 */
+  .turn { margin-bottom: 20px; }
+  .turn-user { display: flex; justify-content: flex-end; }
+  /* 不做聊天气泡。跟工具卡片、产物卡片用同一族玻璃块，
+     靠淡蓝填充 + 左侧一道强调线把自己认出来 */
+  .turn-user .bubble {
+    max-width: 80%;
+    padding: 8px 13px 8px 11px;
+    border-radius: var(--r-sm);
+    background: var(--acc-soft);
+    border: 1px solid var(--acc-line);
+    border-left: 2px solid var(--acc);
+    color: var(--fg);
+    font-size: 13.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .turn-bot { display: flex; gap: 11px; }
+  .avatar {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 22px; height: 22px;
+    margin-top: 3px;
+    color: var(--mark);
+  }
+  .avatar svg { width: 21px; height: 21px; }
+  .turn-body { flex: 1; min-width: 0; }
+
+  .prose { font-size: 13.5px; word-break: break-word; }
+  .prose > * + * { margin-top: 9px; }
+  .prose h1, .prose h2, .prose h3 { font-size: 14.5px; font-weight: 600; }
+  .prose ul, .prose ol { padding-left: 20px; }
+  .prose li + li { margin-top: 3px; }
+  .prose code {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 1.5px 5px;
+    border-radius: 5px;
+    background: var(--glass-lift);
+    border: 1px solid var(--edge-soft);
+  }
+  .prose pre {
+    padding: 12px 14px;
+    border-radius: var(--r-sm);
+    background: var(--glass-deep);
+    border: 1px solid var(--edge-soft);
+    overflow-x: auto;
+  }
+  .prose pre code { background: none; border: none; padding: 0; }
+  .prose blockquote {
+    padding-left: 12px;
+    border-left: 2px solid var(--acc-line);
+    color: var(--fg-dim);
+  }
+  .prose table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  .prose th, .prose td {
+    padding: 7px 10px;
+    border: 1px solid var(--edge-soft);
+    text-align: left;
+  }
+  .prose th { background: var(--glass-lift); font-weight: 500; color: var(--fg-dim); }
+  .prose a { color: var(--acc-lift); }
+
+  /* ===================== 工具调用卡片 ===================== */
+  .tool {
+    margin-bottom: 12px;
+    border-radius: var(--r);
+    border: 1px solid var(--edge);
+    background: var(--glass);
+    overflow: hidden;
+    animation: rise 0.3s var(--ease);
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(7px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .tool-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 9px 12px;
+    text-align: left;
+    transition: background 0.16s var(--ease);
+  }
+  .tool-head:hover { background: var(--glass-lift); }
+  .tool-head .caret {
+    width: 11px; height: 11px;
+    color: var(--fg-faint);
+    transition: transform 0.22s var(--ease);
+    flex: none;
+  }
+  .tool.open .caret { transform: rotate(90deg); }
+  .tool-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg);
+    letter-spacing: -0.01em;
+  }
+  .tool-gist {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tool-time {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    flex: none;
+  }
+  .tool-dot {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 15px; height: 15px;
+    border-radius: 50%;
+  }
+  .tool-dot svg { width: 9px; height: 9px; }
+  .tool-dot.ok   { background: rgba(61,220,151,0.16); color: var(--ok); }
+  .tool-dot.err  { background: rgba(248,114,114,0.16); color: var(--err); }
+  .tool-dot.warn { background: rgba(251,191,36,0.16); color: var(--warn); }
+  .tool-dot.wait { background: rgba(251,191,36,0.16); color: var(--warn); }
+  .tool-dot.cancel { background: rgba(134,142,156,0.16); color: var(--fg-dim); }
+  .tool-dot.run  {
+    background: var(--acc-soft);
+    border: 1.5px solid var(--acc-line);
+    border-top-color: transparent;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .tool-body {
+    padding: 0 12px 12px;
+    border-top: 1px solid var(--edge-soft);
+    animation: rise 0.24s var(--ease);
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 3px 12px;
+    padding: 10px 0 2px;
+    font-size: 12px;
+  }
+  .kv dt { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); }
+  .kv dd { color: var(--fg-dim); word-break: break-word; }
+
+  .sql {
+    margin-top: 9px;
+    padding: 10px 12px;
+    border-radius: var(--r-sm);
+    background: var(--glass-deep);
+    border: 1px solid var(--edge-soft);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--fg-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 190px;
+    overflow: auto;
+  }
+  .sql .kw { color: var(--acc-lift); }
+
+  .rawbox {
+    margin-top: 9px;
+    padding: 10px 12px;
+    border-radius: var(--r-sm);
+    background: var(--glass-deep);
+    border: 1px solid var(--edge-soft);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-faint);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 210px;
+    overflow: auto;
+  }
+
+  /* ===================== 确认卡片 ===================== */
+  .confirm {
+    margin-bottom: 12px;
+    border-radius: var(--r);
+    border: 1px solid rgba(251, 191, 36, 0.34);
+    background: rgba(251, 191, 36, 0.055);
+    overflow: hidden;
+    animation: rise 0.3s var(--ease);
+  }
+  .confirm.resolved {
+    border-color: var(--edge);
+    background: var(--glass);
+  }
+  .confirm-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 13px;
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .confirm-head .dot {
+    display: grid;
+    place-items: center;
+    width: 17px; height: 17px;
+    border-radius: 50%;
+    background: rgba(251, 191, 36, 0.18);
+    color: var(--warn);
+    flex: none;
+  }
+  .confirm-head .dot svg { width: 10px; height: 10px; }
+  .confirm.resolved .confirm-head .dot {
+    background: rgba(61,220,151,0.16);
+    color: var(--ok);
+  }
+  .confirm-head .tag {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+  }
+  .confirm-body { padding: 0 13px 13px; }
+  .confirm-note {
+    margin-top: 10px;
+    font-size: 11.5px;
+    color: var(--fg-faint);
+  }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .confirm-verdict {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 13px;
+    font-size: 12px;
+    color: var(--fg-dim);
+    border-top: 1px solid var(--edge-soft);
+  }
+
+  /* 候选表格 */
+  .cands {
+    margin-top: 10px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge-soft);
+    overflow: hidden;
+    max-height: 232px;
+    overflow-y: auto;
+  }
+  .cands table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .cands th {
+    position: sticky;
+    top: 0;
+    padding: 6px 10px;
+    text-align: left;
+    font-weight: 500;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    color: var(--fg-faint);
+    background: var(--glass-deep);
+    border-bottom: 1px solid var(--edge-soft);
+    white-space: nowrap;
+  }
+  .cands td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--edge-soft);
+    color: var(--fg-dim);
+  }
+  .cands tr:last-child td { border-bottom: none; }
+  .cands td:first-child { color: var(--fg); }
+
+  /* 改写对照 */
+  .diff-row {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 10px;
+    padding: 7px 0;
+    font-size: 12px;
+    border-bottom: 1px solid var(--edge-soft);
+  }
+  .diff-row:last-child { border-bottom: none; }
+  .diff-field { font-family: var(--mono); font-size: 11px; color: var(--fg-faint); }
+  .diff-vals { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .diff-from { color: var(--fg-faint); text-decoration: line-through; }
+  .diff-to { color: var(--ok); }
+  .diff-arrow { color: var(--fg-faint); font-size: 11px; }
+
+  /* ===================== 产物卡片 ===================== */
+  .artifact {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    margin-bottom: 12px;
+    padding: 11px 13px;
+    border-radius: var(--r);
+    border: 1px solid var(--edge);
+    background: var(--glass);
+    animation: rise 0.3s var(--ease);
+  }
+  .artifact-icon {
+    display: grid;
+    place-items: center;
+    width: 34px; height: 34px;
+    border-radius: 10px;
+    flex: none;
+  }
+  .artifact-icon.xlsx { background: rgba(61,220,151,0.14); color: var(--ok); }
+  .artifact-icon.pdf  { background: rgba(248,114,114,0.14); color: var(--err); }
+  .artifact-icon svg { width: 17px; height: 17px; }
+  .artifact-meta { flex: 1; min-width: 0; }
+  .artifact-name {
+    font-size: 12.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .artifact-sub {
+    margin-top: 2px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+  }
+  .artifact-acts { display: flex; gap: 6px; flex: none; }
+
+  /* ===================== 输入区 ===================== */
+  .composer { flex: none; padding: 10px 20px 16px; }
+  .composer-inner {
+    max-width: 780px;
+    margin: 0 auto;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--edge);
+    background: var(--glass-deep);
+    transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  }
+  .composer-inner:focus-within {
+    border-color: var(--acc-line);
+    box-shadow: 0 0 0 3px var(--acc-soft);
+  }
+  .composer-inner.drop { border-color: var(--acc); border-style: dashed; }
+  .composer-row { display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 14px; }
+  .composer textarea {
+    flex: 1;
+    min-height: 24px;
+    max-height: 168px;
+    padding: 6px 0;
+    border: none;
+    outline: none;
+    background: none;
+    color: var(--fg);
+    font: inherit;
+    line-height: 1.55;
+    resize: none;
+  }
+  .composer textarea::placeholder { color: var(--fg-faint); }
+  .upload-btn {
+    display: grid;
+    place-items: center;
+    width: 33px; height: 33px;
+    border-radius: 11px;
+    color: var(--fg-faint);
+    flex: none;
+    transition: all 0.18s var(--ease);
+  }
+  .upload-btn:hover:not(:disabled) { color: var(--acc-lift); background: var(--glass-lift); }
+  .upload-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .upload-btn svg { width: 15px; height: 15px; }
+
+  .send {
+    display: grid;
+    place-items: center;
+    width: 33px; height: 33px;
+    border-radius: 11px;
+    background: linear-gradient(135deg, var(--acc), var(--acc-lift));
+    color: #fff;
+    flex: none;
+    transition: all 0.18s var(--ease);
+    box-shadow: 0 4px 14px -5px var(--acc-line);
+  }
+  .send:disabled { opacity: 0.32; box-shadow: none; cursor: not-allowed; }
+  .send:not(:disabled):hover { filter: brightness(1.12); }
+  .send svg { width: 15px; height: 15px; }
+  .composer-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px 9px;
+    font-size: 10.5px;
+    color: var(--fg-faint);
+  }
+  .composer-foot .spacer { flex: 1; }
+  .composer-foot kbd {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--glass-lift);
+    border: 1px solid var(--edge-soft);
+  }
+
+  /* ===================== 右栏 ===================== */
+  .rail-head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--edge-soft);
+    flex: none;
+  }
+  .tab {
+    padding: 5px 11px;
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    color: var(--fg-faint);
+    transition: all 0.16s var(--ease);
+  }
+  .tab:hover { color: var(--fg-dim); }
+  .tab.on { color: var(--fg); background: var(--acc-soft); }
+  .tab b {
+    margin-left: 5px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+  }
+  .rail-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+
+  .rail-item {
+    padding: 10px 11px;
+    margin-bottom: 7px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge-soft);
+    background: var(--glass-lift);
+    transition: all 0.16s var(--ease);
+  }
+  .rail-item:hover { border-color: var(--acc-line); }
+  .rail-item-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .rail-item-top .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rail-item-sub {
+    margin-top: 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .rail-acts { display: flex; gap: 6px; margin-top: 9px; }
+
+  /* ---------- 轨迹 ---------- */
+  .trace-sum {
+    padding: 8px 11px;
+    margin-bottom: 12px;
+    border-radius: var(--r-sm);
+    background: var(--glass-lift);
+    border: 1px solid var(--edge-soft);
+    font-size: 11.5px;
+    color: var(--fg-dim);
+  }
+  .trace-sum b { font-family: var(--mono); color: var(--fg); font-weight: 500; }
+
+  .trace-item {
+    position: relative;
+    padding: 0 0 16px 16px;
+    border-left: 1px solid var(--edge-soft);
+  }
+  .trace-item:last-child { border-left-color: transparent; padding-bottom: 0; }
+  .trace-item::before {
+    content: '';
+    position: absolute;
+    left: -3.5px; top: 4px;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--fg-faint);
+  }
+  .trace-item.ok::before   { background: var(--ok); }
+  .trace-item.err::before  { background: var(--err); }
+  .trace-item.warn::before { background: var(--warn); }
+  .trace-item.wait::before { background: var(--warn); }
+  .trace-item.cancel::before { background: var(--fg-faint); }
+  .trace-item.run::before  { background: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); }
+
+  .trace-head { display: flex; align-items: baseline; gap: 8px; }
+  .trace-name {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .trace-ms {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    flex: none;
+  }
+  .trace-arg {
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--fg-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .trace-out {
+    margin-top: 2px;
+    font-size: 10.5px;
+    color: var(--fg-faint);
+  }
+  /* 相对耗时条：一眼看出哪步最费时间 */
+  .trace-bar {
+    margin-top: 6px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--edge-soft);
+    overflow: hidden;
+  }
+  .trace-bar i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--acc), var(--acc-lift));
+    transition: width 0.4s var(--ease);
+  }
+  .trace-bar i.err  { background: var(--err); }
+  .trace-bar i.warn,
+  .trace-bar i.wait { background: var(--warn); }
+  .trace-bar i.cancel { background: var(--fg-faint); }
+
+
+  /* 加载三点 */
+  .thinking { display: flex; gap: 4px; padding: 5px 0; }
+  .thinking i {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--fg-faint);
+    animation: bob 1.3s ease-in-out infinite;
+  }
+  .thinking i:nth-child(2) { animation-delay: 0.17s; }
+  .thinking i:nth-child(3) { animation-delay: 0.34s; }
+  @keyframes bob {
+    0%, 60%, 100% { opacity: 0.28; transform: translateY(0); }
+    30%           { opacity: 1; transform: translateY(-3px); }
+  }
+
+  /* 阶段提示 */
+  .stage {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 11px;
+    margin-bottom: 12px;
+    border-radius: var(--r-sm);
+    background: var(--glass-lift);
+    border: 1px solid var(--edge-soft);
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    animation: rise 0.3s var(--ease);
+  }
+  .stage svg { width: 12px; height: 12px; flex: none; }
+  .stage.run svg { animation: spin 1s linear infinite; color: var(--acc-lift); }
+
+  /* ===================== 设置面板 ===================== */
+  .sheet-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    display: grid;
+    place-items: center;
+    background: rgba(6, 8, 14, 0.52);
+    backdrop-filter: blur(5px);
+    animation: fade 0.22s var(--ease);
+  }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .sheet {
+    width: 388px;
+    max-height: 78vh;
+    overflow-y: auto;
+    padding: 20px;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--edge);
+    background: var(--glass-deep);
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,0.6);
+    animation: pop 0.26s var(--ease);
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.96) translateY(10px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .sheet h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+  .sheet-group + .sheet-group { margin-top: 18px; }
+  .sheet-label {
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    color: var(--fg-faint);
+    margin-bottom: 8px;
+  }
+  .sheet-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 0;
+  }
+  .sheet-row + .sheet-row { border-top: 1px solid var(--edge-soft); }
+  .sheet-row .what { font-size: 12.5px; }
+  .sheet-row .hint { font-size: 10.5px; color: var(--fg-faint); margin-top: 2px; }
+  .seg {
+    display: flex;
+    padding: 2px;
+    border-radius: var(--r-sm);
+    background: var(--glass-lift);
+    border: 1px solid var(--edge-soft);
+  }
+  .seg button {
+    padding: 4px 11px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    transition: all 0.16s var(--ease);
+  }
+  .seg button.on { background: var(--acc); color: #fff; }
+
+  /* ===================== 统一质感 =====================
+     所有块面共享一层极弱的顶光，让纯色卡片有厚度、有「朝上」的方向。
+     必须定义在所有卡片之后：前面的 background 简写会把 image 重置掉 */
+  .tool,
+  .artifact,
+  .confirm,
+  .rail-item,
+  .chip,
+  .composer-inner,
+  .cands {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.016), transparent 54%);
+  }
+  .sess.on,
+  .turn-user .bubble {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 60%);
+  }
+  [data-theme="light"] .tool,
+  [data-theme="light"] .artifact,
+  [data-theme="light"] .confirm,
+  [data-theme="light"] .rail-item,
+  [data-theme="light"] .chip,
+  [data-theme="light"] .composer-inner,
+  [data-theme="light"] .cands {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.75), transparent 54%);
+  }
+
+  /* ===================== 设置页 ===================== */
+  .settings-page {
+    position: relative;
+    z-index: 2;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+  }
+
+  .set-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--edge-soft);
+    flex: none;
+  }
+  .set-head h2 { font-size: 15px; font-weight: 600; }
+  .set-head .count {
+    font-size: 11.5px;
+    color: var(--warn);
+    font-family: var(--mono);
+  }
+  .set-head .spacer { flex: 1; }
+  .set-msg {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: var(--r-sm);
+  }
+  .set-msg.ok  { color: var(--ok);   background: rgba(61,220,151,0.12); }
+  .set-msg.err { color: var(--err);  background: rgba(248,114,114,0.12); }
+
+  .set-body { flex: 1; min-height: 0; display: flex; }
+
+  /* 左：分组导航 */
+  .set-nav {
+    width: 186px;
+    flex: none;
+    padding: 14px 12px;
+    border-right: 1px solid var(--edge-soft);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .set-nav button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 11px;
+    border-radius: var(--r-sm);
+    font-size: 12.5px;
+    color: var(--fg-dim);
+    text-align: left;
+    transition: all 0.16s var(--ease);
+  }
+  .set-nav button:hover { background: var(--glass-lift); color: var(--fg); }
+  .set-nav button.on { background: var(--acc-soft); color: var(--fg); }
+  .set-nav button b {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--warn);
+  }
+
+  /* 高级模式开关：危险参数默认锁着 */
+  .set-adv {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: auto;
+    padding: 10px 11px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge-soft);
+    font-size: 11.5px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    user-select: none;
+  }
+  .set-adv input { accent-color: var(--acc); cursor: pointer; }
+  .set-adv.on { border-color: rgba(251,191,36,0.4); color: var(--warn); }
+
+  /* 右：表单 */
+  .set-form { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 22px 40px; }
+  .set-form-inner { max-width: 640px; }
+  .set-group-title {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--fg-faint);
+    margin-bottom: 14px;
+  }
+
+  .set-field {
+    padding: 13px 0;
+    border-bottom: 1px solid var(--edge-soft);
+  }
+  .set-field:last-child { border-bottom: none; }
+  .set-field-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 7px;
+  }
+  .set-field-top .name { font-size: 13px; }
+  .set-field-top .mark {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(251,191,36,0.16);
+    color: var(--warn);
+  }
+  .set-field-top .spacer { flex: 1; }
+  .set-field-top .reset {
+    font-size: 11px;
+    color: var(--fg-faint);
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+  .set-field-top .reset:hover { color: var(--acc-lift); background: var(--acc-soft); }
+
+  .set-input {
+    width: 100%;
+    max-width: 380px;
+    padding: 7px 11px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge);
+    background: var(--glass-deep);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    outline: none;
+    transition: border-color 0.18s var(--ease);
+  }
+  .set-input:focus { border-color: var(--acc-line); }
+  .set-input:disabled {
+    background: transparent;
+    border-color: transparent;
+    color: var(--fg-dim);
+    cursor: not-allowed;
+  }
+
+  .set-hint { font-size: 11.5px; color: var(--fg-faint); line-height: 1.6; }
+
+  /* 危险参数的后果说明，只在高级模式下露出 */
+  .set-risk {
+    display: flex;
+    gap: 6px;
+    margin-top: 7px;
+    padding: 7px 10px;
+    border-radius: var(--r-sm);
+    background: rgba(251,191,36,0.075);
+    border: 1px solid rgba(251,191,36,0.22);
+    font-size: 11.5px;
+    color: var(--fg-dim);
+    line-height: 1.6;
+  }
+  .set-risk svg { width: 12px; height: 12px; color: var(--warn); flex: none; margin-top: 3px; }
+
+  .set-locked {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--fg-faint);
+  }
+  .set-locked svg { width: 11px; height: 11px; }
+
+  /* 危险操作的内联二次确认。
+     不用浏览器原生 confirm：它的样式完全脱离界面，
+     按钮文案还跟随系统语言，在深色玻璃里格外突兀 */
+  .confirm-inline {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: 10px;
+    padding: 9px 12px;
+    border-radius: var(--r-sm);
+    background: rgba(248, 114, 114, 0.07);
+    border: 1px solid rgba(248, 114, 114, 0.28);
+    animation: rise 0.2s var(--ease);
+  }
+  .confirm-inline .warn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    color: var(--fg-dim);
+  }
+  .confirm-inline .warn svg { width: 12px; height: 12px; color: var(--err); flex: none; }
+  .confirm-inline .warn b { color: var(--err); font-family: var(--mono); }
+
+  /* 只读信息 */
+  .info-row {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 12px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--edge-soft);
+    font-size: 12px;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-row dt { color: var(--fg-faint); }
+  .info-row dd { color: var(--fg-dim); font-family: var(--mono); word-break: break-all; }
+
+  /* ===================== 全局提示条 =====================
+     替代 alert()：原生的对话框样式脱离界面、按钮文案跟随系统语言，
+     而且会阻断操作。这个只是飘一下，不打断任何东西 */
+  .toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 460px;
+    padding: 10px 18px;
+    border-radius: var(--r);
+    background: var(--glass-lift);
+    border: 1px solid var(--edge);
+    color: var(--fg);
+    font-size: 12.5px;
+    box-shadow: 0 12px 32px -10px rgba(0, 0, 0, 0.6);
+    animation: toast-in 0.24s var(--ease);
+  }
+  .toast.ok  { border-color: rgba(61, 220, 151, 0.42); color: var(--ok); }
+  .toast.err { border-color: rgba(248, 114, 114, 0.42); color: var(--err); }
+  .toast svg { width: 14px; height: 14px; flex: none; }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
+  /* ===================== 自适应 ===================== */
+  /* 窄屏收窄侧栏，但不擅自藏掉——收不收由用户决定 */
+  @media (max-width: 1180px) {
+    .shell              { grid-template-columns: 226px minmax(0, 1fr) 0px; }
+    .shell.right-open   { grid-template-columns: 226px minmax(0, 1fr) 238px; }
+  }
+  @media (max-width: 900px) {
+    .shell              { grid-template-columns: 208px minmax(0, 1fr) 0px; }
+    .shell.right-open   { grid-template-columns: 208px minmax(0, 1fr) 212px; }
+    .shell.left-shut    { grid-template-columns: 0px minmax(0, 1fr) 0px; }
+    .shell.left-shut.right-open { grid-template-columns: 0px minmax(0, 1fr) 212px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===================== 开机动画 ===================== -->
+<div id="boot">
+  <div class="boot-stage">
+    <div class="compass">
+      <svg viewBox="0 0 48 48">
+        <circle class="ticks" cx="24" cy="24" r="20.5" stroke-dasharray="1.6 9.13"></circle>
+        <circle class="ring-inner" cx="24" cy="24" r="15.5"></circle>
+
+        <!-- 四个芒尖各有类名，依次点亮的顺序写在 CSS 里 -->
+        <g class="rose">
+          <path class="tip tip-n" d="M24 5 28.5 24 24 19.5 19.5 24Z"></path>
+          <path class="tip tip-s" d="M24 43 28.5 24 24 28.5 19.5 24Z"></path>
+          <path class="tip tip-w" d="M5 24 24 19.5 19.5 24 24 28.5Z"></path>
+          <path class="tip tip-e" d="M43 24 24 19.5 28.5 24 24 28.5Z"></path>
+          <circle class="rose-core" cx="24" cy="24" r="2.2"></circle>
+        </g>
+
+        <g class="helm-spin">
+          <path class="helm-arc" d="M9.2 32.5A17 17 0 0 1 36.4 10.6"></path>
+          <circle class="helm-dot" cx="36.6" cy="10.4" r="2.6"></circle>
+        </g>
+      </svg>
+    </div>
+
+    <div>
+      <div class="boot-word">
+        <span style="animation-delay:.10s">D</span>
+        <span style="animation-delay:.16s">A</span>
+        <span style="animation-delay:.22s">T</span>
+        <span style="animation-delay:.28s">A</span>
+        <span style="animation-delay:.34s">P</span>
+        <span style="animation-delay:.40s">I</span>
+        <span style="animation-delay:.46s">L</span>
+        <span style="animation-delay:.52s">O</span>
+        <span style="animation-delay:.58s">T</span>
+      </div>
+      <div class="boot-sub" style="text-align:center;margin-top:9px">DATA NAVIGATOR</div>
+    </div>
+
+    <div class="boot-stats" v-cloak id="bootStats">
+      <!-- 由 Vue 填充：动画时长 = 真实初始化时长 -->
+    </div>
+
+    <div class="boot-line"><i id="bootBar"></i></div>
+  </div>
+</div>
+
+<!-- ===================== 主应用 ===================== -->
+<div id="app" v-cloak>
+<div class="shell" v-if="view === 'chat'"
+     :class="{'right-open': railOpen, 'left-shut': leftShut}">
+
+  <!-- ---------- 左栏 ---------- -->
+  <aside class="col glass" :class="{hidden: leftShut}">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 48 48" fill="none">
+          <circle cx="24" cy="24" r="20.5" stroke="currentColor" stroke-width="2.6"
+                  stroke-dasharray="1.6 9.13" opacity=".45" transform="rotate(-90 24 24)"></circle>
+          <circle cx="24" cy="24" r="15.5" stroke="currentColor" stroke-width=".8" opacity=".14"></circle>
+          <path d="M24 5 28.5 24 24 19.5 19.5 24Z" fill="currentColor"></path>
+          <path d="M24 43 28.5 24 24 28.5 19.5 24Z" fill="currentColor" opacity=".28"></path>
+          <path d="M5 24 24 19.5 19.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
+          <path d="M43 24 24 19.5 28.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
+          <path d="M9.2 32.5A17 17 0 0 1 36.4 10.6" stroke="currentColor" stroke-width="1.7"
+                stroke-linecap="round" fill="none" opacity=".6"></path>
+          <circle cx="36.6" cy="10.4" r="2.6" fill="currentColor"></circle>
+          <circle cx="24" cy="24" r="2.2" fill="currentColor"></circle>
+        </svg>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div class="brand-name">DataPilot</div>
+        <div class="brand-tag">数据领航员</div>
+      </div>
+    </div>
+
+    <!-- 主视图切换：会话 / 轨迹 -->
+    <div class="side-tabs">
+      <button :class="{on: leftTab === 'sessions'}" @click="leftTab = 'sessions'">会话</button>
+      <button :class="{on: leftTab === 'trace'}" @click="leftTab = 'trace'">
+        轨迹{{ allTools.length ? ' · ' + allTools.length : '' }}
+      </button>
+    </div>
+
+    <button class="new-chat" @click="newSession">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+      新对话
+    </button>
+
+    <div class="side-scroll">
+      <!-- 轨迹模式：按轮次导航 -->
+      <template v-if="leftTab === 'trace'">
+        <div class="side-label">
+          <span>本会话轮次</span>
+          <span style="font-family:var(--mono)">{{ roundsWithTools.length }}</span>
+        </div>
+        <div v-if="!roundsWithTools.length" class="empty-note">
+          还没有工具调用<br>
+          <span style="font-size:10.5px">执行过程只属于当前这次对话</span>
+        </div>
+        <button v-for="(r, i) in roundsWithTools" :key="i" class="round-nav"
+                @click="scrollToRound(r.roundIndex)">
+          <div class="q">{{ r.question }}</div>
+          <div class="m">{{ r.tools.length }} 步 · {{ (r.totalMs / 1000).toFixed(1) }}s</div>
+        </button>
+      </template>
+
+      <!-- 会话模式：会话列表 -->
+      <template v-else>
+      <div class="side-label">
+        <span>会话</span>
+        <span style="font-family:var(--mono)">{{ sessions.length }}</span>
+      </div>
+      <div v-if="!sessions.length" class="empty-note">还没有历史会话</div>
+      <button v-for="s in sessions" :key="s.session_id"
+              class="sess" :class="{on: s.session_id === sessionId}"
+              @click="openSession(s.session_id)">
+        <div class="sess-title">{{ s.title }}</div>
+        <div class="sess-meta">
+          <span>{{ s.message_count }} 条</span>
+          <span>{{ shortTime(s.updated_at) }}</span>
+        </div>
+        <span class="sess-del" :class="{confirming: pendingDelete === s.session_id}"
+              @click.stop="removeSession(s.session_id)"
+              :title="pendingDelete === s.session_id ? '再点一次即删除' : '删除会话'">
+          <template v-if="pendingDelete === s.session_id">确认？</template>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+               stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </span>
+      </button>
+      </template>
+    </div>
+
+    <div style="padding:9px 12px;border-top:1px solid var(--edge-soft);display:flex;gap:6px">
+      <button class="btn ghost" @click="goSettings" style="flex:1;justify-content:center">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        设置
+      </button>
+      <button class="icon-btn" @click="leftShut = true" title="收起侧栏">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ---------- 中栏 ---------- -->
+  <main class="col glass" style="overflow:hidden">
+    <div class="chat-head">
+      <button v-if="leftShut" class="icon-btn" @click="leftShut = false" title="展开左侧栏">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+      </button>
+      <div class="chat-title">
+        {{ leftTab === 'trace' ? '执行轨迹' : currentTitle }}
+      </div>
+      <!-- 只在右栏收起时出现。展开后右栏自己头部就有收起入口，
+           这里再留一个「收起右栏」是两个按钮干同一件事 -->
+      <button v-if="leftTab === 'sessions' && !railOpen" class="btn"
+              @click="toggleRail" title="展开右侧栏（产物）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+          <line x1="15" y1="3" x2="15" y2="21"></line>
+        </svg>
+        产物
+      </button>
+    </div>
+
+    <!-- ---------- 轨迹页：独立视图，占满中栏 ---------- -->
+    <div v-if="leftTab === 'trace'" class="trace-page">
+      <div class="trace-page-inner">
+
+        <div v-if="!allTools.length" class="empty-note" style="padding:60px 0">
+          本次会话还没有工具调用<br>
+          <span style="font-size:11px">执行轨迹只属于当前这次对话，换个会话或先问点什么</span>
+        </div>
+
+        <template v-else>
+          <dl class="trace-summary">
+            <div><dt>总步数</dt><dd>{{ allTools.length }}</dd></div>
+            <div><dt>工具耗时</dt><dd>{{ (totalToolMs / 1000).toFixed(1) }}s</dd></div>
+            <div><dt>成功</dt><dd style="color:var(--ok)">{{ stateCount.ok }}</dd></div>
+            <div><dt>失败 / 拒绝</dt>
+              <dd :style="{color: (stateCount.err + stateCount.warn) ? 'var(--err)' : null}">
+                {{ stateCount.err + stateCount.warn }}
+              </dd>
+            </div>
+          </dl>
+
+          <div v-for="r in roundsWithTools" :key="r.roundIndex"
+               class="trace-round" :id="'round-' + r.roundIndex">
+            <div class="trace-round-head">
+              <span class="no">第 {{ r.roundIndex + 1 }} 轮</span>
+              <span class="q">{{ r.question }}</span>
+              <span class="m">{{ r.tools.length }} 步 · {{ (r.totalMs / 1000).toFixed(1) }}s</span>
+            </div>
+
+            <div v-for="(t, ti) in r.tools" :key="ti" class="trace-step" :class="t.state">
+              <div class="step-head" @click="t.open = !t.open">
+                <span class="step-name">{{ t.name }}</span>
+                <span class="step-arg">{{ toolGist(t) }}</span>
+                <span class="step-ms">{{ t.ms != null ? t.ms + 'ms' : '—' }}</span>
+                <span class="step-state" :class="t.state">{{ stateLabel(t.state) }}</span>
+              </div>
+
+              <div class="step-bar" v-if="t.ms != null">
+                <i :style="{ width: Math.max(2, (t.ms / maxToolMs) * 100) + '%' }"
+                   :class="t.state"></i>
+              </div>
+
+              <div class="step-body" v-if="t.open">
+                <dl class="kv" v-if="t.args && Object.keys(t.args).length">
+                  <template v-for="(v, k) in t.args" :key="k">
+                    <dt>{{ k }}</dt>
+                    <dd>{{ fmtVal(v) }}</dd>
+                  </template>
+                </dl>
+                <div class="sql" v-if="t.parsed && t.parsed.sql"
+                     v-html="highlightSql(t.parsed.sql)"></div>
+                <div class="rawbox" v-if="t.parsed">{{ prettyJson(t.parsed) }}</div>
+                <div class="rawbox" v-else-if="t.raw">{{ t.raw }}</div>
+                <div class="set-hint" v-else>这一步没有返回内容（等待确认或被中断）</div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+      </div>
+    </div>
+
+    <!-- ---------- 对话视图 ---------- -->
+    <template v-else>
+    <div class="chat-body">
+    <div class="stream" ref="streamEl">
+      <div class="stream-inner">
+
+        <!-- 欢迎屏 -->
+        <div v-if="!turns.length && !busy" class="hello">
+          <div class="hello-mark">
+            <svg viewBox="0 0 48 48" fill="none">
+              <defs>
+                <!-- 扫掠尾迹：透明起、亮收，头部才是光点 -->
+                <linearGradient id="hmSweep" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%"   stop-color="#6b9dff" stop-opacity="0"></stop>
+                  <stop offset="55%"  stop-color="#7ba5ff" stop-opacity=".5"></stop>
+                  <stop offset="100%" stop-color="#b8ceff" stop-opacity=".95"></stop>
+                </linearGradient>
+              </defs>
+              <circle class="hm-ticks" cx="24" cy="24" r="20.5"
+                      stroke="currentColor" stroke-width="2.6" stroke-dasharray="1.6 9.13"
+                      opacity=".42" transform="rotate(-90 24 24)"></circle>
+              <circle class="hm-ring" cx="24" cy="24" r="15.5"
+                      stroke="currentColor" stroke-width=".8" opacity=".16"></circle>
+
+              <g class="hm-rose">
+                <path d="M24 5 28.5 24 24 19.5 19.5 24Z" fill="currentColor"></path>
+                <path d="M24 43 28.5 24 24 28.5 19.5 24Z" fill="currentColor" opacity=".28"></path>
+                <path d="M5 24 24 19.5 19.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
+                <path d="M43 24 24 19.5 28.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
+                <circle cx="24" cy="24" r="2.2" fill="currentColor"></circle>
+              </g>
+
+              <!-- 扫描弧：盘面静止，只有这道光在转。罗盘转起来「指向」就没了意义，
+                   扫掠才是「工具正在工作」的表达 -->
+              <g class="hm-sweep">
+                <circle class="hm-sweep-glow" cx="38.76" cy="12.05" r="4.2"
+                        fill="currentColor" opacity=".26"></circle>
+                <path class="hm-sweep-arc" d="M24 5A19 19 0 0 1 38.76 12.05"
+                      stroke="url(#hmSweep)" stroke-width="1.9"
+                      stroke-linecap="round" fill="none"></path>
+                <circle class="hm-sweep-dot" cx="38.76" cy="12.05" r="1.9"
+                        fill="currentColor"></circle>
+              </g>
+            </svg>
+          </div>
+          <h2>领航你的申报数据</h2>
+          <p>用自然语言查台账、改状态、导报表</p>
+          <div class="hello-chips">
+            <button class="chip" v-for="q in samples" :key="q" @click="ask(q)">{{ q }}</button>
+          </div>
+        </div>
+
+        <!-- 对话轮次 -->
+        <div v-for="(t, ti) in turns" :key="ti" class="turn">
+          <div class="turn-user" v-if="t.question">
+            <div class="bubble">{{ t.question }}</div>
+          </div>
+
+          <div class="turn-bot" style="margin-top:12px">
+            <div class="avatar">
+              <!-- 21px 下刻度环会糊成一团，这里去掉环，只留芒星、航迹弧和落点 -->
+              <svg viewBox="0 0 48 48" fill="none">
+                <path d="M24 5 28.5 24 24 19.5 19.5 24Z" fill="currentColor"></path>
+                <path d="M24 43 28.5 24 24 28.5 19.5 24Z" fill="currentColor" opacity=".28"></path>
+                <path d="M5 24 24 19.5 19.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
+                <path d="M43 24 24 19.5 28.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
+                <path d="M9.2 32.5A17 17 0 0 1 36.4 10.6" stroke="currentColor" stroke-width="2.8"
+                      stroke-linecap="round" fill="none" opacity=".6"></path>
+                <circle cx="36.6" cy="10.4" r="3.4" fill="currentColor"></circle>
+                <circle cx="24" cy="24" r="2.4" fill="currentColor"></circle>
+              </svg>
+            </div>
+            <div class="turn-body">
+
+              <!-- 阶段提示 -->
+              <div v-if="t.stage" class="stage" :class="{run: busy}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 1 1-6.22-8.56"></path>
+                </svg>
+                {{ t.stage }}
+              </div>
+
+              <!-- 工具调用 -->
+              <div v-for="(tool, i) in t.tools" :key="i"
+                   class="tool" :class="{open: tool.open}">
+                <button class="tool-head" @click="tool.open = !tool.open">
+                  <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                  <span class="tool-name">{{ tool.name }}</span>
+                  <span class="tool-gist">{{ toolGist(tool) }}</span>
+                  <span class="tool-time" v-if="tool.ms != null">{{ tool.ms }}ms</span>
+                  <span class="tool-dot" :class="tool.state">
+                    <svg v-if="tool.state === 'ok'" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="3.4" stroke-linecap="round"
+                         stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    <svg v-else-if="tool.state === 'err'" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="3.4" stroke-linecap="round"
+                         stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                    <svg v-else-if="tool.state === 'warn'" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="3" stroke-linecap="round"
+                         stroke-linejoin="round">
+                      <line x1="12" y1="8" x2="12" y2="13"></line>
+                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <svg v-else-if="tool.state === 'wait'" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="3" stroke-linecap="round"
+                         stroke-linejoin="round">
+                      <line x1="9" y1="7" x2="9" y2="17"></line>
+                      <line x1="15" y1="7" x2="15" y2="17"></line>
+                    </svg>
+                    <svg v-else-if="tool.state === 'cancel'" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="3.2" stroke-linecap="round"
+                         stroke-linejoin="round">
+                      <line x1="7" y1="12" x2="17" y2="12"></line>
+                    </svg>
+                  </span>
+                </button>
+
+                <div class="tool-body" v-if="tool.open">
+                  <dl class="kv" v-if="tool.args && Object.keys(tool.args).length">
+                    <template v-for="(v, k) in tool.args" :key="k">
+                      <dt>{{ k }}</dt>
+                      <dd>{{ fmtVal(v) }}</dd>
+                    </template>
+                  </dl>
+
+                  <div class="sql" v-if="tool.parsed && tool.parsed.sql"
+                       v-html="highlightSql(tool.parsed.sql)"></div>
+
+                  <div class="rawbox" v-if="tool.parsed">{{ prettyJson(tool.parsed) }}</div>
+                  <div class="rawbox" v-else-if="tool.raw">{{ tool.raw }}</div>
+                </div>
+              </div>
+
+              <!-- 确认卡片 -->
+              <div v-if="t.confirm" class="confirm" :class="{resolved: t.confirm.resolved}">
+                <div class="confirm-head">
+                  <span class="dot">
+                    <svg v-if="!t.confirm.resolved" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
+                         stroke-linejoin="round">
+                      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                      <line x1="12" y1="9" x2="12" y2="13"></line>
+                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  </span>
+                  {{ confirmTitle(t.confirm) }}
+                  <span class="tag">{{ t.confirm.scope }}</span>
+                </div>
+
+                <div class="confirm-body">
+                  <!-- 候选清单 -->
+                  <div class="cands" v-if="t.confirm.rows && t.confirm.rows.length">
+                    <table>
+                      <thead>
+                        <tr><th v-for="c in confirmColumns(t.confirm)" :key="c">{{ c }}</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(r, ri) in t.confirm.rows" :key="ri">
+                          <td v-for="c in confirmColumns(t.confirm)" :key="c">{{ r[c] ?? '—' }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <!-- 改写对照 -->
+                  <div v-if="t.confirm.diffs && t.confirm.diffs.length" style="margin-top:10px">
+                    <div class="diff-row" v-for="(d, di) in t.confirm.diffs" :key="di">
+                      <div class="diff-field">{{ d.field }}</div>
+                      <div class="diff-vals">
+                        <span class="diff-from">{{ d.from ?? '空' }}</span>
+                        <span class="diff-arrow">→</span>
+                        <span class="diff-to">{{ d.to }}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="confirm-note" v-if="t.confirm.note">{{ t.confirm.note }}</div>
+
+                  <div class="confirm-actions" v-if="!t.confirm.resolved">
+                    <button class="btn" @click="answerConfirm(ti, '取消')"
+                            :disabled="busy">取消</button>
+                    <button class="btn" :class="t.confirm.danger ? 'danger' : 'primary'"
+                            @click="answerConfirm(ti, t.confirm.verb)"
+                            :disabled="busy">
+                      {{ t.confirm.verb }}
+                    </button>
+                  </div>
+                </div>
+
+                <div class="confirm-verdict" v-if="t.confirm.resolved">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                       stroke-linecap="round" stroke-linejoin="round"
+                       style="width:13px;height:13px">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                  {{ t.confirm.verdict }}
+                </div>
+              </div>
+
+              <!-- 产物卡片 -->
+              <div v-for="(a, ai) in t.artifacts" :key="'a' + ai" class="artifact">
+                <div class="artifact-icon" :class="a.kind">
+                  <svg v-if="a.kind === 'xlsx'" viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                       stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="9" y1="13" x2="15" y2="13"></line>
+                    <line x1="9" y1="17" x2="15" y2="17"></line>
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <path d="M9 15h6"></path>
+                    <path d="M9 18h3"></path>
+                  </svg>
+                </div>
+                <div class="artifact-meta">
+                  <div class="artifact-name">{{ a.name }}</div>
+                  <div class="artifact-sub">
+                    <span v-if="a.rows != null">{{ a.rows }} 条记录</span>
+                    <span v-if="a.rows != null"> · </span>
+                    <span>{{ a.label }}</span>
+                  </div>
+                </div>
+                <div class="artifact-acts">
+                  <button class="btn" @click="previewFile(a)">预览</button>
+                  <button class="btn" @click="download(a.path, a.name)">下载</button>
+                </div>
+              </div>
+
+              <!-- 回答（确认卡片的结论已在卡片里，不再重复一遍） -->
+              <div class="prose" v-if="t.answer && !(t.confirm && t.confirm.resolved)"
+                   v-html="md(t.answer)"></div>
+
+              <!-- 等待中 -->
+              <div v-if="ti === turns.length - 1 && busy && !t.answer" class="thinking">
+                <i></i><i></i><i></i>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 预览：在对话区里分屏，不弹浮层。
+         核对表格时往往正需要看着旁边的对话，浮层会把它盖掉 -->
+    <aside class="split-view" v-if="viewer">
+      <div class="split-head">
+        <span class="split-name">{{ viewer.name }}</span>
+        <button class="btn" @click="download(viewer.path, viewer.name)">下载</button>
+        <button class="icon-btn" @click="viewer = null" title="关闭预览">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+               stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div class="split-body">
+        <template v-if="viewer.kind === 'xlsx'">
+          <table class="split-table">
+            <thead>
+              <tr><th v-for="c in viewer.columns" :key="c">{{ c }}</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, i) in viewer.rows" :key="i">
+                <td v-for="(cell, j) in row" :key="j">{{ cell }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="split-note" v-if="viewer.total > viewer.rows.length">
+            显示前 {{ viewer.rows.length }} 行，共 {{ viewer.total }} 行
+          </div>
+        </template>
+
+        <iframe v-else-if="viewer.kind === 'pdf'" class="split-frame" :src="viewer.url"></iframe>
+
+        <div v-else class="split-note" style="margin:auto;text-align:center;line-height:2">
+          这种格式没法在这里预览<br>
+          <button class="btn" style="margin-top:6px"
+                  @click="download(viewer.path, viewer.name)">下载查看</button>
+        </div>
+      </div>
+    </aside>
+    </div>
+
+    <div class="composer">
+      <div class="composer-inner" :class="{drop: dragging}"
+           @dragover.prevent="dragging = true"
+           @dragleave="dragLeave"
+           @drop.prevent="onDrop">
+        <div class="composer-row">
+          <button class="upload-btn" @click="triggerUpload" :disabled="busy"
+                  title="上传 Excel 文件">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+            </svg>
+          </button>
+          <input type="file" ref="fileInput" accept=".xlsx,.xls"
+                 style="display:none" @change="handleFileSelect">
+
+          <textarea ref="inputEl" v-model="input" rows="1"
+                    :disabled="busy"
+                    :placeholder="busy ? '正在处理…' : '问点什么，或把 Excel 拖进来'"
+                    @keydown.enter.exact.prevent="send"
+                    @input="autoGrow"></textarea>
+          <button class="send" @click="send" :disabled="busy || !input.trim()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 2 11 13"></path>
+              <path d="M22 2 15 22 11 13 2 9z"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="composer-foot">
+          <span><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</span>
+          <span class="spacer"></span>
+          <span v-if="lastElapsed != null">上轮 {{ lastElapsed }}ms</span>
+        </div>
+      </div>
+    </div>
+    </template>
+  </main>
+
+  <!-- ---------- 右栏：只剩产物。轨迹已经搬到左栏的独立页 ---------- -->
+  <aside class="col glass" :class="{hidden: !railOpen}">
+    <div class="rail-head">
+      <button class="tab" :class="{on: rail === 'artifacts'}" @click="rail = 'artifacts'">
+        产物 <b>{{ allArtifacts.length }}</b>
+      </button>
+      <span style="flex:1"></span>
+      <button class="icon-btn" @click="toggleRail" title="收起右侧栏">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+      </button>
+    </div>
+
+    <div class="rail-body">
+      <!-- 产物 —— 本次对话产出的文件。不进全局列表：
+           产物和「哪一轮对话、基于什么条件导出的」绑在一起才有意义 -->
+      <template v-if="rail === 'artifacts'">
+        <div v-if="!allArtifacts.length" class="empty-note">
+          本次会话还没有产出文件<br>
+          <span style="font-size:10.5px">试试「把已下证的项目导成 Excel」</span>
+        </div>
+        <div v-for="(a, i) in allArtifacts" :key="i" class="rail-item">
+          <div class="rail-item-top">
+            <span class="artifact-icon" :class="a.kind"
+                  style="width:24px;height:24px;border-radius:7px">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+              </svg>
+            </span>
+            <span class="name">{{ a.name }}</span>
+          </div>
+          <div class="rail-item-sub">
+            <span>{{ a.label }}</span>
+            <span v-if="a.rows != null">{{ a.rows }} 条</span>
+          </div>
+          <div class="rail-acts">
+            <button class="btn" @click="previewFile(a)">预览</button>
+            <button class="btn" @click="download(a.path, a.name)">下载</button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </aside>
+</div>
+
+<!-- ---------- 设置：独立页面 ---------- -->
+<div v-else class="settings-page">
+  <div class="glass" style="flex:1;min-height:0;display:flex;flex-direction:column">
+
+    <div class="set-head">
+      <button class="icon-btn" @click="goChat" title="返回对话">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+      <h2>设置</h2>
+      <span class="count" v-if="dirtyCount">{{ dirtyCount }} 项未保存</span>
+      <span class="spacer"></span>
+      <span class="set-msg" v-if="saveMsg" :class="saveMsg.ok ? 'ok' : 'err'">
+        {{ saveMsg.text }}
+      </span>
+      <button class="btn" v-if="dirtyCount" @click="discardDraft">放弃改动</button>
+      <button class="btn primary" @click="saveSettings"
+              :disabled="!dirtyCount || saving">
+        {{ saving ? '保存中…' : '保存' }}
+      </button>
+    </div>
+
+    <div class="set-body">
+      <nav class="set-nav">
+        <button v-for="g in allGroups" :key="g.id"
+                :class="{on: activeGroup === g.id}" @click="activeGroup = g.id">
+          {{ g.name }}
+          <b v-if="groupDirty(g.id)">{{ groupDirty(g.id) }}</b>
+        </button>
+
+        <label class="set-adv" :class="{on: advanced}">
+          <input type="checkbox" v-model="advanced">
+          高级模式
+        </label>
+      </nav>
+
+      <div class="set-form">
+        <div class="set-form-inner">
+
+          <!-- 外观（前端本地，不走后端） -->
+          <template v-if="activeGroup === 'appearance'">
+            <div class="set-group-title">外观</div>
+            <div class="set-field">
+              <div class="set-field-top"><span class="name">主题</span></div>
+              <div class="seg">
+                <button :class="{on: theme === 'dark'}"  @click="setTheme('dark')">深色</button>
+                <button :class="{on: theme === 'light'}" @click="setTheme('light')">浅色</button>
+              </div>
+              <div class="set-hint" style="margin-top:8px">
+                深色底压得低，罗盘的辉光和扫描弧才跳得出来
+              </div>
+            </div>
+          </template>
+
+          <!-- 后端参数组 -->
+          <template v-else-if="activeGroupParams.length">
+            <div class="set-group-title">{{ activeGroupDesc }}</div>
+
+            <div v-for="p in activeGroupParams" :key="p.key" class="set-field">
+              <div class="set-field-top">
+                <span class="name">{{ p.label }}</span>
+                <span class="mark" v-if="dirty(p.key)">未保存</span>
+                <!-- 密码类的「值」是掩码，跟默认值比必然不等，
+                     别据此报「已改」，也别给它「恢复默认」——那是清空 key -->
+                <span class="mark" v-else-if="!p.is_default && p.type !== 'password'"
+                      style="background:rgba(134,142,156,0.16);color:var(--fg-dim)">已改</span>
+                <span class="spacer"></span>
+                <button class="reset"
+                        v-if="p.type !== 'password' && (!p.is_default || dirty(p.key))"
+                        @click="resetField(p)">恢复默认</button>
+              </div>
+
+              <!-- 高级项默认锁着，当前值照常可见 -->
+              <div v-if="p.level === 'advanced' && !advanced" class="set-locked">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                {{ p.value }}
+              </div>
+
+              <input v-else class="set-input"
+                     :type="p.type === 'password' ? 'password'
+                            : (p.type === 'number' ? 'number' : 'text')"
+                     :value="editValue(p)"
+                     :placeholder="p.type === 'password' ? (p.value || '未设置') : ''"
+                     @input="onEdit(p, $event.target.value)">
+
+              <div class="set-hint">{{ p.hint }}</div>
+
+              <div class="set-risk" v-if="p.risk && advanced">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                  <line x1="12" y1="9" x2="12" y2="13"></line>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>{{ p.risk }}</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- 只读信息 -->
+          <template v-else-if="activeGroup === 'info'">
+            <div class="set-group-title">只读信息</div>
+            <dl style="margin:0">
+              <div class="info-row" v-for="(v, k) in settings.info" :key="k">
+                <dt>{{ k }}</dt>
+                <dd>{{ v === null ? '—' : v }}</dd>
+              </div>
+            </dl>
+            <div class="set-hint" style="margin-top:14px">
+              这些不是偏好设置。数据库路径改错会让 DuckDB 静默新建一个空库，
+              看起来像数据全丢了——所以只给看不给改。
+            </div>
+          </template>
+
+          <!-- 维护 -->
+          <template v-else>
+            <div class="set-group-title">维护</div>
+
+            <div class="set-field">
+              <div class="set-field-top"><span class="name">导出与报告文件</span></div>
+              <div class="set-hint">
+                data/exports 与 data/reports 下的全部文件
+                <span v-if="fileCount !== null"> · 共 <b>{{ fileCount }}</b> 个</span>
+              </div>
+
+              <div v-if="confirmKind === 'files'" class="confirm-inline">
+                <span class="warn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                       stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                  </svg>
+                  <span>将永久删除 <b>{{ fileCount ?? '全部' }}</b> 个文件，不可撤销</span>
+                </span>
+                <button class="btn" @click="confirmKind = null">取消</button>
+                <button class="btn danger" @click="doClearFiles">确认删除</button>
+              </div>
+
+              <button v-else class="btn danger" style="margin-top:9px"
+                      @click="confirmKind = 'files'">清空所有文件</button>
+            </div>
+
+            <div class="set-field">
+              <div class="set-field-top"><span class="name">历史会话</span></div>
+              <div class="set-hint">
+                logs/sessions 下的全部会话记录
+                <span v-if="sessions.length"> · 共 <b>{{ sessions.length }}</b> 个</span>
+              </div>
+
+              <div v-if="confirmKind === 'sessions'" class="confirm-inline">
+                <span class="warn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                       stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                  </svg>
+                  <span>将永久删除 <b>{{ sessions.length }}</b> 个会话，含全部对话记录</span>
+                </span>
+                <button class="btn" @click="confirmKind = null">取消</button>
+                <button class="btn danger" @click="doClearSessions">确认删除</button>
+              </div>
+
+              <button v-else class="btn danger" style="margin-top:9px"
+                      @click="confirmKind = 'sessions'">删除全部会话</button>
+            </div>
+
+            <div class="set-hint" style="margin-top:18px">
+              这两项都是不可撤销的。清空后文件与对话记录不会进回收站
+              —— 回收站管的是数据库里的项目记录，不是这里。
+            </div>
+          </template>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ---------- 全局提示条 ---------- -->
+<div v-if="toast" class="toast" :class="toast.ok ? 'ok' : 'err'">
+  <svg v-if="toast.ok" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="20 6 9 17 4 12"></polyline>
+  </svg>
+  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"></circle>
+    <line x1="12" y1="8" x2="12" y2="12"></line>
+    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+  </svg>
+  {{ toast.text }}
+</div>
+</div>
+
+<script>
+const { createApp, ref, computed, watch, onMounted, nextTick } = Vue;
+const API = '';
+
+const FIELD_LABELS = {
+  project_name: '项目名称', owner: '负责人', category: '分类',
+  status_raw: '状态', issued_date: '下发时间', certified_date: '下证时间',
+  resubmit_name: '重提项目名', reject_date: '打回时间',
+  resubmit_date: '重提时间', reject_count: '打回次数',
+};
+
+const SQL_WORDS = [
+  'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'ORDER', 'BY',
+  'GROUP', 'HAVING', 'LIMIT', 'COUNT', 'SUM', 'AVG', 'MAX', 'MIN', 'AS',
+  'JOIN', 'LEFT', 'RIGHT', 'INNER', 'ON', 'DESC', 'ASC', 'IS', 'NULL',
+  'TRUE', 'FALSE', 'BETWEEN', 'DISTINCT', 'CAST', 'CASE', 'WHEN', 'THEN',
+  'ELSE', 'END', 'INTERVAL', 'TIMESTAMP', 'CURRENT_DATE',
+];
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+createApp({
+  setup() {
+    /* ---------------- 状态 ---------------- */
+    const turns = ref([]);
+    const input = ref('');
+    const busy = ref(false);
+    const sessionId = ref(localStorage.getItem('dp_session') || '');
+    const sessions = ref([]);
+    const rail = ref('artifacts');
+    // 默认展开，三栏结构一眼可见；用户收起过才记住收起
+    const railOpen = ref(localStorage.getItem('dp_rail') !== '0');
+    const leftShut = ref(false);
+    const theme = ref(localStorage.getItem('dp_theme') || 'dark');
+    const viewer = ref(null);
+
+    /* ---------------- 设置 ---------------- */
+    const view = ref('chat');              // 'chat' | 'settings'
+    const settings = ref({ groups: [], params: [], info: {} });
+    const activeGroup = ref('llm');
+    const leftTab = ref('sessions');        // 'sessions' | 'trace'
+    const draft = ref({});                 // 只存改过的项：key -> 新值
+    const advanced = ref(localStorage.getItem('dp_advanced') === '1');
+    const saving = ref(false);
+    const saveMsg = ref(null);
+
+    // 前端本地的两组，不走后端 API
+    const LOCAL_GROUPS = [
+      { id: 'appearance', name: '外观', local: true },
+      { id: 'info',       name: '只读信息', local: true },
+      { id: 'maintain',   name: '维护', local: true },
+    ];
+    const dragging = ref(false);
+    const fileInput = ref(null);
+    const lastElapsed = ref(null);
+    const streamEl = ref(null);
+
+    const samples = [
+      '已下证的项目有几个',
+      '把所有已下证的项目导成 Excel',
+      '给我一份本周周报',
+      '上周打回了哪些项目',
+      '检查一下数据有没有问题',
+    ];
+
+    /* ---------------- 派生 ---------------- */
+    const currentTitle = computed(() => turns.value[0]?.question || '新会话');
+    const allArtifacts = computed(() => turns.value.flatMap((t) => t.artifacts || []));
+    const allTools = computed(() => turns.value.flatMap((t) => t.tools || []));
+
+    /* 轨迹按「轮次」分组：光看一串扁平的调用，读不出
+       「这一问花了多久、走了几步」，而那才是用户关心的单位 */
+    const roundsWithTools = computed(() =>
+      turns.value
+        .map((t, i) => ({
+          roundIndex: i,
+          question: t.question,
+          tools: t.tools || [],
+          totalMs: (t.tools || []).reduce((s, x) => s + (x.ms || 0), 0),
+        }))
+        .filter((r) => r.tools.length));
+
+    const stateCount = computed(() => {
+      const c = { ok: 0, err: 0, warn: 0, wait: 0, cancel: 0, run: 0 };
+      allTools.value.forEach((t) => { if (c[t.state] !== undefined) c[t.state]++; });
+      return c;
+    });
+
+    const STATE_LABELS = {
+      ok: '成功', err: '失败', warn: '被拒绝',
+      wait: '待确认', cancel: '已取消', run: '执行中',
+    };
+    const stateLabel = (s) => STATE_LABELS[s] || s;
+
+    // 左栏点轮次，滚到中栏对应位置
+    const scrollToRound = (i) => {
+      nextTick(() => {
+        const el = document.getElementById('round-' + i);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    };
+
+    /* 轨迹要能一眼看出「哪一步拖了后腿」，
+       所以每条画一根相对条，基准取全场最慢的那一次调用 */
+    const totalToolMs = computed(() =>
+      allTools.value.reduce((sum, t) => sum + (t.ms || 0), 0));
+    const maxToolMs = computed(() =>
+      Math.max(1, ...allTools.value.map((t) => t.ms || 0)));
+
+    /* ---------------- 工具函数 ---------------- */
+    const escapeHtml = (s) => {
+      const d = document.createElement('div');
+      d.textContent = s ?? '';
+      return d.innerHTML;
+    };
+
+    /* 成对的 ** 直接落成标签，绕开 CommonMark 的定界符判定。
+       规范规定：闭合的 ** 前面若是标点，则后面必须也是空白或标点，
+       否则不构成右定界符，整对星号会原样留在正文里。
+       英文靠词间空格躲过一劫，中文没有空格——
+       「这是**包含匹配（含组合状态）**的口径」里的 ** 前面是「）」、
+       后面是「的」，正是那个被判无效的组合。
+       实测 markdown-it 表现完全相同，这是规范行为而非 marked 的缺陷。
+       代码块和行内代码里的星号是字面量，不参与替换。 */
+    const strongify = (text) => {
+      const s = String(text ?? '');
+      if (!s.includes('**')) return s;
+
+      /* 前后都要求不是星号，这样 ****甲**** 这类嵌套写法会整个跳过，
+         交回 marked 按原样解析成嵌套 strong，而不是被切歪 */
+      const pair = (seg) => seg.replace(
+        /(?<!\*)\*\*(?=[^\s*])([\s\S]*?[^\s*])\*\*(?!\*)/g,
+        '<strong>$1</strong>',
+      );
+
+      // 按 ``` 切段，奇数下标是围栏代码块，原样保留
+      const fences = s.split('```');
+      for (let i = 0; i < fences.length; i += 2) {
+        // 行内代码不跨行，逐行按 ` 切格，奇数下标是代码
+        fences[i] = fences[i].split('\n').map((line) => {
+          const cells = line.split('`');
+          for (let j = 0; j < cells.length; j += 2) cells[j] = pair(cells[j]);
+          return cells.join('`');
+        }).join('\n');
+      }
+      return fences.join('```');
+    };
+
+    const md = (text) => {
+      try { return marked.parse(strongify(text)); }
+      catch (e) { return escapeHtml(text); }
+    };
+
+    const safeParse = (raw) => {
+      try { return JSON.parse(raw); } catch (e) { return null; }
+    };
+
+    const prettyJson = (obj) => {
+      try { return JSON.stringify(obj, null, 2); } catch (e) { return String(obj); }
+    };
+
+    const highlightSql = (sql) => {
+      const re = new RegExp('\\b(' + SQL_WORDS.join('|') + ')\\b', 'gi');
+      return escapeHtml(sql).replace(re, '<span class="kw">$1</span>');
+    };
+
+    const fmtVal = (v) => {
+      if (v === null || v === undefined) return '—';
+      if (typeof v === 'object') return prettyJson(v);
+      return String(v);
+    };
+
+    const shortTime = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      const pad = (n) => String(n).padStart(2, '0');
+      const hm = pad(d.getHours()) + ':' + pad(d.getMinutes());
+      if (d.toDateString() === new Date().toDateString()) return hm;
+      return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hm;
+    };
+
+    const toolGist = (tool) => {
+      const p = tool.parsed;
+      if (p) {
+        if (p.row_count != null) return p.row_count + ' 行';
+        if (p.answer) return String(p.answer).slice(0, 70);
+        if (p.message) return String(p.message).slice(0, 70);
+      }
+      const a = tool.args || {};
+      const v = a.question || a.filter_question || '';
+      return v ? String(v).slice(0, 70) : '';
+    };
+
+    const confirmColumns = (c) => (c.rows && c.rows.length ? Object.keys(c.rows[0]) : []);
+    const confirmTitle = (c) => {
+      if (!c.resolved) return c.scope + ' · 等待确认';
+      return c.scope + ' · ' + (c.cancelled ? '已取消' : '已执行');
+    };
+
+    /* ---------------- 确认卡片构造 ---------------- */
+    const candidateRows = (list) =>
+      list.map((c) => ({
+        '项目名称': c.project_name,
+        '负责人': c.owner || '—',
+        '状态': c.status_raw || '—',
+      }));
+
+    const buildConfirm = (pending) => {
+      const type = pending.type;
+      const base = { resolved: false, verdict: '', rows: [], diffs: null, verb: '确认' };
+
+      if (type === 'delete') {
+        const n = pending.candidates.length;
+        return Object.assign(base, {
+          scope: '删除 ' + n + ' 条记录',
+          verb: '确认删除',
+          danger: true,
+          rows: candidateRows(pending.candidates),
+          note: '确认后这 ' + n + ' 条进入回收站，7 天内可恢复。',
+        });
+      }
+
+      if (type === 'restore') {
+        const n = pending.candidates.length;
+        return Object.assign(base, {
+          scope: '恢复 ' + n + ' 条记录',
+          verb: '确认恢复',
+          rows: candidateRows(pending.candidates),
+          note: '确认后这 ' + n + ' 条重新回到项目台账。',
+        });
+      }
+
+      if (type === 'create') {
+        const r = pending.record;
+        return Object.assign(base, {
+          scope: '新增 1 条记录',
+          verb: '确认新增',
+          rows: [{
+            '项目名称': r.project_name,
+            '负责人': r.owner || '—',
+            '分类': r.category || '—',
+            '状态': r.status_raw || '已提交',
+            '下发时间': r.issued_date || '今天',
+          }],
+          note: '确认后写入台账。',
+        });
+      }
+
+      if (type === 'batch_create') {
+        const n = pending.records.length;
+        return Object.assign(base, {
+          scope: '批量新增 ' + n + ' 条记录',
+          verb: '确认新增',
+          rows: candidateRows(pending.records),
+          note: '确认后这 ' + n + ' 条写入台账。',
+        });
+      }
+
+      if (type === 'update') {
+        const n = pending.candidates.length;
+        const first = pending.candidates[0] || {};
+        const diffs = Object.entries(pending.updates || {}).map(([k, v]) => ({
+          field: FIELD_LABELS[k] || k,
+          from: n === 1 ? fmtVal(first[k]) : '（' + n + ' 条各不相同）',
+          to: fmtVal(v),
+        }));
+        return Object.assign(base, {
+          scope: '修改 ' + n + ' 条记录',
+          verb: '确认修改',
+          rows: pending.candidates.map((c) => ({
+            '项目名称': c.project_name,
+            '负责人': c.owner || '—',
+            '当前状态': c.status_raw || '—',
+          })),
+          diffs,
+          note: '确认后立即写入台账。',
+        });
+      }
+
+      if (type === 'import') {
+        const s = pending.scan_result || {};
+        const count = (k) => (s[k] ? s[k].length : 0);
+        return Object.assign(base, {
+          scope: 'Excel 导入',
+          verb: '确认导入',
+          rows: [
+            { '类别': '新增记录', '条数': count('new_records'), '说明': '文件里有、台账里没有' },
+            { '类别': '字段冲突', '条数': count('conflicts'), '说明': '同名记录字段对不上' },
+            { '类别': '已删除待恢复', '条数': count('deleted_in_db'), '说明': '台账里是删除态、文件里又出现' },
+            { '类别': '文件缺失', '条数': count('missing_from_excel'), '说明': '台账里有、文件里没有（不影响）' },
+          ],
+          note: '默认口径：新增全部导入，冲突以台账为准，已删除的保持删除。'
+              + '要改口径请直接在输入框说明，例如「导入，并恢复已删除的记录」。',
+        });
+      }
+
+      return Object.assign(base, {
+        scope: '需要确认',
+        verb: '确认',
+        note: pending.message || '',
+      });
+    };
+
+    /* ---------------- 设置 ---------------- */
+    const allGroups = computed(() => [
+      LOCAL_GROUPS[0],
+      ...(settings.value.groups || []).map((g) => ({ ...g, local: false })),
+      LOCAL_GROUPS[1],
+      LOCAL_GROUPS[2],
+    ]);
+
+    const isLocalGroup = computed(() => {
+      const g = allGroups.value.find((x) => x.id === activeGroup.value);
+      return !!(g && g.local);
+    });
+
+    const activeGroupParams = computed(() => {
+      if (isLocalGroup.value) return [];
+      return (settings.value.params || []).filter((p) => p.group === activeGroup.value);
+    });
+
+    const activeGroupDesc = computed(() => {
+      const g = allGroups.value.find((x) => x.id === activeGroup.value);
+      return g ? (g.desc || g.name) : '';
+    });
+
+    const dirty = (key) => draft.value[key] !== undefined;
+
+    const groupDirty = (gid) => {
+      return (settings.value.params || [])
+        .filter((p) => p.group === gid && draft.value[p.key] !== undefined)
+        .length;
+    };
+
+    const dirtyCount = computed(() => Object.keys(draft.value).length);
+
+    // 密码框永不回填：留空 = 不修改，避免把掩码当成真值提交上去
+    const editValue = (p) => {
+      if (p.type === 'password') return draft.value[p.key] ?? '';
+      return draft.value[p.key] ?? p.value;
+    };
+
+    const onEdit = (p, v) => {
+      if (String(v) === String(p.value)) {
+        delete draft.value[p.key];      // 改回原样就当没改过
+      } else {
+        draft.value[p.key] = v;
+      }
+    };
+
+    const resetField = (p) => { draft.value[p.key] = p.default; };
+
+    const discardDraft = () => { draft.value = {}; saveMsg.value = null; };
+
+    watch(advanced, (v) => localStorage.setItem('dp_advanced', v ? '1' : '0'));
+
+    const flash = (text, ok = true) => {
+      saveMsg.value = { text, ok };
+      setTimeout(() => { saveMsg.value = null; }, 3200);
+    };
+
+    /* 全局提示条：替代 alert()。原生的会阻断操作、样式脱离界面，
+       按钮文案还跟随系统语言 */
+    const toast = ref(null);
+    let toastTimer = null;
+
+    const notify = (text, ok = true) => {
+      toast.value = { text, ok };
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toast.value = null; }, ok ? 2600 : 4200);
+    };
+
+    const loadSettings = async () => {
+      try {
+        const res = await fetch(API + '/settings');
+        if (res.ok) settings.value = await res.json();
+      } catch (e) { /* 静默 */ }
+    };
+
+    const goSettings = async () => {
+      draft.value = {};
+      saveMsg.value = null;
+      confirmKind.value = null;
+      view.value = 'settings';
+      await Promise.all([loadSettings(), loadCounts()]);
+    };
+
+    const goChat = () => {
+      draft.value = {};
+      view.value = 'chat';
+    };
+
+    const saveSettings = async () => {
+      if (!dirtyCount.value || saving.value) return;
+      saving.value = true;
+      try {
+        const values = {};
+        for (const [k, v] of Object.entries(draft.value)) {
+          const p = (settings.value.params || []).find((x) => x.key === k);
+          // 密码框留空 = 不改这一项，别把空串当成新密码写进去
+          if (p && p.type === 'password' && String(v).trim() === '') continue;
+          values[k] = v;
+        }
+        if (!Object.keys(values).length) { draft.value = {}; return; }
+
+        const res = await fetch(API + '/settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values }),
+        });
+        const data = await res.json();
+        if (!res.ok) { flash(data.detail || '保存失败', false); return; }
+
+        draft.value = {};
+        await loadSettings();
+        notify('已保存并生效');
+      } catch (e) {
+        flash('保存失败：' + e.message, false);
+      } finally {
+        saving.value = false;
+      }
+    };
+
+    /* ---------------- 数据加载 ---------------- */
+    const loadSessions = async () => {
+      try {
+        const res = await fetch(API + '/sessions');
+        if (res.ok) sessions.value = (await res.json()).sessions || [];
+      } catch (e) { /* 静默 */ }
+    };
+
+
+    /* ---------------- 滚动 ---------------- */
+    const scrollDown = async () => {
+      await nextTick();
+      const el = streamEl.value;
+      if (el) el.scrollTop = el.scrollHeight;
+    };
+
+    /* ---------------- 事件处理 ---------------- */
+    const collectArtifact = (turn, tool) => {
+      const p = tool.parsed;
+      if (!p || !p.file_path) return;
+      const path = String(p.file_path).replace(/\\/g, '/');
+      const name = path.split('/').pop();
+      const isPdf = name.toLowerCase().endsWith('.pdf');
+      turn.artifacts.push({
+        name,
+        path: p.file_path,
+        kind: isPdf ? 'pdf' : 'xlsx',
+        rows: p.row_count != null ? p.row_count : null,
+        label: isPdf ? 'PDF 报告' : 'Excel 表格',
+      });
+    };
+
+    const handleEvent = (ev, turn) => {
+      switch (ev.type) {
+        case 'start':
+          sessionId.value = ev.session_id;
+          localStorage.setItem('dp_session', ev.session_id);
+          break;
+
+        case 'think':
+          turn.stage = ev.round === 1 ? '正在理解你的问题…' : '正在整理结果…';
+          break;
+
+        case 'compact':
+          turn.stage = ev.message;
+          break;
+
+        case 'tool_call':
+          turn.stage = '';
+          turn.tools.push({
+            callId: ev.call_id,
+            name: ev.name,
+            args: ev.args || {},
+            state: 'run',
+            open: false,
+            ms: null,
+            raw: '',
+            parsed: null,
+          });
+          break;
+
+        case 'tool_result': {
+          const tool = turn.tools.find((t) => t.callId === ev.call_id);
+          if (!tool) break;
+          tool.ms = ev.elapsed_ms;
+          tool.raw = ev.raw || '';
+          tool.parsed = safeParse(tool.raw);
+          tool.state = ev.security ? 'warn' : (ev.ok ? 'ok' : 'err');
+          collectArtifact(turn, tool);
+          break;
+        }
+
+        case 'pending':
+          turn.stage = '';
+          // 触发确认的那个工具没返回结果，停在"待确认"而不是一直转
+          turn.tools.forEach((t) => { if (t.state === 'run') t.state = 'wait'; });
+          turn.confirm = buildConfirm(ev.pending);
+          break;
+
+        case 'answer':
+          turn.answer = ev.content || '';
+          break;
+
+        case 'error':
+          turn.answer = '**出错了**\n\n' + ev.message;
+          break;
+
+        case 'done':
+          lastElapsed.value = ev.elapsed_ms;
+          break;
+      }
+    };
+
+    /* ---------------- 流式请求 ---------------- */
+    const runStream = async (question, turn) => {
+      busy.value = true;
+      turn.stage = '正在处理…';
+
+      try {
+        const res = await fetch(API + '/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, session_id: sessionId.value || null }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+
+          const chunks = buf.split('\n\n');
+          buf = chunks.pop();
+
+          for (const chunk of chunks) {
+            const line = chunk.trim();
+            if (!line.startsWith('data:')) continue;
+            let ev;
+            try {
+              ev = JSON.parse(line.slice(5).trim());
+            } catch (e) {
+              // 静默跳过会让问题极难查：事件没了，界面停在加载态，
+              // 控制台却干干净净。至少留下痕迹
+              console.warn('[SSE] 事件解析失败，已跳过：', e.message,
+                           line.slice(0, 200));
+              continue;
+            }
+            handleEvent(ev, turn);
+            await scrollDown();
+          }
+        }
+      } catch (e) {
+        turn.answer = '**连接中断**：' + e.message;
+      } finally {
+        turn.stage = '';
+        busy.value = false;
+        await scrollDown();
+        loadSessions();
+      }
+    };
+
+    /* ---------------- 发送 ---------------- */
+    const send = async () => {
+      const q = input.value.trim();
+      if (!q || busy.value) return;
+
+      turns.value.push({ question: q, tools: [], artifacts: [], answer: '', stage: '' });
+
+      /* 必须从 turns.value 取回代理再往下传。
+         Vue 3 的 ref 只在「通过 proxy 访问」时返回响应式代理，
+         直接持有并修改原始对象不经过 Proxy 的 set 陷阱——
+         事件流里那些 turn.artifacts.push() / turn.answer = 就全都悄悄丢了，
+         界面要等下一次无关的响应式变更才碰巧更新，看起来就是「得按 F5」 */
+      const turn = turns.value[turns.value.length - 1];
+
+      input.value = '';
+      resetInputHeight();
+      await scrollDown();
+
+      await runStream(q, turn);
+    };
+
+    const ask = (q) => {
+      if (busy.value) return;
+      input.value = q;
+      send();
+    };
+
+    const answerConfirm = async (ti, text) => {
+      const turn = turns.value[ti];
+      if (!turn || !turn.confirm || busy.value) return;
+
+      const cancelled = text === '取消';
+      turn.confirm.resolved = true;
+      turn.confirm.cancelled = cancelled;
+      turn.confirm.verdict = cancelled ? '已取消，未执行任何操作' : '正在执行…';
+
+      // 取消掉的那个工具不会再有结果回来，别让它永远停在「待确认」
+      if (cancelled) {
+        turn.tools.forEach((t) => { if (t.state === 'wait') t.state = 'cancel'; });
+      }
+
+      await runStream(text, turn);
+
+      // 卡片里直接给结论，answer 就不再单独渲染了
+      turn.confirm.verdict = turn.answer || (cancelled ? '已取消，未执行任何操作' : '已执行');
+    };
+
+
+    /* ---------------- 输入框 ---------------- */
+    const autoGrow = (e) => {
+      const el = e.target;
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 168) + 'px';
+    };
+
+    const resetInputHeight = () => {
+      nextTick(() => {
+        const el = document.querySelector('.composer textarea');
+        if (el) el.style.height = 'auto';
+      });
+    };
+
+    const setTheme = (t) => {
+      theme.value = t;
+      localStorage.setItem('dp_theme', t);
+      document.documentElement.setAttribute('data-theme', t);
+    };
+
+    const toggleRail = () => {
+      railOpen.value = !railOpen.value;
+      localStorage.setItem('dp_rail', railOpen.value ? '1' : '0');
+    };
+
+    /* ---------------- 会话 ---------------- */
+    /* 回看历史会话时，把当时走过的工具一并还原。
+       否则「导出了 Excel」这类会话打开后，右栏产物是空的——
+       数据一直在 dp_tools 里，只是以前没收 */
+    const messagesToTurns = (messages) => {
+      const out = [];
+      let cur = null;
+      for (const m of messages) {
+        if (m.role === 'user') {
+          cur = { question: m.content, tools: [], artifacts: [], answer: '', stage: '' };
+          out.push(cur);
+        } else if (m.role === 'assistant' && cur) {
+          cur.answer = m.content;
+
+          for (const t of (m.dp_tools || [])) {
+            const tool = {
+              callId: '',
+              name: t.name,
+              args: t.args || {},
+              state: t.security ? 'warn' : (t.ok ? 'ok' : 'err'),
+              open: false,
+              ms: t.ms,
+              raw: t.raw || '',
+              parsed: safeParse(t.raw),
+            };
+            cur.tools.push(tool);
+            collectArtifact(cur, tool);
+          }
+        }
+      }
+      return out;
+    };
+
+    const openSession = async (id, silent) => {
+      if (busy.value) return;
+      try {
+        const res = await fetch(API + '/sessions/' + id);
+        if (!res.ok) {
+          if (!silent) notify('这个会话已经不在了', false);
+          return;
+        }
+        const data = await res.json();
+        sessionId.value = id;
+        localStorage.setItem('dp_session', id);
+        turns.value = messagesToTurns(data.messages || []);
+        await scrollDown();
+      } catch (e) {
+        if (!silent) notify('读取会话失败：' + e.message, false);
+      }
+    };
+
+    const newSession = () => {
+      if (busy.value) return;
+      sessionId.value = '';
+      localStorage.removeItem('dp_session');
+      turns.value = [];
+      viewer.value = null;
+    };
+
+    /* 删除单个会话用二次点击，不用浏览器弹窗。
+       左栏窄，塞不下内联确认条；而原生弹窗突兀，
+       按钮文案还跟随系统语言，跟界面完全脱节 */
+    const pendingDelete = ref(null);
+    let pendingTimer = null;
+
+    const removeSession = async (id) => {
+      if (pendingDelete.value !== id) {
+        pendingDelete.value = id;
+        clearTimeout(pendingTimer);
+        // 3 秒不点就自动收回，避免悬在半空
+        pendingTimer = setTimeout(() => { pendingDelete.value = null; }, 3000);
+        return;
+      }
+      clearTimeout(pendingTimer);
+      pendingDelete.value = null;
+      try { await fetch(API + '/sessions/' + id, { method: 'DELETE' }); } catch (e) {}
+      if (id === sessionId.value) newSession();
+      loadSessions();
+    };
+
+    /* ---------------- 文件 ---------------- */
+    const download = (path, name) => {
+      const a = document.createElement('a');
+      a.href = API + '/download?path=' + encodeURIComponent(path);
+      a.download = name;
+      a.click();
+    };
+
+    /* 预览开在对话区里分屏，不再弹浮层。
+       浮层会盖住对话——用户在核对表格时往往正需要看旁边的对话 */
+    const previewFile = async (f) => {
+      try {
+        const res = await fetch(API + '/preview?path=' + encodeURIComponent(f.path));
+        if (!res.ok) { notify('无法预览这个文件', false); return; }
+        const data = await res.json();
+
+        if (data.type === 'excel') {
+          viewer.value = {
+            name: f.name, path: f.path, kind: 'xlsx',
+            columns: data.columns, rows: data.rows, total: data.total_rows,
+          };
+        } else if (data.type === 'pdf') {
+          viewer.value = { name: f.name, path: f.path, kind: 'pdf', url: data.url };
+        } else {
+          // 不支持预览的类型不再偷偷下载，明说
+          viewer.value = { name: f.name, path: f.path, kind: 'other' };
+        }
+      } catch (e) {
+        notify('预览失败：' + e.message, false);
+      }
+    };
+
+    const upload = async (file) => {
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res = await fetch(API + '/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) { notify('上传失败：' + (data.detail || '未知错误'), false); return; }
+
+        turns.value.push({
+          question: '上传文件：' + file.name,
+          tools: [], artifacts: [], stage: '',
+          answer: '已上传到 `' + data.path + '`\n\n现在可以说「从 ' + data.path + ' 导入数据」。',
+        });
+        await scrollDown();
+      } catch (e) {
+        notify('上传失败：' + e.message, false);
+      }
+    };
+
+    const triggerUpload = () => fileInput.value && fileInput.value.click();
+
+    const handleFileSelect = async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';            // 同一个文件连选两次也要能触发
+      await upload(file);
+    };
+
+    const onDrop = async (e) => {
+      dragging.value = false;
+      const file = e.dataTransfer.files[0];
+      await upload(file);
+    };
+
+    const dragLeave = (e) => {
+      if (!e.currentTarget.contains(e.relatedTarget)) dragging.value = false;
+    };
+
+    /* 维护组的危险操作：内联二次确认，不用浏览器原生弹窗 */
+    const confirmKind = ref(null);
+    const fileCount = ref(null);
+
+    const loadCounts = async () => {
+      try {
+        const res = await fetch(API + '/files');
+        if (res.ok) fileCount.value = ((await res.json()).files || []).length;
+      } catch (e) { /* 静默 */ }
+    };
+
+    const doClearFiles = async () => {
+      confirmKind.value = null;
+      try {
+        const res = await fetch(API + '/files', { method: 'DELETE' });
+        const data = await res.json();
+        notify('已清空 ' + data.deleted + ' 个文件');
+        loadCounts();
+      } catch (e) {
+        flash('清空失败：' + e.message, false);
+      }
+    };
+
+    const doClearSessions = async () => {
+      confirmKind.value = null;
+      for (const s of sessions.value) {
+        try { await fetch(API + '/sessions/' + s.session_id, { method: 'DELETE' }); } catch (e) {}
+      }
+      newSession();
+      loadSessions();
+      notify('已删除全部会话');
+    };
+
+    /* ---------------- 开机动画 ---------------- */
+    const countUp = (el, target, duration, pad) => {
+      const start = performance.now();
+      const step = (now) => {
+        const p = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - p, 3);
+        const v = Math.round(target * eased);
+        el.textContent = pad ? String(v).padStart(pad, '0') : String(v);
+        if (p < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    };
+
+    /* 开机动画的三格改报日期。
+       这不是随手换的填充物：DataPilot 要处理「上周」「本月」这类相对时间，
+       agent 的 SYSTEM_PROMPT 里也带着当前日期。开机时把时间基准亮出来，
+       是在告诉用户这台机器按哪一天算 */
+    const renderBootStats = () => {
+      const host = document.getElementById('bootStats');
+      if (!host) return;
+
+      const now = new Date();
+      const cells = [
+        { n: now.getFullYear(), label: '年', pad: 0 },
+        { n: now.getMonth() + 1, label: '月', pad: 2 },
+        { n: now.getDate(),       label: '日', pad: 2 },
+      ];
+
+      /* 三格依次滚入。窗口跟航迹弧旋转、北方亮起严格同起同止：
+         900ms 起，最后一格收在 2400ms（900 + 2×280 + 940）。
+         改这三个数必须同步改 tip-stay 和 sleep 的下限 */
+      const START = 900, STEP = 280, DURATION = 940;
+
+      host.innerHTML = cells.map((c, i) =>
+        '<div class="boot-stat" style="animation-delay:' +
+        ((START + i * STEP) / 1000) + 's">' +
+        '<b>' + (c.pad ? '00' : '0') + '</b><span>' + c.label + '</span></div>'
+      ).join('');
+
+      const nums = host.querySelectorAll('.boot-stat b');
+      cells.forEach((c, i) => {
+        setTimeout(() => countUp(nums[i], c.n, DURATION, c.pad), START + i * STEP);
+      });
+    };
+
+    const boot = async () => {
+      const skip = document.documentElement.getAttribute('data-boot') === 'skip';
+      const bar = document.getElementById('bootBar');
+      const started = Date.now();
+
+      // 动画期间做真实初始化，不是白等
+      if (!skip && bar) bar.style.width = '34%';
+      renderBootStats();
+
+      await loadSessions();
+
+      if (!skip && bar) bar.style.width = '100%';
+
+      if (skip) return;
+
+      // 最短展示时长。2.40s 是三方共同收尾的那一刻——
+      // 航迹弧转完一圈半停下、日期末格滚完、北方指针亮起。
+      // 多留 100ms 让「锁定」这个瞬间被看到，再开始淡出
+      await sleep(Math.max(0, 2500 - (Date.now() - started)));
+
+      // 用隐藏而不是 remove()：DOM 留着，调试动画时好复现
+      const el = document.getElementById('boot');
+      if (el) {
+        el.classList.add('done');
+        setTimeout(() => { el.style.display = 'none'; }, 820);
+      }
+      sessionStorage.setItem('dp_booted', '1');
+    };
+
+    /* ---------------- 挂载 ---------------- */
+    onMounted(async () => {
+      await boot();
+      if (sessionId.value) await openSession(sessionId.value, true);
+    });
+
+    return {
+      turns, input, busy, sessionId, sessions,
+      rail, railOpen, leftShut, theme, viewer, dragging,
+      view, settings, activeGroup, draft, advanced, saving, saveMsg,
+      allGroups, isLocalGroup, activeGroupParams, activeGroupDesc,
+      dirty, groupDirty, dirtyCount, editValue, onEdit, resetField,
+      discardDraft, loadSettings, goSettings, goChat, saveSettings,
+      lastElapsed, streamEl, samples, currentTitle, allArtifacts, allTools,
+      totalToolMs, maxToolMs, leftTab, roundsWithTools, stateCount,
+      stateLabel, scrollToRound,
+
+      send, ask, answerConfirm,
+      openSession, newSession, removeSession, pendingDelete,
+      download, previewFile, upload, onDrop, dragLeave,
+      fileInput, triggerUpload, handleFileSelect,
+      confirmKind, fileCount, doClearFiles, doClearSessions,
+      toast, notify,
+      autoGrow, setTheme, toggleRail,
+      md, escapeHtml, prettyJson, highlightSql, fmtVal, shortTime,
+      toolGist, confirmColumns, confirmTitle,
+    };
+  },
+}).mount('#app');
+</script>
+</body>
+</html>

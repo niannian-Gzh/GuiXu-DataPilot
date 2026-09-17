@@ -19,18 +19,54 @@ class Session:
     def add_user(self, text: str):
         self.messages.append({"role": "user", "content": text})
 
-    def add_assistant(self, text: str):
-        self.messages.append({"role": "assistant", "content": text})
+    def add_assistant(self, text: str, tools: list = None):
+        """tools 是这一轮的工具调用记录，只供界面回看，不发给模型。"""
+        msg = {"role": "assistant", "content": text}
+        if tools:
+            msg["dp_tools"] = tools
+        self.messages.append(msg)
 
     def get_history(self) -> list:
-        """返回带摘要的完整历史（摘要为 system 角色）。"""
+        """返回带摘要的完整历史（摘要为 system 角色）。
+
+        dp_tools 不能原样塞回去（API 不认这个字段），但也不能直接丢掉——
+        丢掉的话，模型回看历史时只看到自己说过「已生成 xxx.pdf」，
+        却找不到任何工具调用过的凭据。一旦用户追问，它会据此判定
+        自己在编造，把真做过的事说成假的。所以折中：转成一行文字补回去。
+        """
         result = []
         if self.summary:
             result.append({
                 "role": "system",
                 "content": f"【历史摘要】\n{self.summary}",
             })
-        result.extend(self.messages)
+
+        for m in self.messages:
+            tools = m.get("dp_tools")
+            if not tools:
+                result.append(m)
+                continue
+
+            lines = []
+            for t in tools:
+                if t.get("security"):
+                    status = "被安全拒绝"
+                elif t.get("ok"):
+                    status = "成功"
+                else:
+                    status = "失败"
+                args = t.get("args") or {}
+                arg_text = "，".join(
+                    f"{k}={v}" for k, v in list(args.items())[:3]
+                )
+                lines.append(f"- {t['name']}({arg_text}) → {status}")
+
+            result.append({
+                "role": m["role"],
+                "content": "【上一条回复前，实际调用过这些工具】\n"
+                           + "\n".join(lines)
+                           + "\n\n" + m["content"],
+            })
         return result
 
     def clear(self):
@@ -49,6 +85,61 @@ class Session:
 
     def set_prompt_tokens(self, n: int):
         self.prompt_tokens = n
+
+    def title(self) -> str:
+        """会话标题取第一条用户消息。"""
+        for m in self.messages:
+            if m["role"] == "user":
+                return m["content"][:30]
+        return "新会话"
+
+    def save(self) -> Path:
+        """把会话落盘，供 webui 的会话列表读回。"""
+        ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+        path = ARCHIVE_DIR / f"{self.session_id}.json"
+        path.write_text(json.dumps({
+            "session_id": self.session_id,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "title": self.title(),
+            "message_count": len(self.messages),
+            "summary": self.summary,
+            "messages": self.messages,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        return path
+
+    @classmethod
+    def load(cls, session_id: str) -> "Session":
+        """从磁盘读回会话。文件不存在时返回一个空会话。"""
+        session = cls(session_id)
+        path = ARCHIVE_DIR / f"{session_id}.json"
+        if not path.exists():
+            return session
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return session
+        session.messages = data.get("messages", [])
+        session.summary = data.get("summary")
+        return session
+
+    @staticmethod
+    def list_saved() -> list:
+        """列出已落盘的会话，按更新时间倒序。"""
+        if not ARCHIVE_DIR.exists():
+            return []
+        items = []
+        for path in ARCHIVE_DIR.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            items.append({
+                "session_id": data.get("session_id", path.stem),
+                "title": data.get("title", "新会话"),
+                "message_count": data.get("message_count", 0),
+                "updated_at": data.get("updated_at", ""),
+            })
+        return sorted(items, key=lambda x: x["updated_at"], reverse=True)
 
     def should_compact(self, threshold: int) -> bool:
         """是否触发压缩。要求至少 20 条消息，避免早期误触发。"""

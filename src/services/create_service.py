@@ -1,7 +1,7 @@
 import json
 import duckdb
 from datetime import date
-from services import UserInputRequired, BULK_THRESHOLD
+from services import UserInputRequired, bulk_threshold
 from audit import log
 from display import format_table
 
@@ -122,7 +122,7 @@ def format_create_confirm(record: dict) -> str:
 
 def format_batch_create_confirm(records: list) -> str:
     n = len(records)
-    if n <= BULK_THRESHOLD:
+    if n <= bulk_threshold():
         lines = [f"即将新增 {n} 条记录：", ""]
         for i, r in enumerate(records, 1):
             lines.append(f"  {i}. {r['project_name']}（{r['owner']}，{r['category']}）")

@@ -1,13 +1,11 @@
 import duckdb
-from config import load_config, resolve
+from config import load_config, resolve, setting
 from audit import log
-
-
-RETENTION_DAYS = 7
 
 
 def cleanup():
     """清理超过保留期的软删除数据。启动时调用一次。"""
+    retention_days = setting("safety.retention_days")
     cfg = load_config()["data"]
     real_table = f"{cfg['table_name']}_all"
     con = duckdb.connect(resolve(cfg["db_path"]))
@@ -18,7 +16,7 @@ def cleanup():
         FROM {real_table}
         WHERE is_deleted = true
           AND deleted_at < CAST(NOW() AS TIMESTAMP)
-          - INTERVAL '{RETENTION_DAYS} days'
+          - INTERVAL '{retention_days} days'
     """).fetchall()
 
     if not rows:
@@ -28,7 +26,7 @@ def cleanup():
     # 2. 记录审计日志（先记，再删）
     log("cleanup", {
         "trigger": "startup",
-        "retention_days": RETENTION_DAYS,
+        "retention_days": retention_days,
         "deleted_count": len(rows),
         "deleted_records": [
             {"project_name": r[0], "deleted_at": r[1], "delete_trace_id": r[2]}
@@ -41,7 +39,7 @@ def cleanup():
         DELETE FROM {real_table}
         WHERE is_deleted = true
           AND deleted_at < CAST(NOW() AS TIMESTAMP)
-          - INTERVAL '{RETENTION_DAYS} days'
+          - INTERVAL '{retention_days} days'
     """)
 
     print(f"[清理] 已物理删除 {len(rows)} 条过期数据")
