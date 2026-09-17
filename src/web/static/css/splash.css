@@ -1,0 +1,189 @@
+  /* ===================== 开机动画 ===================== */
+  #boot {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    display: grid;
+    place-items: center;
+    background: radial-gradient(ellipse at 50% 45%, #131a2e 0%, #080a12 62%);
+    transition: opacity 0.72s var(--ease), transform 0.72s var(--ease);
+  }
+  html[data-boot="skip"] #boot { display: none; }
+  #boot.done {
+    opacity: 0;
+    transform: scale(1.06);
+    pointer-events: none;
+  }
+
+  .boot-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 30px;
+  }
+
+  .compass {
+    position: relative;
+    width: 146px; height: 146px;
+  }
+  .compass svg { width: 100%; height: 100%; overflow: visible; }
+
+  /* 刻度盘：12 段短弧，一边旋转一边展开 */
+  .compass .ticks {
+    fill: none;
+    stroke: var(--mark);
+    stroke-width: 2.6;
+    opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: rotate(-90deg) scale(0.82);
+    animation: ticks-in 1.15s cubic-bezier(0.22, 1, 0.36, 1) 0.10s forwards;
+  }
+  @keyframes ticks-in {
+    to { opacity: 0.45; transform: rotate(-90deg) scale(1); }
+  }
+
+  .compass .ring-inner {
+    fill: none;
+    stroke: var(--mark);
+    stroke-width: 0.8;
+    opacity: 0;
+    animation: fade-in 0.8s var(--ease) 0.35s forwards;
+  }
+  @keyframes fade-in {
+    to { opacity: 0.14; }
+  }
+
+  /* 中心点跟北方同时起落，同 2.40s 收尾 */
+  .compass .rose-core {
+    fill: var(--mark);
+    opacity: 0;
+    animation: core-in 0.42s var(--ease) 1.98s forwards;
+  }
+  @keyframes core-in {
+    to { opacity: 1; }
+  }
+
+  /* 航迹弧绕盘旋转一圈半（540°）后停在东北方，落点跟着一起转。
+     末尾用 ease-out 减速，像指针扫过半圈后咬合到位 */
+  .compass .helm-spin {
+    transform-origin: 24px 24px;
+    opacity: 0;
+    animation: helm-spin 1.50s cubic-bezier(0.25, 0.9, 0.3, 1) 0.90s forwards;
+  }
+  @keyframes helm-spin {
+    0%   { opacity: 0; transform: rotate(-540deg); }
+    12%  { opacity: 1; }
+    100% { opacity: 1; transform: rotate(0deg); }
+  }
+
+  .compass .helm-arc {
+    fill: none;
+    stroke: var(--mark);
+    stroke-width: 1.7;
+    stroke-linecap: round;
+  }
+
+  .compass .helm-dot { fill: #b8ceff; }
+
+  /* ---------- 四个芒尖顺时针依次点亮 ----------
+     东 -> 南 -> 西 -> 北，每个亮到顶再落回本色；
+     北方是终点，不回撤，常亮并且最亮——它就是「航向锁定」的那一刻。
+     基础亮度各不同（北 1 / 东西 0.5 / 南 0.28），所以用 --base 传进去 */
+  .compass .tip {
+    fill: var(--mark);
+    opacity: 0;
+    animation: tip-flash 0.30s ease-out var(--d) forwards;
+  }
+  /* 东/南/西首尾相接依次亮灭 */
+  .compass .tip-e { --base: 0.5;  --d: 1.08s; }
+  .compass .tip-s { --base: 0.28; --d: 1.38s; }
+  .compass .tip-w { --base: 0.5;  --d: 1.68s; }
+
+  /* 北方跟航迹弧、日期同一个时间窗口：0.90s 起，2.40s 止。
+     前段只留一道极淡的轮廓（0.05→0.16），不抢东/南/西的依次感；
+     72%（即 1.98s）它们都熄了，才开始向最亮冲，最后 2.40s 锁定 */
+  .compass .tip-n {
+    --base: 1;
+    animation: tip-stay 1.50s ease-out 0.90s forwards;
+  }
+
+  @keyframes tip-flash {
+    0%   { opacity: var(--base); }
+    45%  { opacity: 1; filter: drop-shadow(0 0 7px rgba(150, 190, 255, 0.85)); }
+    100% { opacity: var(--base); filter: none; }
+  }
+  @keyframes tip-stay {
+    0%   { opacity: 0.05; filter: none; }
+    72%  { opacity: 0.16; filter: none; }
+    88%  { opacity: 1;    filter: drop-shadow(0 0 12px rgba(178, 210, 255, 1)); }
+    100% { opacity: 1;    filter: drop-shadow(0 0 5px rgba(150, 190, 255, 0.6)); }
+  }
+
+  .boot-word {
+    display: flex;
+    gap: 1px;
+    font-size: 25px;
+    font-weight: 300;
+    letter-spacing: 0.32em;
+    color: #f2f5ff;
+    text-indent: 0.32em;
+  }
+  .boot-word span {
+    opacity: 0;
+    animation: word-in 0.62s var(--ease) forwards;
+  }
+  @keyframes word-in {
+    from { opacity: 0; transform: translateY(9px); filter: blur(5px); }
+    to   { opacity: 1; transform: translateY(0); filter: blur(0); }
+  }
+
+  .boot-sub {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.44em;
+    text-indent: 0.44em;
+    color: rgba(152, 162, 186, 0.75);
+    opacity: 0;
+    animation: word-in 0.7s var(--ease) 0.62s forwards;
+  }
+
+  .boot-stats {
+    display: flex;
+    align-items: center;
+    gap: 26px;
+    height: 34px;
+  }
+  .boot-stat { text-align: center; opacity: 0; animation: word-in 0.6s var(--ease) forwards; }
+  .boot-stat b {
+    display: block;
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 500;
+    color: #fff;
+    letter-spacing: -0.01em;
+  }
+  .boot-stat span {
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    color: rgba(152, 162, 186, 0.8);
+  }
+  .boot-stat + .boot-stat { padding-left: 26px; border-left: 1px solid rgba(255,255,255,0.09); }
+
+  .boot-line {
+    width: 190px;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.09);
+    overflow: hidden;
+    border-radius: 1px;
+  }
+  .boot-line i {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, transparent, var(--acc-lift));
+    transition: width 0.42s var(--ease);
+  }
+

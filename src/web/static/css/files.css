@@ -1,0 +1,174 @@
+  /* ===================== 右栏 ===================== */
+  .rail-head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--edge-soft);
+    flex: none;
+  }
+  .tab {
+    padding: 5px 11px;
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    color: var(--fg-faint);
+    transition: all 0.16s var(--ease);
+  }
+  .tab:hover { color: var(--fg-dim); }
+  .tab.on { color: var(--fg); background: var(--acc-soft); }
+  .tab b {
+    margin-left: 5px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+  }
+  .rail-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+
+  .rail-item {
+    padding: 10px 11px;
+    margin-bottom: 7px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge-soft);
+    background: var(--glass-lift);
+    transition: all 0.16s var(--ease);
+  }
+  .rail-item:hover { border-color: var(--acc-line); }
+  .rail-item-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .rail-item-top .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rail-item-sub {
+    margin-top: 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-faint);
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .rail-acts { display: flex; gap: 6px; margin-top: 9px; }
+
+  /* ---------- 轨迹 ---------- */
+  .trace-sum {
+    padding: 8px 11px;
+    margin-bottom: 12px;
+    border-radius: var(--r-sm);
+    background: var(--glass-lift);
+    border: 1px solid var(--edge-soft);
+    font-size: 11.5px;
+    color: var(--fg-dim);
+  }
+  .trace-sum b { font-family: var(--mono); color: var(--fg); font-weight: 500; }
+
+  .trace-item {
+    position: relative;
+    padding: 0 0 16px 16px;
+    border-left: 1px solid var(--edge-soft);
+  }
+  .trace-item:last-child { border-left-color: transparent; padding-bottom: 0; }
+  .trace-item::before {
+    content: '';
+    position: absolute;
+    left: -3.5px; top: 4px;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--fg-faint);
+  }
+  .trace-item.ok::before   { background: var(--ok); }
+  .trace-item.err::before  { background: var(--err); }
+  .trace-item.warn::before { background: var(--warn); }
+  .trace-item.wait::before { background: var(--warn); }
+  .trace-item.cancel::before { background: var(--fg-faint); }
+  .trace-item.run::before  { background: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); }
+
+  .trace-head { display: flex; align-items: baseline; gap: 8px; }
+  .trace-name {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .trace-ms {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+    flex: none;
+  }
+  .trace-arg {
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--fg-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .trace-out {
+    margin-top: 2px;
+    font-size: 10.5px;
+    color: var(--fg-faint);
+  }
+  /* 相对耗时条：一眼看出哪步最费时间 */
+  .trace-bar {
+    margin-top: 6px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--edge-soft);
+    overflow: hidden;
+  }
+  .trace-bar i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--acc), var(--acc-lift));
+    transition: width 0.4s var(--ease);
+  }
+  .trace-bar i.err  { background: var(--err); }
+  .trace-bar i.warn,
+  .trace-bar i.wait { background: var(--warn); }
+  .trace-bar i.cancel { background: var(--fg-faint); }
+
+
+  /* 加载三点 */
+  .thinking { display: flex; gap: 4px; padding: 5px 0; }
+  .thinking i {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--fg-faint);
+    animation: bob 1.3s ease-in-out infinite;
+  }
+  .thinking i:nth-child(2) { animation-delay: 0.17s; }
+  .thinking i:nth-child(3) { animation-delay: 0.34s; }
+  @keyframes bob {
+    0%, 60%, 100% { opacity: 0.28; transform: translateY(0); }
+    30%           { opacity: 1; transform: translateY(-3px); }
+  }
+
+  /* 阶段提示 */
+  .stage {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 11px;
+    margin-bottom: 12px;
+    border-radius: var(--r-sm);
+    background: var(--glass-lift);
+    border: 1px solid var(--edge-soft);
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    animation: rise 0.3s var(--ease);
+  }
+  .stage svg { width: 12px; height: 12px; flex: none; }
+  .stage.run svg { animation: spin 1s linear infinite; color: var(--acc-lift); }
+

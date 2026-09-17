@@ -1,0 +1,187 @@
+  /* ===================== 设计令牌 ===================== */
+  :root {
+    /* 宝石蓝：色相从 228° 收到 218°（去掉那股紫），饱和度顶满。
+       原来的 #6b9dff 亮度过高，在暗场上发白，像蒙了层雾，不像宝石 */
+    --acc:          #3d7dff;
+    --acc-lift:     #6b9dff;
+    --acc-soft:     rgba(61, 125, 255, 0.14);
+    --acc-line:     rgba(61, 125, 255, 0.34);
+
+    /* 深邃黑：底压得足够暗，辉光和扫描弧才跳得出来。
+       层次仍靠「谁比谁亮一档」，但整体基准往下移了一大截。
+       不用半透明：背景是纯色，模糊一层纯色还是纯色 */
+    --bg:           #0a0c10;   /* 最底：近黑，微冷 */
+    --glass:        #12151b;   /* 面板 */
+    --glass-lift:   #1a1e26;   /* 卡片 / 悬停 */
+    --glass-deep:   #0b0e13;   /* 输入框 / 代码块，比面板沉一档 */
+    --sheen:        rgba(255, 255, 255, 0.045);
+    --edge:         #232a35;
+    --edge-soft:    #1a1f28;
+
+    --fg:           #dde3ee;
+    --fg-sub:       #a6afbf;
+    --fg-dim:       #7c8697;
+    --fg-faint:     #5c6472;
+
+    --ok:           #3ddc97;
+    --warn:         #fbbf24;
+    --err:          #f87272;
+
+    --mark:         #6b9dff;
+
+    --r-sm: 7px;
+    --r:    11px;
+    --r-lg: 14px;
+
+    --mono: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  [data-theme="light"] {
+    --acc:        #2f6ce0;
+    --acc-lift:   #2458c8;
+    --acc-soft:   rgba(47, 108, 224, 0.10);
+    --acc-line:   rgba(47, 108, 224, 0.30);
+
+    --bg:         #eef0f5;
+    --glass:      #ffffff;
+    --glass-lift: #f2f4f9;
+    --glass-deep: #f7f8fb;
+    --sheen:      rgba(255, 255, 255, 0.9);
+    --edge:       #dde1ea;
+    --edge-soft:  #e8ebf1;
+
+    --fg:         #1c2130;
+    --fg-sub:     #4a5364;
+    --fg-dim:     #66707f;
+    --fg-faint:   #8b93a2;
+
+    --ok:         #0f9d63;
+    --warn:       #b7791f;
+    --err:        #d64545;
+
+    --mark:       #2f6ce0;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    font-size: 13.5px;
+    line-height: 1.62;
+    color: var(--fg);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection { background: rgba(61, 125, 255, 0.30); }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--edge);
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--fg-faint); background-clip: content-box; }
+
+  [v-cloak] { display: none; }
+
+  /* 极淡的全局噪点。但它同时也是「雾感」的来源之一——
+     feTurbulence 出的是彩色噪声，叠在暗场上会把黑提成灰。
+     压到 0.016：质感还在，不至于把底子弄脏 */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.016;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  [data-theme="light"] body::after { opacity: 0.02; }
+
+  /* ===================== 面板 ===================== */
+  /* 实色分层，不投影。三栏之间只有 12px 的缝，
+     任何带模糊半径的阴影都会糊进缝里积成脏边 */
+  .glass {
+    position: relative;
+    background: var(--glass);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    /* 顶边 1px 硬高光：纯色块面需要一道光来说明"哪面朝上"。
+       用 1px 而不是渐变雾，是因为三块面板等高，渐变会首尾相接成一条横带 */
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  }
+  [data-theme="light"] .glass {
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
+  }
+
+  /* ===================== 按钮 ===================== */
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 13px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge);
+    background: var(--glass-lift);
+    color: var(--fg-dim);
+    font-size: 12.5px;
+    transition: all 0.18s var(--ease);
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    color: var(--fg);
+    border-color: var(--acc-line);
+    background: var(--acc-soft);
+  }
+  .btn:disabled { opacity: 0.38; cursor: not-allowed; }
+  .btn.primary {
+    background: linear-gradient(135deg, var(--acc), var(--acc-lift));
+    border-color: transparent;
+    color: #fff;
+    font-weight: 500;
+    box-shadow: 0 4px 16px -4px var(--acc-line);
+  }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn.danger {
+    color: var(--err);
+    border-color: rgba(248, 114, 114, 0.3);
+  }
+  .btn.danger:hover:not(:disabled) {
+    background: rgba(248, 114, 114, 0.12);
+    border-color: rgba(248, 114, 114, 0.5);
+    color: var(--err);
+  }
+  .btn.ghost { background: transparent; border-color: transparent; }
+  .btn.ghost:hover:not(:disabled) { background: var(--glass-lift); }
+  .btn svg { width: 14px; height: 14px; flex: none; }
+
+  .icon-btn {
+    display: grid;
+    place-items: center;
+    width: 30px; height: 30px;
+    border-radius: var(--r-sm);
+    color: var(--fg-dim);
+    transition: all 0.18s var(--ease);
+  }
+  .icon-btn:hover { color: var(--fg); background: var(--glass-lift); }
+  .icon-btn svg { width: 15px; height: 15px; }
+

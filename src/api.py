@@ -36,6 +36,7 @@ from session import ARCHIVE_DIR
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 EXPORT_DIR = PROJECT_ROOT / "data" / "exports"
 REPORT_DIR = PROJECT_ROOT / "data" / "reports"
+STATIC_DIR = PROJECT_ROOT / "src" / "web" / "static"
 
 
 _state = {
@@ -108,9 +109,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 前端拆成了外部 css/js，需要静态文件服务
+app.mount("/css", StaticFiles(directory=STATIC_DIR / "css"), name="css")
+app.mount("/js", StaticFiles(directory=STATIC_DIR / "js"), name="js")
+
+
 @app.get("/")
 def index():
-    return FileResponse(PROJECT_ROOT / "src" / "web" / "static" / "index.html")
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 # ============ 数据模型 ============

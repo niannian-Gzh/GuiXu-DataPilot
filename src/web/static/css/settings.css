@@ -1,0 +1,337 @@
+  /* ===================== 设置面板 ===================== */
+  .sheet-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    display: grid;
+    place-items: center;
+    background: rgba(6, 8, 14, 0.52);
+    backdrop-filter: blur(5px);
+    animation: fade 0.22s var(--ease);
+  }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .sheet {
+    width: 388px;
+    max-height: 78vh;
+    overflow-y: auto;
+    padding: 20px;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--edge);
+    background: var(--glass-deep);
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,0.6);
+    animation: pop 0.26s var(--ease);
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.96) translateY(10px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .sheet h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+  .sheet-group + .sheet-group { margin-top: 18px; }
+  .sheet-label {
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    color: var(--fg-faint);
+    margin-bottom: 8px;
+  }
+  .sheet-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 0;
+  }
+  .sheet-row + .sheet-row { border-top: 1px solid var(--edge-soft); }
+  .sheet-row .what { font-size: 12.5px; }
+  .sheet-row .hint { font-size: 10.5px; color: var(--fg-faint); margin-top: 2px; }
+  .seg {
+    display: flex;
+    padding: 2px;
+    border-radius: var(--r-sm);
+    background: var(--glass-lift);
+    border: 1px solid var(--edge-soft);
+  }
+  .seg button {
+    padding: 4px 11px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    transition: all 0.16s var(--ease);
+  }
+  .seg button.on { background: var(--acc); color: #fff; }
+
+  /* ===================== 统一质感 =====================
+     所有块面共享一层极弱的顶光，让纯色卡片有厚度、有「朝上」的方向。
+     必须定义在所有卡片之后：前面的 background 简写会把 image 重置掉 */
+  .tool,
+  .artifact,
+  .confirm,
+  .rail-item,
+  .chip,
+  .composer-inner,
+  .cands {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.016), transparent 54%);
+  }
+  .sess.on,
+  .turn-user .bubble {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 60%);
+  }
+  [data-theme="light"] .tool,
+  [data-theme="light"] .artifact,
+  [data-theme="light"] .confirm,
+  [data-theme="light"] .rail-item,
+  [data-theme="light"] .chip,
+  [data-theme="light"] .composer-inner,
+  [data-theme="light"] .cands {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.75), transparent 54%);
+  }
+
+  /* ===================== 设置页 ===================== */
+  .settings-page {
+    position: relative;
+    z-index: 2;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+  }
+
+  .set-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--edge-soft);
+    flex: none;
+  }
+  .set-head h2 { font-size: 15px; font-weight: 600; }
+  .set-head .count {
+    font-size: 11.5px;
+    color: var(--warn);
+    font-family: var(--mono);
+  }
+  .set-head .spacer { flex: 1; }
+  .set-msg {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: var(--r-sm);
+  }
+  .set-msg.ok  { color: var(--ok);   background: rgba(61,220,151,0.12); }
+  .set-msg.err { color: var(--err);  background: rgba(248,114,114,0.12); }
+
+  .set-body { flex: 1; min-height: 0; display: flex; }
+
+  /* 左：分组导航 */
+  .set-nav {
+    width: 186px;
+    flex: none;
+    padding: 14px 12px;
+    border-right: 1px solid var(--edge-soft);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .set-nav button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 11px;
+    border-radius: var(--r-sm);
+    font-size: 12.5px;
+    color: var(--fg-dim);
+    text-align: left;
+    transition: all 0.16s var(--ease);
+  }
+  .set-nav button:hover { background: var(--glass-lift); color: var(--fg); }
+  .set-nav button.on { background: var(--acc-soft); color: var(--fg); }
+  .set-nav button b {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--warn);
+  }
+
+  /* 高级模式开关：危险参数默认锁着 */
+  .set-adv {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: auto;
+    padding: 10px 11px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge-soft);
+    font-size: 11.5px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    user-select: none;
+  }
+  .set-adv input { accent-color: var(--acc); cursor: pointer; }
+  .set-adv.on { border-color: rgba(251,191,36,0.4); color: var(--warn); }
+
+  /* 右：表单 */
+  .set-form { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 22px 40px; }
+  .set-form-inner { max-width: 640px; }
+  .set-group-title {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--fg-faint);
+    margin-bottom: 14px;
+  }
+
+  .set-field {
+    padding: 13px 0;
+    border-bottom: 1px solid var(--edge-soft);
+  }
+  .set-field:last-child { border-bottom: none; }
+  .set-field-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 7px;
+  }
+  .set-field-top .name { font-size: 13px; }
+  .set-field-top .mark {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(251,191,36,0.16);
+    color: var(--warn);
+  }
+  .set-field-top .spacer { flex: 1; }
+  .set-field-top .reset {
+    font-size: 11px;
+    color: var(--fg-faint);
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+  .set-field-top .reset:hover { color: var(--acc-lift); background: var(--acc-soft); }
+
+  .set-input {
+    width: 100%;
+    max-width: 380px;
+    padding: 7px 11px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge);
+    background: var(--glass-deep);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    outline: none;
+    transition: border-color 0.18s var(--ease);
+  }
+  .set-input:focus { border-color: var(--acc-line); }
+  .set-input:disabled {
+    background: transparent;
+    border-color: transparent;
+    color: var(--fg-dim);
+    cursor: not-allowed;
+  }
+
+  .set-hint { font-size: 11.5px; color: var(--fg-faint); line-height: 1.6; }
+
+  /* 危险参数的后果说明，只在高级模式下露出 */
+  .set-risk {
+    display: flex;
+    gap: 6px;
+    margin-top: 7px;
+    padding: 7px 10px;
+    border-radius: var(--r-sm);
+    background: rgba(251,191,36,0.075);
+    border: 1px solid rgba(251,191,36,0.22);
+    font-size: 11.5px;
+    color: var(--fg-dim);
+    line-height: 1.6;
+  }
+  .set-risk svg { width: 12px; height: 12px; color: var(--warn); flex: none; margin-top: 3px; }
+
+  .set-locked {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--fg-faint);
+  }
+  .set-locked svg { width: 11px; height: 11px; }
+
+  /* 危险操作的内联二次确认。
+     不用浏览器原生 confirm：它的样式完全脱离界面，
+     按钮文案还跟随系统语言，在深色玻璃里格外突兀 */
+  .confirm-inline {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: 10px;
+    padding: 9px 12px;
+    border-radius: var(--r-sm);
+    background: rgba(248, 114, 114, 0.07);
+    border: 1px solid rgba(248, 114, 114, 0.28);
+    animation: rise 0.2s var(--ease);
+  }
+  .confirm-inline .warn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    color: var(--fg-dim);
+  }
+  .confirm-inline .warn svg { width: 12px; height: 12px; color: var(--err); flex: none; }
+  .confirm-inline .warn b { color: var(--err); font-family: var(--mono); }
+
+  /* 只读信息 */
+  .info-row {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 12px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--edge-soft);
+    font-size: 12px;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-row dt { color: var(--fg-faint); }
+  .info-row dd { color: var(--fg-dim); font-family: var(--mono); word-break: break-all; }
+
+  /* ===================== 全局提示条 =====================
+     替代 alert()：原生的对话框样式脱离界面、按钮文案跟随系统语言，
+     而且会阻断操作。这个只是飘一下，不打断任何东西 */
+  .toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 460px;
+    padding: 10px 18px;
+    border-radius: var(--r);
+    background: var(--glass-lift);
+    border: 1px solid var(--edge);
+    color: var(--fg);
+    font-size: 12.5px;
+    box-shadow: 0 12px 32px -10px rgba(0, 0, 0, 0.6);
+    animation: toast-in 0.24s var(--ease);
+  }
+  .toast.ok  { border-color: rgba(61, 220, 151, 0.42); color: var(--ok); }
+  .toast.err { border-color: rgba(248, 114, 114, 0.42); color: var(--err); }
+  .toast svg { width: 14px; height: 14px; flex: none; }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
+  /* ===================== 自适应 ===================== */
+  /* 窄屏收窄侧栏，但不擅自藏掉——收不收由用户决定 */
+  @media (max-width: 1180px) {
+    .shell              { grid-template-columns: 226px minmax(0, 1fr) 0px; }
+    .shell.right-open   { grid-template-columns: 226px minmax(0, 1fr) 238px; }
+  }
+  @media (max-width: 900px) {
+    .shell              { grid-template-columns: 208px minmax(0, 1fr) 0px; }
+    .shell.right-open   { grid-template-columns: 208px minmax(0, 1fr) 212px; }
+    .shell.left-shut    { grid-template-columns: 0px minmax(0, 1fr) 0px; }
+    .shell.left-shut.right-open { grid-template-columns: 0px minmax(0, 1fr) 212px; }
+  }
