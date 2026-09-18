@@ -2,7 +2,7 @@ from llm import LLM
 from session import Session
 from agent import run_agent
 from trace import Trace
-from config import load_config, resolve
+from config import load_config, resolve, resolve_db_url
 from config_store import migrate_if_needed
 from cleanup import cleanup
 from services import UserInputRequired
@@ -16,7 +16,7 @@ def main():
         print("[迁移] config.yaml 的 llm 段已转成第一张模型配置\n")
 
     cfg = load_config()["data"]
-    db_path = resolve(cfg["db_path"])
+    db_path = resolve_db_url()
     real_table = f"{cfg['table_name']}_all"
     llm = LLM()
     session = Session()

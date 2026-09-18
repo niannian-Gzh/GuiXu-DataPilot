@@ -1,6 +1,6 @@
 import duckdb
 import pandas as pd
-from config import load_config, resolve
+from config import load_config, resolve, resolve_db_url
 
 COLUMN_MAP = {
     "项目名称": "project_name",
@@ -54,7 +54,7 @@ def ingest():
 
     # 8. 写入 DuckDB：真实表 + 过滤视图
     real_table = f"{cfg['table_name']}_all"
-    con = duckdb.connect(resolve(cfg["db_path"]))
+    con = duckdb.connect(resolve_db_url())
 
     # 清理旧对象：可能是表，也可能是视图（迁移期间两种都可能存在）
     for stmt in [

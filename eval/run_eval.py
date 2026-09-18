@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from config import load_config, resolve
+from config import load_config, resolve, resolve_db_url
 from llm import LLM
 from nl2sql import get_schema, generate_sql_with_retry
 from execute import execute_sql
@@ -26,7 +26,7 @@ def check(df, case):
 
 def run():
     cfg = load_config()["data"]
-    db_path = resolve(cfg["db_path"])
+    db_path = resolve_db_url()
     llm = LLM()
     schema = get_schema(db_path, cfg["table_name"])
 

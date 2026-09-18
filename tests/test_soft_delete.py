@@ -2,10 +2,10 @@ import sys
 sys.path.insert(0, "src")
 
 import duckdb
-from config import load_config, resolve
+from config import load_config, resolve, resolve_db_url
 
 cfg = load_config()["data"]
-con = duckdb.connect(resolve(cfg["db_path"]))
+con = duckdb.connect(resolve_db_url())
 
 print("=== 标记家装为已删除 ===")
 con.execute("""

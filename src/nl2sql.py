@@ -5,7 +5,7 @@ from llm import LLM
 from execute import execute_sql
 from guard import check_sql_safety, SecurityError
 import logging
-from config import load_config
+from config import load_config, resolve_db_url
 
 
 SCHEMA_DESC = {
@@ -142,12 +142,13 @@ def generate_sql_with_retry(
 
 if __name__ == "__main__":
     cfg = load_config()["data"]
+    db_path = resolve_db_url()
     llm = LLM()
-    schema = get_schema(cfg["db_path"], cfg["table_name"])
+    schema = get_schema(db_path, cfg["table_name"])
 
     question = "打回次数最多的项目是哪个"
     sql, retries = generate_sql_with_retry(
-        question, llm, schema, cfg["db_path"], cfg["table_name"], max_retries=2
+        question, llm, schema, db_path, cfg["table_name"], max_retries=2
     )
     print(f"问题：{question}")
     print(f"SQL：{sql}")

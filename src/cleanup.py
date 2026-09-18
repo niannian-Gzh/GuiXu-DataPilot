@@ -1,5 +1,5 @@
 import duckdb
-from config import load_config, resolve, setting
+from config import load_config, resolve, resolve_db_url, setting
 from audit import log
 
 
@@ -8,7 +8,7 @@ def cleanup():
     retention_days = setting("safety.retention_days")
     cfg = load_config()["data"]
     real_table = f"{cfg['table_name']}_all"
-    con = duckdb.connect(resolve(cfg["db_path"]))
+    con = duckdb.connect(resolve_db_url())
 
     # 1. 找出要清理的记录
     rows = con.execute(f"""

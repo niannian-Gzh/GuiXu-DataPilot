@@ -1,7 +1,7 @@
 import sys
 sys.path.insert(0, "src")
 
-from config import load_config, resolve
+from config import load_config, resolve, resolve_db_url
 from llm import LLM
 from trace import Trace
 from services import ServiceContext
@@ -9,7 +9,7 @@ from services import import_service
 
 cfg = load_config()["data"]
 ctx = ServiceContext(
-    llm=None, db_path=resolve(cfg["db_path"]),
+    llm=None, db_path=resolve_db_url(),
     table_name=cfg["table_name"], real_table=f"{cfg['table_name']}_all",
     schema=None, trace=None,
 )

@@ -2,11 +2,11 @@ import sys
 sys.path.insert(0, "src")
 
 import duckdb
-from config import load_config, resolve
+from config import load_config, resolve, resolve_db_url
 from cleanup import cleanup
 
 cfg = load_config()["data"]
-con = duckdb.connect(resolve(cfg["db_path"]))
+con = duckdb.connect(resolve_db_url())
 
 # 手动把一条数据标记为"8天前删除"
 con.execute("""
@@ -24,7 +24,7 @@ count = cleanup()
 print(f"清理了 {count} 条")
 
 # 验证
-con = duckdb.connect(resolve(cfg["db_path"]))
+con = duckdb.connect(resolve_db_url())
 n = con.execute("SELECT COUNT(*) FROM projects_all WHERE project_name LIKE '家装%'").fetchone()[0]
 print(f"真实表中家装还在吗: {n}（应为 0）")
 con.close()

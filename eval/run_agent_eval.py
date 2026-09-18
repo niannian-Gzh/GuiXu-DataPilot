@@ -9,7 +9,7 @@ from agent import run_agent
 from session import Session
 from trace import Trace
 from services import UserInputRequired
-from config import load_config, resolve
+from config import load_config, resolve, resolve_db_url
 
 
 def eval_one(question, case, llm, db_path, table_name):
@@ -38,7 +38,7 @@ def eval_one(question, case, llm, db_path, table_name):
 
 def run():
     cfg = load_config()["data"]
-    db_path = resolve(cfg["db_path"])
+    db_path = resolve_db_url()
     table_name = cfg["table_name"]
     llm = LLM()
 

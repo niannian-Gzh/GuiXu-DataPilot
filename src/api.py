@@ -20,7 +20,8 @@ from session import Session
 from agent import run_agent
 from trace import Trace
 from config import (
-    load_config, resolve, PROJECT_ROOT, setting, get, get_config, save_config,
+    load_config, resolve, resolve_db_url, PROJECT_ROOT, setting, get, get_config,
+    save_config,
 )
 import config_store as store
 from providers import PROVIDERS, get_provider, guess_model
@@ -103,7 +104,7 @@ async def lifespan(app: FastAPI):
 
     cfg = load_config()["data"]
     _rebuild_llm()
-    _state["db_path"] = resolve(cfg["db_path"])
+    _state["db_path"] = resolve_db_url()
     _state["table_name"] = cfg["table_name"]
     _state["real_table"] = f"{cfg['table_name']}_all"
     cleanup()
@@ -407,18 +408,18 @@ def _current_value(p: dict):
 def _readonly_info() -> dict:
     """只读信息：这些不是偏好，改错会让系统崩或数据看起来丢了，所以只给看。"""
     cfg = get_config().get("data", {})
-    db_path = cfg.get("db_path", "")
+    db_url = resolve_db_url()
 
     total = None
     try:
-        con = duckdb.connect(resolve(db_path), read_only=True)
+        con = duckdb.connect(db_url, read_only=True)
         total = con.execute(f"SELECT COUNT(*) FROM {cfg.get('table_name')}").fetchone()[0]
         con.close()
     except Exception:
         pass
 
     return {
-        "数据库文件": str(resolve(db_path)),
+        "数据库文件": str(db_url),
         "数据表": cfg.get("table_name", ""),
         "在册记录": total,
         "初始数据源": str(resolve(cfg.get("excel_path", ""))),

@@ -62,10 +62,10 @@ def summarize(question: str, df, llm: LLM) -> str:
 if __name__ == "__main__":
     import duckdb
     import yaml
-    from config import load_config, resolve
+    from config import load_config, resolve, resolve_db_url
 
     cfg = load_config()["data"]
-    db_path = resolve(cfg["db_path"])
+    db_path = resolve_db_url()
 
     con = duckdb.connect(db_path, read_only=True)
     df = con.execute(
