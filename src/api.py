@@ -633,6 +633,11 @@ def edit_config(config_id: str, req: ConfigUpdate):
 
 @app.delete("/configs/{config_id}")
 def remove_config(config_id: str):
+    if len(store.list_configs()) <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="系统至少需要一个模型配置，不能删除最后一条",
+        )
     if not store.delete_config(config_id):
         raise HTTPException(status_code=404, detail="配置不存在")
     _rebuild_llm()
