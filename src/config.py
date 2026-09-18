@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 
+
 # 这里加载一次，迁移时读 .env 里的老 key 才读得到。
 # 默认不覆盖已有的环境变量，所以和 api.py 里的 override=True 不冲突
 load_dotenv()
@@ -95,3 +96,18 @@ def save_config(data: dict) -> None:
 def resolve(relative_path: str) -> str:
     """把配置里的相对路径，解析成基于项目根的绝对路径字符串。"""
     return str(PROJECT_ROOT / relative_path)
+
+
+def resolve_db_url() -> str:
+    """把 data.db_url 解析成本地路径。
+    ...
+    """
+    url = get("data.db_url")
+    if not url:
+        return resolve(get("data.db_path"))
+
+    if url.startswith("duckdb:///"):
+        rel = url[len("duckdb:///"):]
+        return resolve(rel)
+
+    raise ValueError(f"暂不支持的数据源类型：{url}")
