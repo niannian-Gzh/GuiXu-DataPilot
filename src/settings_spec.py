@@ -58,7 +58,9 @@ PARAMS = [
         "group": "llm",
         "label": "单次输出上限",
         "type": "number",
-        "default": 4096,
+        # 8192 是 config.yaml 里用了很久的值，迁走 llm 段时把它固化到这里，
+        # 免得回落成概念上的 4096，把用户的设置悄悄改掉
+        "default": 8192,
         "level": "normal",
         "hint": "模型一次回复的最大 token 数",
     },
@@ -73,6 +75,18 @@ PARAMS = [
         "default": 0,
         "level": "normal",
         "hint": "0 最稳定，适合生成 SQL；调高回答更多样，但 SQL 更容易出错",
+    },
+    {
+        "key": "llm.reasoning_effort",
+        "group": "llm",
+        "label": "思考强度",
+        "type": "text",
+        "default": "high",
+        "level": "advanced",
+        "hint": "推理型模型的思考深度，取值如 low / medium / high。"
+                "非推理模型会忽略这个字段",
+        "risk": "调低：回答更快但复杂任务的推理质量下降；"
+                "调高：思考更充分，但更慢、更费 token",
     },
 
     # ---------------- Agent 行为 ----------------

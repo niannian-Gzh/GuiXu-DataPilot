@@ -36,56 +36,30 @@ export async function saveSettings(values) {
   }
 }
 
-/* ---------------- 供应商 ---------------- */
+/* ---------------- 模型配置 ---------------- */
 
+/** 供应商预设。它只是新建配置时的模板，跟 key 无关。 */
 export async function getProviders() {
   try {
     const res = await fetch(API + '/settings/providers');
-    if (!res.ok) return null;
-    return res.json();
+    if (!res.ok) return [];
+    return (await res.json()).providers || [];
   } catch (e) {
-    return null;
+    return [];
   }
 }
 
-/** 切供应商。model 可以不传，后端会用该家的预设首选。 */
-export async function selectProvider(provider, model) {
-  try {
-    const res = await fetch(API + '/settings/providers/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, model: model || null }),
-    });
-    const data = await res.json();
-    if (!res.ok) return { ok: false, message: data.detail || '切换失败' };
-    return { ok: true, ...data };
-  } catch (e) {
-    return { ok: false, message: e.message };
-  }
-}
-
-export async function saveKey(provider, key) {
-  try {
-    const res = await fetch(API + '/settings/keys', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, key }),
-    });
-    const data = await res.json();
-    if (!res.ok) return { ok: false, message: data.detail || '保存失败' };
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, message: e.message };
-  }
-}
-
-/** 拉取该供应商真实可用的模型。失败不算错误，返回的 models 会是空数组。 */
-export async function fetchModels(provider) {
+/** 拉某个端点上真实可用的模型。
+ *
+ *  base_url / key 优先用传进来的：编辑页里用户可能刚填完还没保存，
+ *  这时从服务端是读不到的。没传才由后端回落到预设。
+ */
+export async function fetchModels({ provider, base_url, key }) {
   try {
     const res = await fetch(API + '/settings/models', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider }),
+      body: JSON.stringify({ provider, base_url, key }),
     });
     const data = await res.json();
     if (!res.ok) return { ok: false, models: [], message: data.detail || '获取失败' };
@@ -95,21 +69,39 @@ export async function fetchModels(provider) {
   }
 }
 
-/** 连接测试。后端会等 5 秒超时，这里不用另设。 */
-export async function testProvider(provider) {
+export async function getConfigs() {
   try {
-    const res = await fetch(API + '/settings/test', {
-      method: 'POST',
+    const res = await fetch(API + '/configs');
+    if (!res.ok) return { configs: [], active_id: null };
+    return res.json();
+  } catch (e) {
+    return { configs: [], active_id: null };
+  }
+}
+
+/** 这几个接口的返回形状一致（ok + message），共用一个 request */
+async function _req(url, method, body) {
+  try {
+    const res = await fetch(API + url, {
+      method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider }),
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = await res.json();
-    if (!res.ok) return { ok: false, message: data.detail || '测试失败' };
-    return data;
+    if (!res.ok) return { ok: false, message: data.detail || '操作失败' };
+    return { ok: true, ...data };
   } catch (e) {
     return { ok: false, message: e.message };
   }
 }
+
+export const createConfig = (data) => _req('/configs', 'POST', data);
+export const updateConfig = (id, data) => _req('/configs/' + id, 'PUT', data);
+export const deleteConfig = (id) => _req('/configs/' + id, 'DELETE');
+export const activateConfig = (id) => _req('/configs/' + id + '/activate', 'POST');
+export const setConfigKey = (id, key) => _req('/configs/' + id + '/key', 'POST', { key });
+export const testConfig = (id) => _req('/configs/' + id + '/test', 'POST');
+
 
 /* ---------------- 会话 ---------------- */
 

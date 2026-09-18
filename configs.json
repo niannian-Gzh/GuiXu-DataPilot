@@ -1,0 +1,13 @@
+{
+  "active_id": "ec19e6fd",
+  "configs": [
+    {
+      "id": "ec19e6fd",
+      "name": "默认配置",
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "note": "由 config.yaml 自动迁移"
+    }
+  ]
+}

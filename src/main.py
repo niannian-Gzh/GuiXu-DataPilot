@@ -3,12 +3,18 @@ from session import Session
 from agent import run_agent
 from trace import Trace
 from config import load_config, resolve
+from config_store import migrate_if_needed
 from cleanup import cleanup
 from services import UserInputRequired
 from services import pending_service
 
 
 def main():
+    # CLI 也可能先于 web 启动，迁移放这儿，
+    # 否则第一次跑 CLI 会因为没有 configs.json 而建不出 LLM
+    if migrate_if_needed():
+        print("[迁移] config.yaml 的 llm 段已转成第一张模型配置\n")
+
     cfg = load_config()["data"]
     db_path = resolve(cfg["db_path"])
     real_table = f"{cfg['table_name']}_all"

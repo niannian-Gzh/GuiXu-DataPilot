@@ -20,8 +20,8 @@ from agent import run_agent
 from trace import Trace
 from config import (
     load_config, resolve, PROJECT_ROOT, setting, get, get_config, save_config,
-    get_api_key, set_api_key,
 )
+import config_store as store
 from providers import PROVIDERS, get_provider, guess_model
 from settings_spec import PARAMS, GROUPS, param_by_key, defaults as spec_defaults
 from cleanup import cleanup
@@ -95,8 +95,13 @@ def _sanitize(obj):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 首次启动把 config.yaml 的 llm 段搬成第一张配置卡片。
+    # 必须排在建 LLM 之前——LLM 现在从 configs.json 读，没迁移就建不出来
+    if store.migrate_if_needed():
+        print("[迁移] config.yaml 的 llm 段已转成第一张模型配置")
+
     cfg = load_config()["data"]
-    _state["llm"] = LLM()
+    _rebuild_llm()
     _state["db_path"] = resolve(cfg["db_path"])
     _state["table_name"] = cfg["table_name"]
     _state["real_table"] = f"{cfg['table_name']}_all"
@@ -507,162 +512,179 @@ def update_settings(req: SettingsUpdate):
     return {"status": "ok", "message": "已保存并生效"}
 
 
-# ============ 供应商接口 ============
-
-class ProviderSelect(BaseModel):
-    provider: str
-    model: Optional[str] = None
-
-
-class KeyUpdate(BaseModel):
-    provider: str
-    key: str
-
-
-class TestRequest(BaseModel):
-    provider: str
-
+# ============ 供应商预设 ============
 
 class ModelsRequest(BaseModel):
-    provider: str
+    provider: Optional[str] = None
+    base_url: Optional[str] = None
+    key: Optional[str] = None
+
+
+@app.get("/settings/providers")
+def list_providers():
+    """供应商预设列表——它是「模板」，新建配置时照着填。
+
+    不含任何 key 信息：key 现在按配置 id 存在 config_store 里，
+    跟这里的预设没有关系。
+    """
+    return {"providers": PROVIDERS}
 
 
 @app.post("/settings/models")
 def list_models(req: ModelsRequest):
-    """拉取该供应商真实可用的模型列表。
+    """拉某个端点上真实可用的模型。
 
-    预设里的模型名只是离线时的兜底——各家换代太频繁（本机实测
-    DeepSeek 就推翻了搜到的名字），能连上时必须以接口返回为准。
+    优先用请求里带的 base_url + key：编辑页里用户可能刚填完还没保存，
+    这时从服务端读是读不到的，只能以请求里的为准。没带才回落到预设。
     """
-    p = get_provider(req.provider)
-    if not p:
-        return {"ok": False, "models": [], "message": f"未知的供应商：{req.provider}"}
+    provider = get_provider(req.provider) if req.provider else None
 
-    key = get_api_key(p["id"])
-    if not key and not p.get("free_input"):
-        return {"ok": False, "models": [], "message": "还没有配置 API Key"}
+    base_url = (req.base_url or "").strip() or (provider or {}).get("base_url", "")
+    key = (req.key or "").strip()
+    if not key and provider and provider.get("env"):
+        key = os.getenv(provider["env"]) or ""
+
+    if not base_url:
+        return {"ok": False, "models": [], "message": "还没有填请求地址"}
+    # 本地部署（Ollama）没有 key 这一说，别拦
+    if not key and not (provider and provider.get("free_input")) and not req.key:
+        return {"ok": False, "models": [], "message": "还没有填 API Key"}
 
     try:
-        client = OpenAI(
-            api_key=key or "not-needed",
-            base_url=p["base_url"],
-            timeout=15.0,
-        )
+        client = OpenAI(api_key=key or "not-needed", base_url=base_url, timeout=15.0)
         ids = sorted(m.id for m in client.models.list().data)
         if not ids:
             return {"ok": False, "models": [], "message": "接口没有返回任何模型"}
         return {"ok": True, "models": ids, "message": f"获取到 {len(ids)} 个模型"}
     except Exception as e:
-        # 不是所有家都实现了 /models，失败是正常情况，别当异常报
+        # 不是所有家都实现了 /models，失败是正常情况，别当异常上报
         return {"ok": False, "models": [], "message": f"{type(e).__name__}: {e}"}
 
 
-@app.get("/settings/providers")
-def list_providers():
-    """供应商预设 + 每家的 key 配置状态。
+# ============ 模型配置 ============
 
-    只回 true/false，绝不回 key 本身——即便是本地工具也该守这条：
-    浏览器有历史、有开发者工具、有截图，任何一处泄出去就等于 key 泄了。
+class ConfigCreate(BaseModel):
+    name: str
+    provider: Optional[str] = None
+    base_url: str
+    model: str
+    note: Optional[str] = None
+    key: Optional[str] = None
+
+
+class ConfigUpdate(BaseModel):
+    name: Optional[str] = None
+    provider: Optional[str] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    note: Optional[str] = None
+
+
+def _with_state(c: dict) -> dict:
+    """补上界面要的状态位。key 本身永不外传，只回有没有。"""
+    return {**c, "has_key": bool(store.get_key(c["id"]))}
+
+
+def _rebuild_llm():
+    """配置一变就重建 LLM。
+
+    它在 __init__ 里固化了 model / base_url / api_key 三样，
+    不重建的话界面上切了配置，跑的却还是上一条。
     """
-    current = get("llm.provider", "deepseek")
-    items = []
-    for p in PROVIDERS:
-        items.append({
-            **p,
-            "configured": bool(get_api_key(p["id"])),
-            "current": p["id"] == current,
-        })
+    try:
+        _state["llm"] = LLM()
+    except RuntimeError:
+        # 一条配置都没有时允许为空，等用户建好再重建
+        _state["llm"] = None
 
+
+@app.get("/configs")
+def list_configs_api():
+    """所有模型配置 + 当前生效的 id。"""
     return {
-        "providers": items,
-        "current": {
-            "provider": current,
-            "model": get("llm.model", ""),
-            "base_url": get("llm.base_url", ""),
-        },
+        "configs": [_with_state(c) for c in store.list_configs()],
+        "active_id": (store.get_active() or {}).get("id"),
     }
 
 
-@app.post("/settings/providers/select")
-def select_provider(req: ProviderSelect):
-    """切供应商：provider / model / base_url 必须一起改。
+@app.post("/configs")
+def create_config(req: ConfigCreate):
+    """新建配置。key 立刻单独存，不进 configs.json。"""
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="名称不能为空")
+    if not req.base_url.strip():
+        raise HTTPException(status_code=400, detail="请求地址不能为空")
 
-    只改其中一个会让三者对不上——选了 OpenAI 的模型却还指着 DeepSeek
-    的地址，报出来的错会离真相很远，排查时最费时间的就是这种。
-    """
-    p = get_provider(req.provider)
-    if not p:
-        raise HTTPException(status_code=400, detail=f"未知的供应商：{req.provider}")
-
-    cfg = get_config()
-    llm = cfg.setdefault("llm", {})
-    llm["provider"] = p["id"]
-    llm["base_url"] = p["base_url"]
-    llm["model"] = (req.model or "").strip() or guess_model(p["id"])
-    save_config(cfg)
-
-    _state["llm"] = LLM()
-    return {
-        "status": "ok",
-        "provider": p["id"],
-        "model": llm["model"],
-        "base_url": p["base_url"],
-    }
+    item = store.add_config(req.model_dump())
+    if req.key and req.key.strip():
+        store.set_key(item["id"], req.key.strip())
+    _rebuild_llm()
+    return {"status": "ok", "config": _with_state(item)}
 
 
-@app.post("/settings/keys")
-def save_key(req: KeyUpdate):
-    """把 key 写进 secrets.json（优先级高于 .env）。"""
-    if not get_provider(req.provider):
-        raise HTTPException(status_code=400, detail=f"未知的供应商：{req.provider}")
-
-    set_api_key(req.provider, req.key.strip())
-    # LLM 在 __init__ 里固化了 api_key，换 key 必须重建，否则改了没效果
-    _state["llm"] = LLM()
-    return {"status": "ok", "configured": bool(req.key.strip())}
+@app.put("/configs/{config_id}")
+def edit_config(config_id: str, req: ConfigUpdate):
+    """更新配置。key 不在这儿改，走 POST /configs/{id}/key。"""
+    if not store.update_config(config_id, req.model_dump(exclude_none=True)):
+        raise HTTPException(status_code=404, detail="配置不存在")
+    _rebuild_llm()
+    return {"status": "ok", "config": _with_state(store.get_config(config_id))}
 
 
-@app.post("/settings/test")
-def test_provider(req: TestRequest):
-    """发一个最小请求探活。
+@app.delete("/configs/{config_id}")
+def remove_config(config_id: str):
+    if not store.delete_config(config_id):
+        raise HTTPException(status_code=404, detail="配置不存在")
+    _rebuild_llm()
+    return {"status": "ok", "active_id": (store.get_active() or {}).get("id")}
 
-    用该供应商自己的 base_url + key 现造一个临时客户端，
-    不动全局的 _state["llm"]——测试一个还没打算用的供应商，
-    不该把当前正在跑的配置搅乱。
-    """
-    p = get_provider(req.provider)
-    if not p:
-        return {"ok": False, "message": f"未知的供应商：{req.provider}"}
 
-    key = get_api_key(p["id"])
-    # 本地部署没有 key 这一说，别拦
-    if not key and not p.get("free_input"):
-        return {"ok": False, "message": "还没有配置 API Key"}
+@app.post("/configs/{config_id}/activate")
+def activate_config(config_id: str):
+    if not store.activate(config_id):
+        raise HTTPException(status_code=404, detail="配置不存在")
+    # 换配置等于换 base_url + model + key，必须重建
+    _rebuild_llm()
+    return {"status": "ok", "active_id": config_id}
 
-    # 正在用的那家就以配置里的模型为准，其余用预设的第一个
-    configured = get("llm.provider", "")
-    if req.provider == configured:
-        model = get("llm.model", "") or guess_model(p["id"])
-    else:
-        model = guess_model(p["id"])
-    if not model:
-        return {"ok": False, "message": "这家没有预设模型，请先填写模型名"}
+
+class KeyUpdate(BaseModel):
+    key: str
+
+
+@app.post("/configs/{config_id}/key")
+def set_config_key(config_id: str, req: KeyUpdate):
+    """单独改 key。空串等于清除。"""
+    if not store.get_config(config_id):
+        raise HTTPException(status_code=404, detail="配置不存在")
+    store.set_key(config_id, req.key.strip())
+    _rebuild_llm()
+    return {"status": "ok", "has_key": bool(store.get_key(config_id))}
+
+
+@app.post("/configs/{config_id}/test")
+def test_config(config_id: str):
+    """用这条配置的地址和 key 发一个最小请求探活。"""
+    c = store.get_config(config_id)
+    if not c:
+        return {"ok": False, "message": "配置不存在"}
+
+    key = store.get_key(config_id)
+    if not key:
+        return {"ok": False, "message": "这条配置还没有填 API Key"}
+    if not c.get("model"):
+        return {"ok": False, "message": "这条配置还没有填模型名"}
 
     try:
-        client = OpenAI(
-            api_key=key or "not-needed",
-            base_url=p["base_url"],
-            timeout=5.0,
-        )
+        client = OpenAI(api_key=key, base_url=c["base_url"], timeout=5.0)
         client.chat.completions.create(
-            model=model,
+            model=c["model"],
             max_tokens=5,
             messages=[{"role": "user", "content": "hi"}],
         )
         return {"ok": True, "message": "连接成功"}
     except Exception as e:
-        # 把异常类型也带上：光看 "Connection error" 分不清是地址错了
-        # 还是网不通，带上类型至少能给出方向
+        # 带上异常类型：光看 "Connection error" 分不清是地址错还是网不通
         return {"ok": False, "message": f"{type(e).__name__}: {e}"}
 
 

@@ -10,7 +10,98 @@ export default {
 <!-- 根元素不带 v-else：与主界面的互斥关系由父模板的
      <settings-view v-else> 表达，组件内部再写一次会让编译器找不到配对的 v-if -->
 <div class="settings-page">
-  <div class="glass" style="flex:1;min-height:0;display:flex;flex-direction:column">
+  <!-- 编辑页：盖住整个设置页的独立视图。
+       不用弹窗是因为字段多，弹窗里滚动别扭；而且填地址时往往要回头
+       看一眼列表里别的配置是怎么填的 -->
+  <div v-if="editor" class="glass" style="flex:1;min-height:0;display:flex;flex-direction:column">
+    <div class="set-head">
+      <button class="icon-btn" @click="closeEditor" title="返回列表">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+      <h2>{{ editor.id ? '编辑配置' : '添加新配置' }}</h2>
+      <span class="spacer"></span>
+      <button class="btn" @click="closeEditor">取消</button>
+      <button class="btn primary" @click="saveConfig">保存</button>
+    </div>
+
+    <div class="set-body">
+      <div class="set-form" style="flex:1">
+        <div class="set-form-inner">
+
+          <div class="cfg-row">
+            <div class="cfg-col">
+              <label class="prov-label">名称</label>
+              <input class="set-input" v-model="editor.name" placeholder="例如：DeepSeek 生产">
+            </div>
+            <div class="cfg-col">
+              <label class="prov-label">备注</label>
+              <input class="set-input" v-model="editor.note" placeholder="可选">
+            </div>
+          </div>
+
+          <label class="prov-label">供应商预设</label>
+          <div class="preset-grid">
+            <button v-for="p in providers" :key="p.id"
+                    class="preset" :class="{on: editor.provider === p.id}"
+                    @click="applyPreset(p)">{{ p.name }}</button>
+          </div>
+          <div class="set-hint" style="margin-top:6px">
+            点一个会填上它的接口地址；地址仍可手改
+          </div>
+
+          <label class="prov-label">API Key</label>
+          <input type="password" class="set-input" v-model="editor.key"
+                 :placeholder="editor.has_key
+                   ? '••••••••（已保存，留空表示不修改）'
+                   : '粘贴 Key'">
+          <div class="set-hint" style="margin-top:5px">
+            存在 secrets.json（不进版本库），按配置分别保存
+          </div>
+
+          <label class="prov-label">请求地址</label>
+          <input class="set-input" v-model="editor.base_url"
+                 placeholder="https://your-api-endpoint.com">
+
+          <label class="prov-label">
+            模型
+            <button class="prov-fetch" @click="fetchFormModels"
+                    :disabled="formState.fetching">
+              {{ formState.fetching ? '获取中…' : '获取模型' }}
+            </button>
+          </label>
+          <!-- 用 datalist 而不是 select：拉回来的列表可能不全，
+               用户得能自己填一个不在候选里的模型名 -->
+          <input class="set-input" v-model="editor.model" list="cfg-models"
+                 placeholder="模型名，本地部署请自己填">
+          <datalist id="cfg-models">
+            <option v-for="m in formModels" :key="m" :value="m"></option>
+          </datalist>
+
+          <div class="prov-fetchmsg" v-if="formState.fetch"
+               :class="formState.fetch.ok ? 'ok' : 'err'">
+            {{ formState.fetch.message }}
+          </div>
+
+          <div class="cfg-foot">
+            <button class="btn" @click="testConfig(editor.id)" :disabled="!editor.id">
+              连接测试
+            </button>
+            <span class="set-hint" v-if="!editor.id">保存后才能测试</span>
+            <span class="prov-result" v-else-if="testState[editor.id] && !testState[editor.id].running"
+                  :class="testState[editor.id].ok ? 'ok' : 'err'" style="margin:0">
+              {{ testState[editor.id].message }}
+            </span>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div v-else class="glass" style="flex:1;min-height:0;display:flex;flex-direction:column">
 
     <div class="set-head">
       <button class="icon-btn" @click="goChat" title="返回对话">
@@ -49,93 +140,53 @@ export default {
       <div class="set-form">
         <div class="set-form-inner">
 
-          <!-- 模型：供应商卡片 + 采样参数 -->
+          <!-- 模型：配置卡片列表 + 采样参数 -->
           <template v-if="activeGroup === 'model'">
-            <div class="set-group-title">模型供应商</div>
+            <div class="set-group-title">模型配置</div>
 
-            <div class="prov-list">
-              <div v-for="p in providers" :key="p.id"
-                   class="prov-card" :class="{open: selectedProvider === p.id,
-                                              cur: currentProvider === p.id}">
-                <button class="prov-head" @click="pickProvider(p.id)">
-                  <span class="prov-name">{{ p.name }}</span>
-                  <span class="prov-tag" v-if="currentProvider === p.id">使用中</span>
-                  <span class="prov-spacer"></span>
-                  <span class="prov-state" :class="p.configured ? 'ok' : ''">
-                    {{ p.configured ? '已配置' : '未配置' }}
-                  </span>
-                  <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                       stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="9 18 15 12 9 6"></polyline>
-                  </svg>
-                </button>
+            <div v-if="!configs.length" class="set-hint" style="margin-bottom:14px">
+              还没有配置。加一条才能开始对话。
+            </div>
 
-                <div class="prov-body" v-if="selectedProvider === p.id">
-                  <div class="prov-url">{{ p.base_url }}</div>
-                  <div class="prov-note" v-if="p.note">{{ p.note }}</div>
-
-                  <!-- Key。已配置时只显示占位圆点，真值从不进前端 -->
-                  <label class="prov-label">API Key</label>
-                  <div class="prov-key">
-                    <input type="password" class="set-input"
-                           :placeholder="p.configured ? '••••••••（已保存，留空表示不修改）' : '粘贴 Key'"
-                           :value="keyDraft[p.id] || ''"
-                           @input="keyDraft[p.id] = $event.target.value"
-                           @keydown.enter="saveKey(p.id)">
-                    <button class="btn" @click="saveKey(p.id)">保存</button>
-                  </div>
-
-                  <label class="prov-label">
-                    模型
-                    <button class="prov-fetch" @click="loadModels(p.id)"
-                            :disabled="modelState[p.id] && modelState[p.id].loading">
-                      {{ modelState[p.id] && modelState[p.id].loading ? '获取中…' : '获取模型' }}
-                    </button>
-                  </label>
-
-                  <!-- 拉到了就下拉选，没有（或本地部署）就手填。
-                       预设那几个名字只是离线兜底，不代表这家现在真的有 -->
-                  <template v-if="(modelOptions[p.id] || []).length">
-                    <select class="set-input" v-model="modelDraft[p.id]">
-                      <option value="">（默认 {{ (modelOptions[p.id] || [])[0] }}）</option>
-                      <option v-for="m in modelOptions[p.id]" :key="m" :value="m">{{ m }}</option>
-                    </select>
-                  </template>
-                  <template v-else>
-                    <input class="set-input" v-model="modelDraft[p.id]"
-                           placeholder="本地部署请填写模型名，如 llama3">
-                  </template>
-
-                  <div class="prov-fetchmsg" v-if="modelState[p.id] && modelState[p.id].message"
-                       :class="modelState[p.id].fetched ? 'ok' : 'err'">
-                    {{ modelState[p.id].message }}
-                  </div>
-
-                  <div class="prov-acts">
-                    <button class="btn" @click="runTest(p.id)"
-                            :disabled="testState[p.id] && testState[p.id].running">
-                      {{ testState[p.id] && testState[p.id].running ? '测试中…' : '连接测试' }}
-                    </button>
-                    <button class="btn primary" @click="useProvider(p.id)"
-                            :disabled="currentProvider === p.id && !modelDraft[p.id]">
-                      {{ currentProvider === p.id ? '应用模型' : '切换到此供应商' }}
-                    </button>
-                  </div>
-
-                  <!-- 测试结果留在卡片上：用户要照着错误信息改地址或换 key，
-                       飘两秒就没的 toast 等于没说 -->
-                  <div class="prov-result" v-if="testState[p.id] && !testState[p.id].running
-                                                  && testState[p.id].ok !== null"
-                       :class="testState[p.id].ok ? 'ok' : 'err'">
-                    <span>{{ testState[p.id].ok ? '✓' : '✗' }}</span>
-                    {{ testState[p.id].message }}
-                  </div>
+            <div v-for="c in configs" :key="c.id" class="cfg-card"
+                 :class="{on: activeId === c.id}">
+              <button class="cfg-main" @click="openEditConfig(c)">
+                <div class="cfg-name">
+                  {{ c.name }}
+                  <span class="prov-tag" v-if="activeId === c.id">● 生效中</span>
+                  <span class="prov-tag warn" v-if="!c.has_key">未配 Key</span>
                 </div>
+                <div class="cfg-model">{{ c.model || '（未填模型）' }}</div>
+                <div class="cfg-url">{{ c.base_url }}</div>
+                <div class="cfg-note" v-if="c.note">{{ c.note }}</div>
+              </button>
+
+              <div class="cfg-acts">
+                <button class="btn" v-if="activeId !== c.id"
+                        @click="activateConfig(c.id)">切换生效</button>
+                <button class="btn" @click="testConfig(c.id)"
+                        :disabled="testState[c.id] && testState[c.id].running">
+                  {{ testState[c.id] && testState[c.id].running ? '测试中…' : '连接测试' }}
+                </button>
+                <button class="btn danger" @click="removeConfig(c.id)">
+                  {{ pendingCfgDelete === c.id ? '确认删除？' : '删除' }}
+                </button>
+              </div>
+
+              <div class="prov-result" v-if="testState[c.id] && !testState[c.id].running
+                                              && testState[c.id].ok !== null"
+                   :class="testState[c.id].ok ? 'ok' : 'err'">
+                {{ testState[c.id].message }}
               </div>
             </div>
 
-            <!-- 采样参数跟供应商走，放同一组 -->
+            <button class="cfg-add" @click="openNewConfig">＋ 添加新配置</button>
+
+            <!-- 采样是应用级偏好，所有配置共享，所以不放进卡片 -->
             <div class="set-group-title" style="margin-top:22px">采样</div>
+            <div class="set-hint" style="margin:-6px 0 14px">
+              这几项对所有配置生效，不跟着卡片走
+            </div>
             <div v-for="p in activeGroupParams" :key="p.key" class="set-field">
               <div class="set-field-top">
                 <span class="name">{{ p.label }}</span>
@@ -151,7 +202,6 @@ export default {
             </div>
           </template>
 
-          <!-- 外观（前端本地，不走后端） -->
           <template v-else-if="activeGroup === 'appearance'">
             <div class="set-group-title">{{ t.appearance }}</div>
             <div class="set-field">

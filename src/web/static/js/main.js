@@ -221,8 +221,9 @@ createApp({
       draft.value = {};
       saveMsg.value = null;
       confirmKind.value = null;
+      editor.value = null;          // 每次都从列表页进，别停在上次的编辑页
       view.value = 'settings';
-      await Promise.all([loadSettings(), loadCounts(), loadProviders()]);
+      await Promise.all([loadSettings(), loadCounts(), loadProviders(), loadConfigs()]);
     };
 
     const goChat = () => {
@@ -254,90 +255,146 @@ createApp({
       }
     };
 
-    /* ---------------- 供应商 ---------------- */
+    /* ---------------- 模型配置 ---------------- */
     // 关于页的常量。前端是纯静态文件，读不到 pyproject.toml，
     // 所以版本号在这儿手写一份——改版本时记得两边一起改
     const APP_VERSION = 'v0.1.0';
     const REPO_URL = 'https://github.com/niannian-Gzh/datapilot';
 
-    const providers = ref([]);
-    const currentProvider = ref('');    // config.yaml 里正在用的那家
-    const selectedProvider = ref('');   // 设置页里点开的那张卡片
-    /* 用户刚输入的 key，只活在内存里：保存成功后立刻清掉，
-       不落 localStorage——那是明文，浏览器一堆扩展都读得到 */
-    const keyDraft = ref({});
-    const testState = ref({});          // id -> {running, ok, message}
-    const modelDraft = ref({});         // id -> 用户在模型下拉里选的值
-    const modelOptions = ref({});       // id -> 下拉里的候选模型
-    const modelState = ref({});         // id -> {loading, message, fetched}
+    const providers = ref([]);        // 供应商预设，新建配置时的模板
+    const configs = ref([]);          // 已保存的配置卡片
+    const activeId = ref(null);       // 生效中的那张
+    const editor = ref(null);         // null = 停在列表页；否则是编辑中的表单
+    const formModels = ref([]);       // 编辑页下拉里的候选模型
+    const formState = ref({ fetching: false, fetch: null });
+    // 卡片上的连接测试结果：id -> {running, ok, message}
+    const testState = ref({});
+    // 删除要二次确认。名字带 cfg 前缀，和会话那边的 pendingDelete 区分开
+    const pendingCfgDelete = ref(null);
 
     const loadProviders = async () => {
-      const data = await api.getProviders();
-      if (!data) return;
-      providers.value = data.providers || [];
-      currentProvider.value = (data.current || {}).provider || '';
-      // 第一次进来时，默认展开正在用的那张卡片
-      if (!selectedProvider.value) selectedProvider.value = currentProvider.value;
-      // 下拉的初始项用预设，用户点了「获取模型」再换成接口返回的真实列表
-      for (const p of providers.value) {
-        if (!modelOptions.value[p.id]) modelOptions.value[p.id] = p.models || [];
-        // 必须显式给空串：v-model 是 undefined 时 select 找不到匹配的 option，
-        // 会显示成空白，看着像「这家没有模型可选」
-        if (modelDraft.value[p.id] === undefined) modelDraft.value[p.id] = '';
-      }
+      providers.value = await api.getProviders();
     };
 
-    /** 拉该供应商真实可用的模型，替换掉预设那份。
-     *
-     *  预设只是离线兜底：各家换代太频繁，写在代码里的名字迟早过期，
-     *  而能连上时接口说的才算数。
-     */
-    const loadModels = async (id) => {
-      modelState.value[id] = { loading: true, message: '', fetched: false };
-      const r = await api.fetchModels(id);
+    const loadConfigs = async () => {
+      const data = await api.getConfigs();
+      configs.value = data.configs || [];
+      activeId.value = data.active_id || null;
+    };
+
+    /** 开一张空表单。默认带上第一个预设，省得从零填地址。 */
+    const openNewConfig = () => {
+      const first = providers.value[0] || {};
+      editor.value = {
+        id: null,
+        name: '',
+        provider: first.id || 'custom',
+        base_url: first.base_url || '',
+        model: (first.models || [])[0] || '',
+        note: '',
+        key: '',
+        has_key: false,
+      };
+      formModels.value = first.models || [];
+      formState.value = { fetching: false, fetch: null };
+    };
+
+    const openEditConfig = (c) => {
+      const preset = providers.value.find((p) => p.id === c.provider);
+      // key 永不回填——留空表示「不动这一项」，真值只在服务端
+      editor.value = { ...c, key: '' };
+      formModels.value = (preset && preset.models) || [];
+      formState.value = { fetching: false, fetch: null };
+    };
+
+    const closeEditor = () => { editor.value = null; };
+
+    /** 点预设格子：填地址，并把模型候选换成这家的 */
+    const applyPreset = (p) => {
+      const e = editor.value;
+      if (!e) return;
+      e.provider = p.id;
+      e.base_url = p.base_url;
+      if (!e.model) e.model = (p.models || [])[0] || '';
+      formModels.value = p.models || [];
+      formState.value.fetch = null;
+    };
+
+    /** 拉模型。用表单里的地址和 key——用户可能刚填完还没保存，
+     *  这时候从服务端读是读不到的 */
+    const fetchFormModels = async () => {
+      const e = editor.value;
+      if (!e) return;
+      formState.value.fetching = true;
+      const r = await api.fetchModels({
+        provider: e.provider, base_url: e.base_url, key: e.key,
+      });
+      formState.value.fetching = false;
       if (r.ok) {
-        modelOptions.value[id] = r.models;
-        await loadProviders();   // 让下面的下拉立即用上新列表
-        modelState.value[id] = { loading: false, message: r.message, fetched: true };
+        formModels.value = r.models;
+        formState.value.fetch = { ok: true, message: r.message };
       } else {
-        modelState.value[id] = { loading: false, message: r.message, fetched: false };
+        formState.value.fetch = { ok: false, message: r.message };
       }
     };
 
-    const providerName = (id) => {
-      const p = providers.value.find((x) => x.id === id);
-      return p ? p.name : id;
+    const saveConfig = async () => {
+      const e = editor.value;
+      if (!e) return;
+      if (!e.name.trim()) { notify('请填名称', false); return; }
+      if (!e.base_url.trim()) { notify('请填请求地址', false); return; }
+
+      const payload = {
+        name: e.name, provider: e.provider, base_url: e.base_url,
+        model: e.model, note: e.note,
+      };
+
+      if (e.id) {
+        const r = await api.updateConfig(e.id, payload);
+        if (!r.ok) { notify(r.message, false); return; }
+        // key 单独提交，留空表示不动——否则会把已有的 key 清掉
+        if (e.key.trim()) {
+          const kr = await api.setConfigKey(e.id, e.key.trim());
+          if (!kr.ok) { notify(kr.message, false); return; }
+        }
+      } else {
+        const r = await api.createConfig({ ...payload, key: e.key });
+        if (!r.ok) { notify(r.message, false); return; }
+      }
+
+      await loadConfigs();
+      editor.value = null;
+      notify('已保存');
     };
 
-    const pickProvider = (id) => {
-      // 再点一次收起，省一个额外的关闭按钮
-      selectedProvider.value = selectedProvider.value === id ? '' : id;
-      if (selectedProvider.value === id) modelDraft.value[id] = '';
-    };
-
-    const useProvider = async (id) => {
-      const model = (modelDraft.value[id] || '').trim();
-      const r = await api.selectProvider(id, model || null);
+    /** 删除要二次点击，和会话删除同一个套路：左栏/列表里塞不下确认条，
+     *  浏览器原生 confirm 又跟界面完全脱节 */
+    const removeConfig = async (id) => {
+      if (pendingCfgDelete.value !== id) {
+        pendingCfgDelete.value = id;
+        setTimeout(() => {
+          if (pendingCfgDelete.value === id) pendingCfgDelete.value = null;
+        }, 3000);
+        return;
+      }
+      pendingCfgDelete.value = null;
+      const r = await api.deleteConfig(id);
       if (!r.ok) { notify(r.message, false); return; }
-      await loadProviders();
-      notify('已切换到 ' + providerName(id));
+      await loadConfigs();
+      notify('已删除');
     };
 
-    const saveKey = async (id) => {
-      const key = (keyDraft.value[id] || '').trim();
-      if (!key) { notify('请先填入 Key', false); return; }
-      const r = await api.saveKey(id, key);
+    const activateConfig = async (id) => {
+      const r = await api.activateConfig(id);
       if (!r.ok) { notify(r.message, false); return; }
-      keyDraft.value[id] = '';
-      await loadProviders();
-      notify('Key 已保存');
+      await loadConfigs();
+      notify('已切换生效');
     };
 
-    const runTest = async (id) => {
+    const testConfig = async (id) => {
       testState.value[id] = { running: true, ok: null, message: '' };
-      const r = await api.testProvider(id);
-      // 失败原因留在卡片上而不是弹 toast：用户要照着它改地址或换 key，
-      // 飘两秒就没了等于没说
+      const r = await api.testConfig(id);
+      // 结果留在卡片上：错误信息往往很长，用户要照着它改地址或换 key
       testState.value[id] = { running: false, ok: !!r.ok, message: r.message || '' };
     };
 
@@ -814,10 +871,11 @@ createApp({
       dirty, groupDirty, dirtyCount, editValue, onEdit, resetField,
       discardDraft, loadSettings, goSettings, goChat, saveSettings,
 
-      // 供应商
-      providers, currentProvider, selectedProvider, keyDraft, testState, modelDraft,
-      modelOptions, modelState, loadModels,
-      providerName, pickProvider, useProvider, saveKey, runTest,
+      // 模型配置
+      providers, configs, activeId, editor, formModels, formState,
+      testState, pendingCfgDelete,
+      loadConfigs, openNewConfig, openEditConfig, closeEditor, applyPreset,
+      fetchFormModels, saveConfig, removeConfig, activateConfig, testConfig,
 
       // 关于
       appVersion: APP_VERSION, REPO_URL,

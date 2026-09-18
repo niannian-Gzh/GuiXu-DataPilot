@@ -400,6 +400,106 @@
     border: 1px solid rgba(248, 114, 114, 0.28);
     color: var(--err);
   }
+  .prov-tag.warn { background: rgba(251, 191, 36, 0.16); color: var(--warn); }
+
+  /* ---------- 模型配置卡片 ---------- */
+  .cfg-card {
+    margin-bottom: 10px;
+    border-radius: var(--r);
+    border: 1px solid var(--edge);
+    background: var(--glass);
+    overflow: hidden;
+    transition: border-color 0.18s var(--ease);
+  }
+  .cfg-card.on { border-color: var(--acc-line); }
+
+  /* 整块可点进编辑页，所以用 button 而不是 div——
+     键盘能聚焦、回车能进，不用另写 tabindex 和键盘处理 */
+  .cfg-main {
+    display: block;
+    width: 100%;
+    padding: 12px 14px;
+    text-align: left;
+    transition: background 0.16s var(--ease);
+  }
+  .cfg-main:hover { background: var(--glass-lift); }
+  .cfg-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    color: var(--fg);
+  }
+  .cfg-model {
+    margin-top: 3px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--acc-lift);
+  }
+  .cfg-url {
+    margin-top: 2px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-faint);
+    word-break: break-all;
+  }
+  .cfg-note { margin-top: 4px; font-size: 11.5px; color: var(--fg-sub); }
+
+  .cfg-acts {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 14px;
+    border-top: 1px solid var(--edge-soft);
+  }
+
+  .cfg-add {
+    width: 100%;
+    margin-top: 4px;
+    padding: 11px;
+    border-radius: var(--r);
+    border: 1px dashed var(--edge);
+    font-size: 12.5px;
+    color: var(--fg-dim);
+    transition: all 0.16s var(--ease);
+  }
+  .cfg-add:hover { border-color: var(--acc-line); color: var(--acc-lift); }
+
+  /* 编辑页的两列表单 */
+  .cfg-row { display: flex; gap: 14px; }
+  .cfg-col { flex: 1; min-width: 0; }
+  .cfg-col .set-input { max-width: none; }
+
+  .cfg-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--edge-soft);
+  }
+
+  /* 预设格子：17 家铺成网格，一眼扫完，比下拉少一次点击 */
+  .preset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 6px;
+  }
+  .preset {
+    padding: 8px 10px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge);
+    font-size: 12px;
+    color: var(--fg-dim);
+    text-align: left;
+    transition: all 0.16s var(--ease);
+  }
+  .preset:hover { border-color: var(--acc-line); color: var(--fg); }
+  .preset.on {
+    border-color: var(--acc-line);
+    background: var(--acc-soft);
+    color: var(--fg);
+  }
 
   /* ===================== 全局提示条 =====================
      替代 alert()：原生的对话框样式脱离界面、按钮文案跟随系统语言，

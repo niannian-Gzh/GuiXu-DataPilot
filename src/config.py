@@ -1,5 +1,4 @@
 from pathlib import Path
-import json
 import os
 import threading
 import yaml
@@ -7,9 +6,8 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config.yaml"
-SECRETS_PATH = PROJECT_ROOT / "secrets.json"
 
-# 这里加载一次，get_api_key 回落到 .env 时才读得到。
+# 这里加载一次，迁移时读 .env 里的老 key 才读得到。
 # 默认不覆盖已有的环境变量，所以和 api.py 里的 override=True 不冲突
 load_dotenv()
 
@@ -97,51 +95,3 @@ def save_config(data: dict) -> None:
 def resolve(relative_path: str) -> str:
     """把配置里的相对路径，解析成基于项目根的绝对路径字符串。"""
     return str(PROJECT_ROOT / relative_path)
-
-
-# ============ API Key ============
-
-def read_secrets() -> dict:
-    """读 secrets.json。文件不存在或坏了都当空的处理。
-
-    坏了当空的，好过抛异常——密钥文件被编辑器占用或写坏时，
-    整个应用不该连启动都做不到。
-    """
-    if not SECRETS_PATH.exists():
-        return {}
-    try:
-        data = json.loads(SECRETS_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def get_api_key(provider: str):
-    """按供应商取 key。secrets.json 优先，回落到 .env 里的老变量。
-
-    回落是为了不打断已有的配置：只写过 .env 的用户，在没动设置页之前
-    一切照旧。两者都没有时返回 None，让调用方自己决定怎么提示。
-    """
-    key = read_secrets().get(provider)
-    if key:
-        return key
-
-    from providers import get_provider
-    p = get_provider(provider)
-    if p and p.get("env"):
-        return os.getenv(p["env"]) or None
-    return None
-
-
-def set_api_key(provider: str, key: str) -> None:
-    """写入 secrets.json。只动这一家，别家的原样保留。"""
-    data = read_secrets()
-    if key:
-        data[provider] = key
-    else:
-        # 传空串表示清除，别在文件里留个空键
-        data.pop(provider, None)
-    SECRETS_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
