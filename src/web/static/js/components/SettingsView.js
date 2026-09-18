@@ -49,8 +49,110 @@ export default {
       <div class="set-form">
         <div class="set-form-inner">
 
+          <!-- 模型：供应商卡片 + 采样参数 -->
+          <template v-if="activeGroup === 'model'">
+            <div class="set-group-title">模型供应商</div>
+
+            <div class="prov-list">
+              <div v-for="p in providers" :key="p.id"
+                   class="prov-card" :class="{open: selectedProvider === p.id,
+                                              cur: currentProvider === p.id}">
+                <button class="prov-head" @click="pickProvider(p.id)">
+                  <span class="prov-name">{{ p.name }}</span>
+                  <span class="prov-tag" v-if="currentProvider === p.id">使用中</span>
+                  <span class="prov-spacer"></span>
+                  <span class="prov-state" :class="p.configured ? 'ok' : ''">
+                    {{ p.configured ? '已配置' : '未配置' }}
+                  </span>
+                  <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </button>
+
+                <div class="prov-body" v-if="selectedProvider === p.id">
+                  <div class="prov-url">{{ p.base_url }}</div>
+                  <div class="prov-note" v-if="p.note">{{ p.note }}</div>
+
+                  <!-- Key。已配置时只显示占位圆点，真值从不进前端 -->
+                  <label class="prov-label">API Key</label>
+                  <div class="prov-key">
+                    <input type="password" class="set-input"
+                           :placeholder="p.configured ? '••••••••（已保存，留空表示不修改）' : '粘贴 Key'"
+                           :value="keyDraft[p.id] || ''"
+                           @input="keyDraft[p.id] = $event.target.value"
+                           @keydown.enter="saveKey(p.id)">
+                    <button class="btn" @click="saveKey(p.id)">保存</button>
+                  </div>
+
+                  <label class="prov-label">
+                    模型
+                    <button class="prov-fetch" @click="loadModels(p.id)"
+                            :disabled="modelState[p.id] && modelState[p.id].loading">
+                      {{ modelState[p.id] && modelState[p.id].loading ? '获取中…' : '获取模型' }}
+                    </button>
+                  </label>
+
+                  <!-- 拉到了就下拉选，没有（或本地部署）就手填。
+                       预设那几个名字只是离线兜底，不代表这家现在真的有 -->
+                  <template v-if="(modelOptions[p.id] || []).length">
+                    <select class="set-input" v-model="modelDraft[p.id]">
+                      <option value="">（默认 {{ (modelOptions[p.id] || [])[0] }}）</option>
+                      <option v-for="m in modelOptions[p.id]" :key="m" :value="m">{{ m }}</option>
+                    </select>
+                  </template>
+                  <template v-else>
+                    <input class="set-input" v-model="modelDraft[p.id]"
+                           placeholder="本地部署请填写模型名，如 llama3">
+                  </template>
+
+                  <div class="prov-fetchmsg" v-if="modelState[p.id] && modelState[p.id].message"
+                       :class="modelState[p.id].fetched ? 'ok' : 'err'">
+                    {{ modelState[p.id].message }}
+                  </div>
+
+                  <div class="prov-acts">
+                    <button class="btn" @click="runTest(p.id)"
+                            :disabled="testState[p.id] && testState[p.id].running">
+                      {{ testState[p.id] && testState[p.id].running ? '测试中…' : '连接测试' }}
+                    </button>
+                    <button class="btn primary" @click="useProvider(p.id)"
+                            :disabled="currentProvider === p.id && !modelDraft[p.id]">
+                      {{ currentProvider === p.id ? '应用模型' : '切换到此供应商' }}
+                    </button>
+                  </div>
+
+                  <!-- 测试结果留在卡片上：用户要照着错误信息改地址或换 key，
+                       飘两秒就没的 toast 等于没说 -->
+                  <div class="prov-result" v-if="testState[p.id] && !testState[p.id].running
+                                                  && testState[p.id].ok !== null"
+                       :class="testState[p.id].ok ? 'ok' : 'err'">
+                    <span>{{ testState[p.id].ok ? '✓' : '✗' }}</span>
+                    {{ testState[p.id].message }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 采样参数跟供应商走，放同一组 -->
+            <div class="set-group-title" style="margin-top:22px">采样</div>
+            <div v-for="p in activeGroupParams" :key="p.key" class="set-field">
+              <div class="set-field-top">
+                <span class="name">{{ p.label }}</span>
+                <span class="mark" v-if="dirty(p.key)">未保存</span>
+                <span class="spacer"></span>
+                <button class="reset" v-if="!p.is_default || dirty(p.key)"
+                        @click="resetField(p)">{{ t.resetDefault }}</button>
+              </div>
+              <input class="set-input"
+                     :type="p.type === 'number' ? 'number' : 'text'"
+                     :value="editValue(p)" @input="onEdit(p, $event.target.value)">
+              <div class="set-hint">{{ p.hint }}</div>
+            </div>
+          </template>
+
           <!-- 外观（前端本地，不走后端） -->
-          <template v-if="activeGroup === 'appearance'">
+          <template v-else-if="activeGroup === 'appearance'">
             <div class="set-group-title">{{ t.appearance }}</div>
             <div class="set-field">
               <div class="set-field-top"><span class="name">{{ t.theme }}</span></div>
@@ -64,9 +166,39 @@ export default {
             </div>
           </template>
 
-          <!-- 后端参数组 -->
-          <template v-else-if="activeGroupParams.length">
+          <!-- 布局 -->
+          <template v-else-if="activeGroup === 'layout'">
+            <div class="set-group-title">布局</div>
+
+            <div class="set-field">
+              <div class="set-field-top"><span class="name">产物栏</span></div>
+              <div class="seg">
+                <button :class="{on: railOpen}"  @click="!railOpen && toggleRail()">展开</button>
+                <button :class="{on: !railOpen}" @click="railOpen && toggleRail()">收起</button>
+              </div>
+              <div class="set-hint" style="margin-top:8px">
+                右侧的产物列表。收起后中栏会自动撑满
+              </div>
+            </div>
+
+            <div class="set-field">
+              <div class="set-field-top"><span class="name">会话栏</span></div>
+              <div class="seg">
+                <button :class="{on: !leftShut}" @click="leftShut = false">展开</button>
+                <button :class="{on: leftShut}"  @click="leftShut = true">收起</button>
+              </div>
+              <div class="set-hint" style="margin-top:8px">
+                左侧的会话与轨迹列表
+              </div>
+            </div>
+          </template>
+
+          <!-- 后端参数组（交互偏好 / 高级） -->
+          <template v-else-if="activeGroup === 'prefs' || activeGroup === 'advanced'">
             <div class="set-group-title">{{ activeGroupDesc }}</div>
+            <div class="set-hint" v-if="activeGroup === 'advanced'" style="margin:-6px 0 14px">
+              这些参数会改变 Agent 的实际行为，改之前请先看每项的后果说明
+            </div>
 
             <div v-for="p in activeGroupParams" :key="p.key" class="set-field">
               <div class="set-field-top">
@@ -113,24 +245,9 @@ export default {
             </div>
           </template>
 
-          <!-- 只读信息 -->
-          <template v-else-if="activeGroup === 'info'">
-            <div class="set-group-title">{{ t.readonlyInfo }}</div>
-            <dl style="margin:0">
-              <div class="info-row" v-for="(v, k) in settings.info" :key="k">
-                <dt>{{ k }}</dt>
-                <dd>{{ v === null ? '—' : v }}</dd>
-              </div>
-            </dl>
-            <div class="set-hint" style="margin-top:14px">
-              这些不是偏好设置。数据库路径改错会让 DuckDB 静默新建一个空库，
-              看起来像数据全丢了——所以只给看不给改。
-            </div>
-          </template>
-
-          <!-- 维护 -->
-          <template v-else>
-            <div class="set-group-title">{{ t.maintain }}</div>
+          <!-- 数据 -->
+          <template v-else-if="activeGroup === 'data'">
+            <div class="set-group-title">数据</div>
 
             <div class="set-field">
               <div class="set-field-top"><span class="name">{{ t.exportFiles }}</span></div>
@@ -185,6 +302,36 @@ export default {
             <div class="set-hint" style="margin-top:18px">
               这两项都是不可撤销的。清空后文件与对话记录不会进回收站
               —— 回收站管的是数据库里的项目记录，不是这里。
+            </div>
+          </template>
+
+          <!-- 关于 -->
+          <template v-else>
+            <div class="set-group-title">关于</div>
+
+            <div class="set-field">
+              <div class="set-field-top"><span class="name">DataPilot</span></div>
+              <div class="set-hint">数据处理 Agent · {{ appVersion }}</div>
+            </div>
+
+            <div class="set-field">
+              <div class="set-field-top"><span class="name">项目地址</span></div>
+              <div class="set-hint">
+                <a :href="REPO_URL" target="_blank" rel="noopener"
+                   style="color:var(--acc-lift)">{{ REPO_URL }}</a>
+              </div>
+            </div>
+
+            <div class="set-group-title" style="margin-top:22px">运行信息</div>
+            <dl style="margin:0">
+              <div class="info-row" v-for="(v, k) in settings.info" :key="k">
+                <dt>{{ k }}</dt>
+                <dd>{{ v === null ? '—' : v }}</dd>
+              </div>
+            </dl>
+            <div class="set-hint" style="margin-top:14px">
+              这些不是偏好设置。数据库路径改错会让 DuckDB 静默新建一个空库，
+              看起来像数据全丢了——所以只给看不给改。
             </div>
           </template>
 

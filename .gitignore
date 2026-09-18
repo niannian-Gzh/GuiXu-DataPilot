@@ -1,4 +1,5 @@
 .env
+secrets.json
 .venv/
 __pycache__/
 data/*.duckdb

@@ -294,6 +294,113 @@
   .info-row dt { color: var(--fg-faint); }
   .info-row dd { color: var(--fg-dim); font-family: var(--mono); word-break: break-all; }
 
+  /* ---------- 供应商卡片 ---------- */
+  .prov-card {
+    margin-bottom: 8px;
+    border-radius: var(--r);
+    border: 1px solid var(--edge);
+    background: var(--glass);
+    overflow: hidden;
+    transition: border-color 0.18s var(--ease);
+  }
+  /* 正在用的那家和展开的卡片用同一种高亮，省得用户找「我在用哪个」 */
+  .prov-card.cur,
+  .prov-card.open { border-color: var(--acc-line); }
+
+  .prov-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 11px 13px;
+    text-align: left;
+    transition: background 0.16s var(--ease);
+  }
+  .prov-head:hover { background: var(--glass-lift); }
+  .prov-head .caret {
+    width: 11px; height: 11px;
+    color: var(--fg-faint);
+    transition: transform 0.22s var(--ease);
+    flex: none;
+  }
+  .prov-card.open .caret { transform: rotate(90deg); }
+  .prov-name { font-size: 13px; color: var(--fg); }
+  .prov-tag {
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    background: var(--acc-soft);
+    color: var(--acc-lift);
+    flex: none;
+  }
+  .prov-spacer { flex: 1; }
+  .prov-state { font-size: 11.5px; color: var(--fg-faint); flex: none; }
+  .prov-state.ok { color: var(--ok); }
+
+  .prov-body {
+    padding: 2px 13px 13px;
+    border-top: 1px solid var(--edge-soft);
+    animation: rise 0.24s var(--ease);
+  }
+  .prov-url {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-faint);
+    margin-bottom: 4px;
+    word-break: break-all;
+  }
+  .prov-note { font-size: 11.5px; color: var(--fg-sub); margin-bottom: 6px; }
+  .prov-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 11px 0 5px;
+    font-size: 11.5px;
+    color: var(--fg-dim);
+  }
+  /* 「获取模型」贴在标签行右侧，不占独立一行——
+     它是这个字段的附注动作，不是主操作 */
+  .prov-fetch {
+    margin-left: auto;
+    padding: 2px 9px;
+    border-radius: 5px;
+    font-size: 11px;
+    color: var(--fg-faint);
+    transition: all 0.16s var(--ease);
+  }
+  .prov-fetch:hover:not(:disabled) { color: var(--acc-lift); background: var(--acc-soft); }
+  .prov-fetch:disabled { opacity: 0.5; cursor: default; }
+  .prov-fetchmsg { margin-top: 6px; font-size: 11px; line-height: 1.5; }
+  .prov-fetchmsg.ok  { color: var(--ok); }
+  .prov-fetchmsg.err { color: var(--err); }
+  .prov-key { display: flex; gap: 7px; }
+  .prov-key .set-input { flex: 1; }
+  .prov-acts { display: flex; gap: 8px; margin-top: 14px; }
+
+  /* 测试结果留在卡片里：错误信息往往很长（带异常类型和原因），
+     用户要照着它改地址或换 key，飘两秒就没的 toast 等于没说 */
+  .prov-result {
+    display: flex;
+    gap: 7px;
+    align-items: flex-start;
+    margin-top: 11px;
+    padding: 8px 11px;
+    border-radius: var(--r-sm);
+    font-size: 11.5px;
+    line-height: 1.6;
+    word-break: break-word;
+  }
+  .prov-result.ok {
+    background: rgba(61, 220, 151, 0.12);
+    border: 1px solid rgba(61, 220, 151, 0.28);
+    color: var(--ok);
+  }
+  .prov-result.err {
+    background: rgba(248, 114, 114, 0.12);
+    border: 1px solid rgba(248, 114, 114, 0.28);
+    color: var(--err);
+  }
+
   /* ===================== 全局提示条 =====================
      替代 alert()：原生的对话框样式脱离界面、按钮文案跟随系统语言，
      而且会阻断操作。这个只是飘一下，不打断任何东西 */

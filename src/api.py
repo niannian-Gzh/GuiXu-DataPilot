@@ -18,7 +18,11 @@ from llm import LLM
 from session import Session
 from agent import run_agent
 from trace import Trace
-from config import load_config, resolve, PROJECT_ROOT, setting, get_config, save_config
+from config import (
+    load_config, resolve, PROJECT_ROOT, setting, get, get_config, save_config,
+    get_api_key, set_api_key,
+)
+from providers import PROVIDERS, get_provider, guess_model
 from settings_spec import PARAMS, GROUPS, param_by_key, defaults as spec_defaults
 from cleanup import cleanup
 from services import UserInputRequired
@@ -26,6 +30,7 @@ from services import pending_service
 
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
+from openai import OpenAI
 import duckdb
 import pandas as pd
 
@@ -112,6 +117,23 @@ app.add_middleware(
 # 前端拆成了外部 css/js，需要静态文件服务
 app.mount("/css", StaticFiles(directory=STATIC_DIR / "css"), name="css")
 app.mount("/js", StaticFiles(directory=STATIC_DIR / "js"), name="js")
+
+
+@app.middleware("http")
+async def _revalidate_static(request, call_next):
+    """静态资源每次都跟服务端核对一遍。
+
+    默认不发 Cache-Control 时浏览器会按启发式缓存，而且 ES Module
+    比普通脚本更顽固——改了 js 刷新页面还是跑旧的，看起来像代码没生效，
+    排查起来最费时间的就是这种「明明改了却没反应」。
+
+    no-cache 不是不缓存，是每次带 ETag 回来问一句，没变就 304，
+    代价只有一次往返。这是本地工具，这个取舍划得来。
+    """
+    response = await call_next(request)
+    if request.url.path.startswith(("/js/", "/css/")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/")
@@ -483,6 +505,165 @@ def update_settings(req: SettingsUpdate):
     _state["llm"] = LLM()
 
     return {"status": "ok", "message": "已保存并生效"}
+
+
+# ============ 供应商接口 ============
+
+class ProviderSelect(BaseModel):
+    provider: str
+    model: Optional[str] = None
+
+
+class KeyUpdate(BaseModel):
+    provider: str
+    key: str
+
+
+class TestRequest(BaseModel):
+    provider: str
+
+
+class ModelsRequest(BaseModel):
+    provider: str
+
+
+@app.post("/settings/models")
+def list_models(req: ModelsRequest):
+    """拉取该供应商真实可用的模型列表。
+
+    预设里的模型名只是离线时的兜底——各家换代太频繁（本机实测
+    DeepSeek 就推翻了搜到的名字），能连上时必须以接口返回为准。
+    """
+    p = get_provider(req.provider)
+    if not p:
+        return {"ok": False, "models": [], "message": f"未知的供应商：{req.provider}"}
+
+    key = get_api_key(p["id"])
+    if not key and not p.get("free_input"):
+        return {"ok": False, "models": [], "message": "还没有配置 API Key"}
+
+    try:
+        client = OpenAI(
+            api_key=key or "not-needed",
+            base_url=p["base_url"],
+            timeout=15.0,
+        )
+        ids = sorted(m.id for m in client.models.list().data)
+        if not ids:
+            return {"ok": False, "models": [], "message": "接口没有返回任何模型"}
+        return {"ok": True, "models": ids, "message": f"获取到 {len(ids)} 个模型"}
+    except Exception as e:
+        # 不是所有家都实现了 /models，失败是正常情况，别当异常报
+        return {"ok": False, "models": [], "message": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/settings/providers")
+def list_providers():
+    """供应商预设 + 每家的 key 配置状态。
+
+    只回 true/false，绝不回 key 本身——即便是本地工具也该守这条：
+    浏览器有历史、有开发者工具、有截图，任何一处泄出去就等于 key 泄了。
+    """
+    current = get("llm.provider", "deepseek")
+    items = []
+    for p in PROVIDERS:
+        items.append({
+            **p,
+            "configured": bool(get_api_key(p["id"])),
+            "current": p["id"] == current,
+        })
+
+    return {
+        "providers": items,
+        "current": {
+            "provider": current,
+            "model": get("llm.model", ""),
+            "base_url": get("llm.base_url", ""),
+        },
+    }
+
+
+@app.post("/settings/providers/select")
+def select_provider(req: ProviderSelect):
+    """切供应商：provider / model / base_url 必须一起改。
+
+    只改其中一个会让三者对不上——选了 OpenAI 的模型却还指着 DeepSeek
+    的地址，报出来的错会离真相很远，排查时最费时间的就是这种。
+    """
+    p = get_provider(req.provider)
+    if not p:
+        raise HTTPException(status_code=400, detail=f"未知的供应商：{req.provider}")
+
+    cfg = get_config()
+    llm = cfg.setdefault("llm", {})
+    llm["provider"] = p["id"]
+    llm["base_url"] = p["base_url"]
+    llm["model"] = (req.model or "").strip() or guess_model(p["id"])
+    save_config(cfg)
+
+    _state["llm"] = LLM()
+    return {
+        "status": "ok",
+        "provider": p["id"],
+        "model": llm["model"],
+        "base_url": p["base_url"],
+    }
+
+
+@app.post("/settings/keys")
+def save_key(req: KeyUpdate):
+    """把 key 写进 secrets.json（优先级高于 .env）。"""
+    if not get_provider(req.provider):
+        raise HTTPException(status_code=400, detail=f"未知的供应商：{req.provider}")
+
+    set_api_key(req.provider, req.key.strip())
+    # LLM 在 __init__ 里固化了 api_key，换 key 必须重建，否则改了没效果
+    _state["llm"] = LLM()
+    return {"status": "ok", "configured": bool(req.key.strip())}
+
+
+@app.post("/settings/test")
+def test_provider(req: TestRequest):
+    """发一个最小请求探活。
+
+    用该供应商自己的 base_url + key 现造一个临时客户端，
+    不动全局的 _state["llm"]——测试一个还没打算用的供应商，
+    不该把当前正在跑的配置搅乱。
+    """
+    p = get_provider(req.provider)
+    if not p:
+        return {"ok": False, "message": f"未知的供应商：{req.provider}"}
+
+    key = get_api_key(p["id"])
+    # 本地部署没有 key 这一说，别拦
+    if not key and not p.get("free_input"):
+        return {"ok": False, "message": "还没有配置 API Key"}
+
+    # 正在用的那家就以配置里的模型为准，其余用预设的第一个
+    configured = get("llm.provider", "")
+    if req.provider == configured:
+        model = get("llm.model", "") or guess_model(p["id"])
+    else:
+        model = guess_model(p["id"])
+    if not model:
+        return {"ok": False, "message": "这家没有预设模型，请先填写模型名"}
+
+    try:
+        client = OpenAI(
+            api_key=key or "not-needed",
+            base_url=p["base_url"],
+            timeout=5.0,
+        )
+        client.chat.completions.create(
+            model=model,
+            max_tokens=5,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        return {"ok": True, "message": "连接成功"}
+    except Exception as e:
+        # 把异常类型也带上：光看 "Connection error" 分不清是地址错了
+        # 还是网不通，带上类型至少能给出方向
+        return {"ok": False, "message": f"{type(e).__name__}: {e}"}
 
 
 # ============ 会话接口 ============

@@ -42,19 +42,42 @@ createApp({
     /* ---------------- 设置 ---------------- */
     const view = ref('chat');              // 'chat' | 'settings'
     const settings = ref({ groups: [], params: [], info: {} });
-    const activeGroup = ref('llm');
+    const activeGroup = ref('model');
     const leftTab = ref('sessions');        // 'sessions' | 'trace'
     const draft = ref({});                 // 只存改过的项：key -> 新值
     const advanced = ref(localStorage.getItem('dp_advanced') === '1');
     const saving = ref(false);
     const saveMsg = ref(null);
 
-    // 前端本地的两组，不走后端 API
-    const LOCAL_GROUPS = [
-      { id: 'appearance', name: '外观', local: true },
-      { id: 'info',       name: '只读信息', local: true },
-      { id: 'maintain',   name: '维护', local: true },
+    /* 设置页的导航。settings_spec 里那 4 组是按「后端模块」分的，
+       这里是按「用户想改什么」分的——两套划分本来就不是一回事，
+       硬凑成一套只会让某一方别扭，所以在前端做一次映射 */
+    const NAV_GROUPS = [
+      { id: 'model',      name: '模型' },
+      { id: 'appearance', name: '外观' },
+      { id: 'layout',     name: '布局' },
+      { id: 'prefs',      name: '交互偏好' },
+      { id: 'advanced',   name: '高级' },
+      { id: 'data',       name: '数据' },
+      { id: 'about',      name: '关于' },
     ];
+
+    /* 分组 -> 参数键。外观/布局/数据/关于不走后端参数表，所以不列；
+       高级组按 level 现取，不在这儿再抄一遍清单 */
+    const GROUP_KEYS = {
+      model: ['llm.max_tokens', 'llm.temperature'],
+      prefs: [
+        'safety.retention_days',
+        'display.bulk_threshold',
+        'display.max_llm_rows',
+        'display.display_all_threshold',
+        'display.display_sample_count',
+        'display.conflict_sample_count',
+        'display.preview_rows',
+        'agent.keep_recent_turns',
+        'agent.tool_result_limit',
+      ],
+    };
     const dragging = ref(false);
     const fileInput = ref(null);
     const lastElapsed = ref(null);
@@ -121,35 +144,35 @@ createApp({
 
 
     /* ---------------- 设置 ---------------- */
-    const allGroups = computed(() => [
-      LOCAL_GROUPS[0],
-      ...(settings.value.groups || []).map((g) => ({ ...g, local: false })),
-      LOCAL_GROUPS[1],
-      LOCAL_GROUPS[2],
-    ]);
+    const allGroups = computed(() => NAV_GROUPS);
 
-    const isLocalGroup = computed(() => {
-      const g = allGroups.value.find((x) => x.id === activeGroup.value);
-      return !!(g && g.local);
-    });
+    // 这几组的内容模板直接写，不来自后端参数表
+    const isLocalGroup = computed(() =>
+      ['appearance', 'layout', 'data', 'about'].includes(activeGroup.value));
 
-    const activeGroupParams = computed(() => {
-      if (isLocalGroup.value) return [];
-      return (settings.value.params || []).filter((p) => p.group === activeGroup.value);
-    });
+    /** 某个分组该显示哪些参数 */
+    const paramsOfGroup = (gid) => {
+      const params = settings.value.params || [];
+      if (gid === 'advanced') {
+        // 高级组就是全部 advanced 参数，按 level 现取——
+        // 以后新增一个高级参数，不用回来补清单
+        return params.filter((p) => p.level === 'advanced');
+      }
+      const keys = GROUP_KEYS[gid] || [];
+      return params.filter((p) => keys.includes(p.key));
+    };
+
+    const activeGroupParams = computed(() => paramsOfGroup(activeGroup.value));
 
     const activeGroupDesc = computed(() => {
       const g = allGroups.value.find((x) => x.id === activeGroup.value);
-      return g ? (g.desc || g.name) : '';
+      return g ? g.name : '';
     });
 
     const dirty = (key) => draft.value[key] !== undefined;
 
-    const groupDirty = (gid) => {
-      return (settings.value.params || [])
-        .filter((p) => p.group === gid && draft.value[p.key] !== undefined)
-        .length;
-    };
+    const groupDirty = (gid) =>
+      paramsOfGroup(gid).filter((p) => draft.value[p.key] !== undefined).length;
 
     const dirtyCount = computed(() => Object.keys(draft.value).length);
 
@@ -199,7 +222,7 @@ createApp({
       saveMsg.value = null;
       confirmKind.value = null;
       view.value = 'settings';
-      await Promise.all([loadSettings(), loadCounts()]);
+      await Promise.all([loadSettings(), loadCounts(), loadProviders()]);
     };
 
     const goChat = () => {
@@ -230,6 +253,94 @@ createApp({
         saving.value = false;
       }
     };
+
+    /* ---------------- 供应商 ---------------- */
+    // 关于页的常量。前端是纯静态文件，读不到 pyproject.toml，
+    // 所以版本号在这儿手写一份——改版本时记得两边一起改
+    const APP_VERSION = 'v0.1.0';
+    const REPO_URL = 'https://github.com/niannian-Gzh/datapilot';
+
+    const providers = ref([]);
+    const currentProvider = ref('');    // config.yaml 里正在用的那家
+    const selectedProvider = ref('');   // 设置页里点开的那张卡片
+    /* 用户刚输入的 key，只活在内存里：保存成功后立刻清掉，
+       不落 localStorage——那是明文，浏览器一堆扩展都读得到 */
+    const keyDraft = ref({});
+    const testState = ref({});          // id -> {running, ok, message}
+    const modelDraft = ref({});         // id -> 用户在模型下拉里选的值
+    const modelOptions = ref({});       // id -> 下拉里的候选模型
+    const modelState = ref({});         // id -> {loading, message, fetched}
+
+    const loadProviders = async () => {
+      const data = await api.getProviders();
+      if (!data) return;
+      providers.value = data.providers || [];
+      currentProvider.value = (data.current || {}).provider || '';
+      // 第一次进来时，默认展开正在用的那张卡片
+      if (!selectedProvider.value) selectedProvider.value = currentProvider.value;
+      // 下拉的初始项用预设，用户点了「获取模型」再换成接口返回的真实列表
+      for (const p of providers.value) {
+        if (!modelOptions.value[p.id]) modelOptions.value[p.id] = p.models || [];
+        // 必须显式给空串：v-model 是 undefined 时 select 找不到匹配的 option，
+        // 会显示成空白，看着像「这家没有模型可选」
+        if (modelDraft.value[p.id] === undefined) modelDraft.value[p.id] = '';
+      }
+    };
+
+    /** 拉该供应商真实可用的模型，替换掉预设那份。
+     *
+     *  预设只是离线兜底：各家换代太频繁，写在代码里的名字迟早过期，
+     *  而能连上时接口说的才算数。
+     */
+    const loadModels = async (id) => {
+      modelState.value[id] = { loading: true, message: '', fetched: false };
+      const r = await api.fetchModels(id);
+      if (r.ok) {
+        modelOptions.value[id] = r.models;
+        await loadProviders();   // 让下面的下拉立即用上新列表
+        modelState.value[id] = { loading: false, message: r.message, fetched: true };
+      } else {
+        modelState.value[id] = { loading: false, message: r.message, fetched: false };
+      }
+    };
+
+    const providerName = (id) => {
+      const p = providers.value.find((x) => x.id === id);
+      return p ? p.name : id;
+    };
+
+    const pickProvider = (id) => {
+      // 再点一次收起，省一个额外的关闭按钮
+      selectedProvider.value = selectedProvider.value === id ? '' : id;
+      if (selectedProvider.value === id) modelDraft.value[id] = '';
+    };
+
+    const useProvider = async (id) => {
+      const model = (modelDraft.value[id] || '').trim();
+      const r = await api.selectProvider(id, model || null);
+      if (!r.ok) { notify(r.message, false); return; }
+      await loadProviders();
+      notify('已切换到 ' + providerName(id));
+    };
+
+    const saveKey = async (id) => {
+      const key = (keyDraft.value[id] || '').trim();
+      if (!key) { notify('请先填入 Key', false); return; }
+      const r = await api.saveKey(id, key);
+      if (!r.ok) { notify(r.message, false); return; }
+      keyDraft.value[id] = '';
+      await loadProviders();
+      notify('Key 已保存');
+    };
+
+    const runTest = async (id) => {
+      testState.value[id] = { running: true, ok: null, message: '' };
+      const r = await api.testProvider(id);
+      // 失败原因留在卡片上而不是弹 toast：用户要照着它改地址或换 key，
+      // 飘两秒就没了等于没说
+      testState.value[id] = { running: false, ok: !!r.ok, message: r.message || '' };
+    };
+
 
     /* ---------------- 数据加载 ---------------- */
     const loadSessions = async () => {
@@ -702,6 +813,14 @@ createApp({
       allGroups, isLocalGroup, activeGroupParams, activeGroupDesc,
       dirty, groupDirty, dirtyCount, editValue, onEdit, resetField,
       discardDraft, loadSettings, goSettings, goChat, saveSettings,
+
+      // 供应商
+      providers, currentProvider, selectedProvider, keyDraft, testState, modelDraft,
+      modelOptions, modelState, loadModels,
+      providerName, pickProvider, useProvider, saveKey, runTest,
+
+      // 关于
+      appVersion: APP_VERSION, REPO_URL,
       lastElapsed, streamEl, samples, currentTitle, allArtifacts, allTools,
       totalToolMs, maxToolMs, leftTab, roundsWithTools, stateCount,
       stateLabel, scrollToRound,
