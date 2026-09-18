@@ -143,6 +143,75 @@ def health():
 
 # ============ 对话接口 ============
 
+# 会产出文件的工具。产物清单只从这几个里找
+PRODUCING_TOOLS = {"generate_report", "export_to_excel"}
+
+ARTIFACT_KINDS = {".pdf": "pdf", ".xlsx": "xlsx", ".xls": "xlsx"}
+
+
+def _collect_artifacts(tools: list) -> list:
+    """从工具调用记录里拣出产物。
+
+    只认调用成功的记录——失败的结果里也可能带着半截 file_path，
+    把它当产物列出去，用户点开是个空文件。
+    """
+    out = []
+    for t in tools:
+        if t.get("name") not in PRODUCING_TOOLS or not t.get("ok"):
+            continue
+        try:
+            data = json.loads(t.get("raw") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        rel = data.get("file_path")
+        if not rel:
+            continue
+
+        full = PROJECT_ROOT / rel
+        try:
+            size = full.stat().st_size
+        except OSError:
+            # 文件可能已被清掉。仍然报出来但 size 留空，
+            # 比让产物整个消失更容易理解
+            size = None
+
+        out.append({
+            "type": ARTIFACT_KINDS.get(full.suffix.lower(), "other"),
+            "name": full.name,
+            "path": rel,
+            "size": size,
+        })
+    return out
+
+
+def _final_event(session, trace, msg_start: int, think_rounds: int, status: str) -> dict:
+    """这一轮的结构化总结。
+
+    和逐个推的 tool_call / tool_result 不同，这个是给「一次拿到全部结果」
+    的消费方用的：不必自己拼接事件流，也就不会因为丢一个事件而错位。
+
+    工具取 msg_start 之后新增的消息，不是 messages[-1]：
+    pending 轮次没有 add_assistant，[-1] 会捞到上一轮的工具，
+    报出来的是驴唇不对马嘴的旧账。
+    """
+    tools = []
+    for m in session.messages[msg_start:]:
+        if m.get("role") == "assistant" and m.get("dp_tools"):
+            tools.extend(m["dp_tools"])
+
+    return {
+        "type": "final",
+        "status": status,
+        "trace": {
+            "tools": tools,
+            "think_rounds": think_rounds,
+            "elapsed_ms": trace.data["elapsed_ms"],
+        },
+        "pending": session.get_pending() if status == "needs_input" else None,
+        "artifacts": _collect_artifacts(tools),
+    }
+
+
 @app.post("/chat")
 def chat(req: ChatRequest):
     """流式对话。以 SSE 逐步推送 agent 的执行过程。
@@ -160,6 +229,22 @@ def chat(req: ChatRequest):
         events.put(event)
 
     def run():
+        # final 只报这一轮新增的工具，所以先记住起点
+        msg_start = len(session.messages)
+        think_rounds = 0
+        status = "ok"
+
+        def tally(event: dict):
+            """转发事件的同时数思考轮数。
+
+            reasoning 是逐个推的，消费方要自己数才知道这一轮想了几次。
+            这里不额外推计数事件——多一种事件就多一处要同步的地方。
+            """
+            nonlocal think_rounds
+            if event.get("type") == "reasoning":
+                think_rounds += 1
+            sink(event)
+
         try:
             sink({"type": "start", "session_id": session_id, "question": req.question})
 
@@ -174,10 +259,11 @@ def chat(req: ChatRequest):
                 run_agent(
                     req.question, session, _state["llm"],
                     _state["db_path"], _state["table_name"], trace,
-                    emit=sink,
+                    emit=tally,
                 )
 
         except UserInputRequired as e:
+            status = "needs_input"
             pending = e.pending_action
             session.set_pending(pending)
             sink({
@@ -187,6 +273,7 @@ def chat(req: ChatRequest):
             })
 
         except Exception as e:
+            status = "error"
             trace.set("error", str(e))
             sink({"type": "error", "message": str(e)})
 
@@ -197,6 +284,8 @@ def chat(req: ChatRequest):
             # 一轮下来 messages 仍是空的，存下去只会在列表里堆垃圾
             if session.messages:
                 session.save()
+            # 必须排在 mark_end() 之后：elapsed_ms 是那时候才填上的
+            sink(_final_event(session, trace, msg_start, think_rounds, status))
             sink({
                 "type": "done",
                 "session_id": session_id,
