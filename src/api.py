@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 from typing import Optional
 import json
@@ -690,6 +691,43 @@ def test_config(config_id: str):
         return {"ok": True, "message": "连接成功"}
     except Exception as e:
         # 带上异常类型：光看 "Connection error" 分不清是地址错还是网不通
+        return {"ok": False, "message": f"{type(e).__name__}: {e}"}
+
+class TestRequest(BaseModel):
+    base_url: str
+    model: str
+    key: Optional[str] = None
+    provider: Optional[str] = None
+
+
+@app.post("/settings/test")
+def test_connection(req: TestRequest):
+    """用未保存的表单值测连接——编辑页新建时也能测。"""
+    base_url = (req.base_url or "").strip()
+    model = (req.model or "").strip()
+    key = (req.key or "").strip()
+
+    if not base_url:
+        return {"ok": False, "message": "还没有填请求地址"}
+    if not model:
+        return {"ok": False, "message": "还没有填模型名"}
+
+    provider = get_provider(req.provider) if req.provider else None
+    if not key and provider and provider.get("env"):
+        key = os.getenv(provider["env"]) or ""
+
+    if not key and not (provider and provider.get("free_input")):
+        return {"ok": False, "message": "还没有填 API Key"}
+
+    try:
+        client = OpenAI(api_key=key or "not-needed", base_url=base_url, timeout=5.0)
+        client.chat.completions.create(
+            model=model,
+            max_tokens=5,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        return {"ok": True, "message": "连接成功"}
+    except Exception as e:
         return {"ok": False, "message": f"{type(e).__name__}: {e}"}
 
 

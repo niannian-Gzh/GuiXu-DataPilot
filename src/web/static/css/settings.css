@@ -542,3 +542,46 @@
     .shell.left-shut    { grid-template-columns: 0px minmax(0, 1fr) 0px; }
     .shell.left-shut.right-open { grid-template-columns: 0px minmax(0, 1fr) 212px; }
   }
+/* 获取到的模型以 chip 列出。点一下填入输入框，
+   比下拉更可控——浏览器原生 select / datalist 样式改不动，
+   在部分环境里还会「点了没反应」 */
+.model-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.model-chip {
+  padding: 5px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.model-chip:hover {
+  border-color: var(--acc);
+  color: var(--acc);
+}
+
+.model-chip.on {
+  background: var(--acc);
+  border-color: var(--acc);
+  color: #fff;
+}
+/* 测试成功的绿字，5 秒后消散。用透明度 + 模糊 + 轻微上浮，
+   比单纯 fade 更像"化开"，而不是"被删掉" */
+@keyframes fade-vanish {
+  0%   { opacity: 1; transform: translateY(0);    filter: blur(0); }
+  100% { opacity: 0; transform: translateY(-4px); filter: blur(3px); }
+}
+
+.prov-result.vanish {
+  animation: fade-vanish 0.55s cubic-bezier(0.4, 0, 0.6, 1) forwards;
+  pointer-events: none;
+}

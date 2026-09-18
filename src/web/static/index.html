@@ -37,9 +37,36 @@
 
 <!-- 挂载点。页面结构全部在 js/components/ 里，
      这里保持空壳，是让 index.html 只剩入口职责 -->
-<div id="app"></div>
+<div id="app">
+  <!-- main.js 挂载后会清空这里。留着是为了给"服务没起来"一个兜底，
+       而不是白屏 -->
+  <div id="boot-fallback" style="
+    position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:16px;color:#8b949e;font-size:14px;
+    font-family:-apple-system,'Microsoft YaHei',sans-serif;
+  ">
+    <div>正在启动…</div>
+  </div>
+</div>
 
-<!-- 入口只有一个。模板、组件、状态都在 main.js 及其依赖里 -->
-<script type="module" src="/js/main.js"></script>
+<script type="module">
+  // 动态 import 才能捕获加载失败。uvicorn --reload 重启的瞬间，
+  // 静态资源会 404，白屏就是那时候出现的
+  import('/js/main.js').catch((err) => {
+    const el = document.getElementById('boot-fallback');
+    if (!el) return;
+    el.innerHTML = '';
+    const msg = document.createElement('div');
+    msg.textContent = '服务正在启动，请稍候…';
+    const btn = document.createElement('button');
+    btn.textContent = '重新加载';
+    btn.style.cssText = 'padding:8px 20px;border:1px solid #4d6bfe;background:transparent;color:#4d6bfe;border-radius:8px;cursor:pointer;font-size:14px;font-family:inherit;';
+    btn.onclick = () => location.reload();
+    el.appendChild(msg);
+    el.appendChild(btn);
+    // 2 秒后自动重试一次——多数情况下服务已经起来了
+    setTimeout(() => location.reload(), 2000);
+  });
+</script>
 </body>
 </html>

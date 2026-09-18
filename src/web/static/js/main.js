@@ -391,11 +391,30 @@ createApp({
       notify('已切换生效');
     };
 
+    // 消散的两个计时器接力，共用 testTimers[id] 这一个槽：外层到点后把槽
+    // 让给内层，于是「重新测试」时只清一次，就能清掉当下还在跑的那一个
+    const testTimers = {};
+    const fadingIds = ref({});        // 每个配置 id 是否正在消散
+
     const testConfig = async (id) => {
+      // 结果留在卡片上：错误信息往往很长，用户要照着它改地址或换 key。
+      // 成功则 4.5 秒后消散，0.55 秒动画结束后再清数据——总约 5 秒
+      if (testTimers[id]) { clearTimeout(testTimers[id]); testTimers[id] = null; }
+      fadingIds.value[id] = false;
       testState.value[id] = { running: true, ok: null, message: '' };
       const r = await api.testConfig(id);
-      // 结果留在卡片上：错误信息往往很长，用户要照着它改地址或换 key
       testState.value[id] = { running: false, ok: !!r.ok, message: r.message || '' };
+      if (r.ok) {
+        testTimers[id] = setTimeout(() => {
+          testTimers[id] = null;
+          fadingIds.value[id] = true;
+          testTimers[id] = setTimeout(() => {
+            delete testState.value[id];
+            delete fadingIds.value[id];
+            testTimers[id] = null;
+          }, 560);
+        }, 4500);
+      }
     };
 
 
@@ -873,7 +892,7 @@ createApp({
 
       // 模型配置
       providers, configs, activeId, editor, formModels, formState,
-      testState, pendingCfgDelete,
+      testState, pendingCfgDelete, fadingIds,
       loadConfigs, openNewConfig, openEditConfig, closeEditor, applyPreset,
       fetchFormModels, saveConfig, removeConfig, activateConfig, testConfig,
 

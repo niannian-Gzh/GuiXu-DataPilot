@@ -1,10 +1,76 @@
 /* 设置页。作为 v-else 与主界面互斥，是独立整页 */
 export default {
   name: 'SettingsView',
-  setup() {
-    // 共享 store 展开后仍是 ref 对象本身，响应性不丢，
-    // 模板里的插值和事件绑定一个字都不用改
-    return { ...Vue.inject('store') };
+    setup() {
+    const store = Vue.inject('store');
+
+    // 编辑页的连接测试。和卡片列表的 testState 分开：
+    // 那边按配置 id 存结果，这边是"未保存的表单值"，没有 id
+    const editorTest = Vue.ref({ running: false, ok: null, message: '' });
+    const fadingTest = Vue.ref(false);     // 绿字是否正在消散
+    let okTimer = null;                    // 两个计时器接力，共用这一个槽
+
+    function clearEditorTest() {
+      if (okTimer) { clearTimeout(okTimer); okTimer = null; }
+      fadingTest.value = false;
+      if (editorTest.value.message || editorTest.value.running) {
+        editorTest.value = { running: false, ok: null, message: '' };
+      }
+    }
+
+    async function testEditor() {
+      const e = store.editor.value;
+      if (!e) return;
+      if (okTimer) { clearTimeout(okTimer); okTimer = null; }
+      editorTest.value = { running: true, ok: null, message: '' };
+      try {
+        const res = await fetch('/settings/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            base_url: e.base_url,
+            model: e.model,
+            key: e.key || null,
+            provider: e.provider,
+          }),
+        });
+        const data = await res.json();
+        editorTest.value = { running: false, ok: !!data.ok, message: data.message || '' };
+        // 成功则 4.5 秒后消散，0.55 秒动画结束后再清数据——总约 5 秒。
+        // 失败保留：用户要照着错误信息改地址或换 key
+        if (data.ok) {
+          okTimer = setTimeout(() => {
+            okTimer = null;
+            fadingTest.value = true;
+            okTimer = setTimeout(() => {
+              editorTest.value = { running: false, ok: null, message: '' };
+              fadingTest.value = false;
+              okTimer = null;
+            }, 560);
+          }, 4500);
+        }
+      } catch (err) {
+        editorTest.value = { running: false, ok: false, message: String(err) };
+      }
+    }
+
+    // 表单任意关键字段一改，上一次的测试结果就失效
+    Vue.watch(
+      () => {
+        const e = store.editor.value;
+        if (!e) return null;
+        return [e.base_url, e.key, e.model];
+      },
+      () => clearEditorTest()
+    );
+
+    // 关闭编辑页时也清一次
+    Vue.watch(
+      () => store.editor.value,
+      (v) => { if (!v) clearEditorTest(); }
+    );
+
+    return { ...store, editorTest, testEditor, fadingTest };
   },
   template: `
 <!-- 根元素不带 v-else：与主界面的互斥关系由父模板的
@@ -72,13 +138,15 @@ export default {
               {{ formState.fetching ? '获取中…' : '获取模型' }}
             </button>
           </label>
-          <!-- 用 datalist 而不是 select：拉回来的列表可能不全，
-               用户得能自己填一个不在候选里的模型名 -->
-          <input class="set-input" v-model="editor.model" list="cfg-models"
+          <!-- 不用 datalist：Edge 里点箭头不弹，且样式不可控。
+               改用 chip 列表，拉回来的模型点一下就填入，输入框仍可自由填 -->
+          <input class="set-input" v-model="editor.model"
                  placeholder="模型名，本地部署请自己填">
-          <datalist id="cfg-models">
-            <option v-for="m in formModels" :key="m" :value="m"></option>
-          </datalist>
+          <div class="model-chips" v-if="formModels.length">
+            <button v-for="m in formModels" :key="m"
+                    class="model-chip" :class="{on: editor.model === m}"
+                    @click="editor.model = m">{{ m }}</button>
+          </div>
 
           <div class="prov-fetchmsg" v-if="formState.fetch"
                :class="formState.fetch.ok ? 'ok' : 'err'">
@@ -86,13 +154,13 @@ export default {
           </div>
 
           <div class="cfg-foot">
-            <button class="btn" @click="testConfig(editor.id)" :disabled="!editor.id">
-              连接测试
+            <button class="btn" @click="testEditor" :disabled="editorTest.running">
+              {{ editorTest.running ? '测试中…' : '连接测试' }}
             </button>
-            <span class="set-hint" v-if="!editor.id">保存后才能测试</span>
-            <span class="prov-result" v-else-if="testState[editor.id] && !testState[editor.id].running"
-                  :class="testState[editor.id].ok ? 'ok' : 'err'" style="margin:0">
-              {{ testState[editor.id].message }}
+            <span class="prov-result" v-if="editorTest.message"
+                  :class="[editorTest.ok ? 'ok' : 'err', { vanish: fadingTest }]"
+                  style="margin:0">
+              {{ editorTest.message }}
             </span>
           </div>
 
@@ -175,7 +243,8 @@ export default {
 
               <div class="prov-result" v-if="testState[c.id] && !testState[c.id].running
                                               && testState[c.id].ok !== null"
-                   :class="testState[c.id].ok ? 'ok' : 'err'">
+                   :class="[testState[c.id].ok ? 'ok' : 'err',
+                            { vanish: fadingIds[c.id] }]">
                 {{ testState[c.id].message }}
               </div>
             </div>
