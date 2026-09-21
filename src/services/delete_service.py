@@ -1,11 +1,11 @@
 import json
 import re
-import duckdb
 from services import UserInputRequired, bulk_threshold
 from services._filters import find_candidates
 from audit import log
 from display import format_table
 from config import setting
+from db import execute
 
 
 CONFIRM_WORDS = {"确认", "确定", "是", "对", "好", "可以", "删", "删除", "删吧", "yes", "y", "ok"}
@@ -84,16 +84,14 @@ def is_bulk_confirm(text: str, expected_count: int) -> bool:
 
 def execute_delete(candidates, db_path, real_table, trace_id, user_input):
     names = [c["project_name"] for c in candidates]
-    con = duckdb.connect(db_path)
     placeholders = ",".join(["?"] * len(names))
-    con.execute(
+    execute(
         f"UPDATE {real_table} SET is_deleted = true, "
         f"deleted_at = CAST(NOW() AS TIMESTAMP), "
         f"delete_trace_id = ?, deleted_by = 'local_user' "
         f"WHERE project_name IN ({placeholders})",
         [trace_id] + names,
     )
-    con.close()
 
     log("soft_delete", {
         "trace_id": trace_id,

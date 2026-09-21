@@ -1,6 +1,6 @@
-import duckdb
 import pandas as pd
 from datetime import date, timedelta
+from db import query_df
 
 
 EVENT_FIELDS = {
@@ -35,8 +35,7 @@ def get_period(period_type: str) -> tuple:
 
 def count_event(event: str, start: str, end: str, ctx) -> dict:
     field, label = EVENT_FIELDS[event]
-    con = duckdb.connect(ctx.db_path, read_only=True)
-    df = con.execute(f"""
+    df = query_df(f"""
         SELECT project_name, owner, category, {field} AS event_date
         FROM {ctx.real_table}
         WHERE is_deleted = false
@@ -44,8 +43,7 @@ def count_event(event: str, start: str, end: str, ctx) -> dict:
           AND CAST({field} AS DATE) >= CAST(? AS DATE)
           AND CAST({field} AS DATE) <= CAST(? AS DATE)
         ORDER BY {field}
-    """, [start, end]).fetchdf()
-    con.close()
+    """, [start, end])
 
     details = [
         {
@@ -61,16 +59,14 @@ def count_event(event: str, start: str, end: str, ctx) -> dict:
 
 def by_owner(event: str, start: str, end: str, ctx) -> list:
     field, _ = EVENT_FIELDS[event]
-    con = duckdb.connect(ctx.db_path, read_only=True)
-    df = con.execute(f"""
+    df = query_df(f"""
         SELECT owner, project_name
         FROM {ctx.real_table}
         WHERE is_deleted = false
           AND {field} IS NOT NULL
           AND CAST({field} AS DATE) >= CAST(? AS DATE)
           AND CAST({field} AS DATE) <= CAST(? AS DATE)
-    """, [start, end]).fetchdf()
-    con.close()
+    """, [start, end])
 
     grouped = {}
     for _, row in df.iterrows():
@@ -84,16 +80,14 @@ def by_owner(event: str, start: str, end: str, ctx) -> list:
 
 def by_category(event: str, start: str, end: str, ctx) -> list:
     field, _ = EVENT_FIELDS[event]
-    con = duckdb.connect(ctx.db_path, read_only=True)
-    df = con.execute(f"""
+    df = query_df(f"""
         SELECT category, project_name
         FROM {ctx.real_table}
         WHERE is_deleted = false
           AND {field} IS NOT NULL
           AND CAST({field} AS DATE) >= CAST(? AS DATE)
           AND CAST({field} AS DATE) <= CAST(? AS DATE)
-    """, [start, end]).fetchdf()
-    con.close()
+    """, [start, end])
 
     grouped = {}
     for _, row in df.iterrows():

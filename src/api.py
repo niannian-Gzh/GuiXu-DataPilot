@@ -33,11 +33,9 @@ from services import pending_service
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from openai import OpenAI
-import duckdb
 import pandas as pd
-
+from db import query_df
 from session import ARCHIVE_DIR
-
 
 
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
@@ -169,6 +167,22 @@ class FileInfo(BaseModel):
 def health():
     return {"status": "ok"}
 
+@app.get("/db/ping")
+def db_ping():
+    """探活数据源。DuckDB 和 PG 共用一套逻辑。"""
+    from sqlalchemy import create_engine, text
+
+    url = resolve_db_url()
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+
+    try:
+        engine = create_engine(url)
+        with engine.connect() as conn:
+            version = conn.execute(text("SELECT version()")).scalar()
+        return {"ok": True, "version": version}
+    except Exception as e:
+        return {"ok": False, "message": f"{type(e).__name__}: {e}"}
 
 # ============ 对话接口 ============
 
@@ -406,21 +420,20 @@ def _current_value(p: dict):
 
 
 def _readonly_info() -> dict:
-    """只读信息：这些不是偏好，改错会让系统崩或数据看起来丢了，所以只给看。"""
     cfg = get_config().get("data", {})
-    db_url = resolve_db_url()
+    table_name = cfg.get("table_name", "")
+    db_url = cfg.get("db_url", "")
 
     total = None
     try:
-        con = duckdb.connect(db_url, read_only=True)
-        total = con.execute(f"SELECT COUNT(*) FROM {cfg.get('table_name')}").fetchone()[0]
-        con.close()
+        df = query_df(f"SELECT COUNT(*) AS n FROM {table_name}")
+        total = int(df.iloc[0, 0])
     except Exception:
         pass
 
     return {
-        "数据库文件": str(db_url),
-        "数据表": cfg.get("table_name", ""),
+        "数据源": db_url,
+        "数据表": table_name,
         "在册记录": total,
         "初始数据源": str(resolve(cfg.get("excel_path", ""))),
         "导出目录": str(EXPORT_DIR),

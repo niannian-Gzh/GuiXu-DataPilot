@@ -1,5 +1,5 @@
-import duckdb
-from config import load_config, resolve, resolve_db_url, setting
+import db
+from config import load_config, resolve_db_url, setting
 from audit import log
 
 
@@ -8,42 +8,47 @@ def cleanup():
     retention_days = setting("safety.retention_days")
     cfg = load_config()["data"]
     real_table = f"{cfg['table_name']}_all"
-    con = duckdb.connect(resolve_db_url())
 
     # 1. 找出要清理的记录
-    rows = con.execute(f"""
+    df = db.query_df(f"""
         SELECT project_name, deleted_at, delete_trace_id
         FROM {real_table}
         WHERE is_deleted = true
           AND deleted_at < CAST(NOW() AS TIMESTAMP)
           - INTERVAL '{retention_days} days'
-    """).fetchall()
+    """)
 
-    if not rows:
-        con.close()
+    if len(df) == 0:
         return 0
 
     # 2. 记录审计日志（先记，再删）
+    # 显式转成字符串——DataFrame 里可能是 Timestamp 对象，json 序列化会崩
+    deleted_records = [
+        {
+            "project_name": str(row[0]),
+            "deleted_at": str(row[1]) if row[1] is not None else None,
+            "delete_trace_id": str(row[2]) if row[2] is not None else None,
+        }
+        for row in df.values.tolist()
+    ]
+
     log("cleanup", {
         "trigger": "startup",
         "retention_days": retention_days,
-        "deleted_count": len(rows),
-        "deleted_records": [
-            {"project_name": r[0], "deleted_at": r[1], "delete_trace_id": r[2]}
-            for r in rows
-        ],
+        "deleted_count": len(df),
+        "deleted_records": deleted_records,
     })
 
     # 3. 真正物理删除
-    con.execute(f"""
+    db.execute(f"""
         DELETE FROM {real_table}
         WHERE is_deleted = true
           AND deleted_at < CAST(NOW() AS TIMESTAMP)
           - INTERVAL '{retention_days} days'
     """)
 
-    print(f"[清理] 已物理删除 {len(rows)} 条过期数据")
-    return len(rows)
+    print(f"[清理] 已物理删除 {len(df)} 条过期数据")
+    return len(df)
 
 
 if __name__ == "__main__":

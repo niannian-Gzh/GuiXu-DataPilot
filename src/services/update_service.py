@@ -1,10 +1,10 @@
 import json
-import duckdb
 from services import UserInputRequired, bulk_threshold
 from services._filters import find_candidates
 from nl2sql import SCHEMA_DESC
 from audit import log
 from display import format_table
+from db import execute
 
 
 FORBIDDEN_FIELDS = {"is_deleted", "deleted_at", "deleted_by", "delete_trace_id"}
@@ -110,13 +110,11 @@ def execute_update(candidates, updates, db_path, real_table, trace_id, user_inpu
     set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
     placeholders = ", ".join(["?"] * len(names))
 
-    con = duckdb.connect(db_path)
-    con.execute(
+    execute(
         f"UPDATE {real_table} SET {set_clause} "
         f"WHERE project_name IN ({placeholders}) AND is_deleted = false",
         list(updates.values()) + names,
     )
-    con.close()
 
     log("update", {
         "trace_id": trace_id, "user_input": user_input,

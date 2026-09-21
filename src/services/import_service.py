@@ -1,10 +1,10 @@
 import json
-import duckdb
 import pandas as pd
 from services import UserInputRequired
 from display import format_table
 from audit import log
 from config import setting
+from db import query_df, transaction
 
 
 
@@ -75,9 +75,7 @@ def _db_value(v):
 def scan(file_path: str, ctx) -> dict:
     df_excel = _normalize_excel(file_path)
 
-    con = duckdb.connect(ctx.db_path, read_only=True)
-    df_db = con.execute(f"SELECT * FROM {ctx.real_table}").fetchdf()
-    con.close()
+    df_db = query_df(f"SELECT * FROM {ctx.real_table}")
 
     db_by_name = {row["project_name"]: row for _, row in df_db.iterrows()}
     excel_names = set(df_excel["project_name"])
@@ -360,36 +358,36 @@ def _row_to_dict(row) -> dict:
 
 def execute_import(scan_result, rename_map, deleted_action, conflict_action,
                    db_path, real_table, trace_id, user_input):
-    con = duckdb.connect(db_path)
     stats = {"renamed": 0, "restored": 0, "inserted": 0, "updated": 0}
 
-    try:
-        con.execute("BEGIN TRANSACTION")
-
+    with transaction() as tx:
+        # 1. 改名
         for old_name, new_name in rename_map.items():
-            con.execute(
+            tx.execute(
                 f"UPDATE {real_table} SET project_name = ? WHERE project_name = ?",
                 [new_name, old_name],
             )
             stats["renamed"] += 1
 
+        # 2. 恢复软删除
         if deleted_action == "restore":
             for rec in scan_result["deleted_in_db"]:
-                con.execute(f"""
+                tx.execute(f"""
                     UPDATE {real_table} SET
                         is_deleted = false, deleted_at = NULL,
                         deleted_by = NULL, delete_trace_id = NULL
                     WHERE project_name = ?
                 """, [rec["project_name"]])
-                _update_all_fields(con, real_table, rec["project_name"], rec["excel_data"])
+                _update_all_fields(tx, real_table, rec["project_name"], rec["excel_data"])
                 stats["restored"] += 1
 
+        # 3. 新增
         rename_targets = set(rename_map.values())
         for rec in scan_result["new_records"]:
             if rec["project_name"] in rename_targets:
                 continue
 
-            con.execute(f"""
+            tx.execute(f"""
                 INSERT INTO {real_table} (
                     project_name, owner, status_raw, issued_date, certified_date,
                     category, resubmit_name, reject_date, resubmit_date, reject_count,
@@ -407,17 +405,11 @@ def execute_import(scan_result, rename_map, deleted_action, conflict_action,
             ])
             stats["inserted"] += 1
 
+        # 4. 冲突
         if conflict_action == "excel":
             for rec in scan_result["conflicts"]:
-                _update_all_fields(con, real_table, rec["project_name"], rec["excel_data"])
+                _update_all_fields(tx, real_table, rec["project_name"], rec["excel_data"])
                 stats["updated"] += 1
-
-        con.execute("COMMIT")
-    except Exception:
-        con.execute("ROLLBACK")
-        con.close()
-        raise
-    con.close()
 
     log("import", {
         "trace_id": trace_id,

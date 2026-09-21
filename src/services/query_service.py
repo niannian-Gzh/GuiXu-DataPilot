@@ -1,9 +1,9 @@
 import json
-import duckdb
 from guard import SecurityError
 from nl2sql import generate_sql_with_retry
 from execute import execute_sql
 from summarize import summarize
+from db import query_df
 
 
 AMBIGUOUS_FIELD_MAP = {
@@ -54,9 +54,8 @@ def run(question: str, ctx) -> str:
             result.update(ambiguity)
 
         if len(df) == 0:
-            con = duckdb.connect(ctx.db_path, read_only=True)
-            total = con.execute(f"SELECT COUNT(*) FROM {ctx.table_name}").fetchone()[0]
-            con.close()
+            count_df = query_df(f"SELECT COUNT(*) AS n FROM {ctx.table_name}")
+            total = int(count_df.iloc[0, 0])
             result["total_records_in_table"] = total
             result["hint"] = (
                 f"查询已完整执行，无报错。表中共有 {total} 条记录，"

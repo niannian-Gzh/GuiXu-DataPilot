@@ -99,16 +99,15 @@ def resolve(relative_path: str) -> str:
 
 
 def resolve_db_url() -> str:
-    """把 data.db_url 解析成本地路径。
-    ...
-    """
+    """把 data.db_url 解析成驱动能吃的连接信息。"""
     url = get("data.db_url")
     if url:
         if url.startswith("duckdb:///"):
             return resolve(url[len("duckdb:///"):])
+        if url.startswith("postgresql://") or url.startswith("postgresql+psycopg2://"):
+            return url
         raise ValueError(f"暂不支持的数据源类型：{url}")
 
-    # 兼容老配置：只有 db_path 没有 db_url
     old = get("data.db_path")
     if old:
         return resolve(old)

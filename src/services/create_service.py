@@ -1,9 +1,35 @@
 import json
-import duckdb
 from datetime import date
 from services import UserInputRequired, bulk_threshold
 from audit import log
 from display import format_table
+from db import query_df, execute, transaction
+
+
+# 插入语句的列。新增字段时只改这里，SQL 和参数各自动跟着变
+_INSERT_COLUMNS = [
+    "project_name", "owner", "status_raw", "issued_date", "certified_date",
+    "category", "resubmit_name", "reject_date", "resubmit_date", "reject_count",
+    "is_pending", "is_submitted", "is_rejected", "is_settled", "is_certified",
+    "is_deleted", "deleted_at", "deleted_by", "delete_trace_id",
+]
+
+
+def _insert_sql(real_table: str) -> str:
+    cols = ", ".join(_INSERT_COLUMNS)
+    placeholders = ", ".join(["?"] * len(_INSERT_COLUMNS))
+    return f"INSERT INTO {real_table} ({cols}) VALUES ({placeholders})"
+
+
+def _insert_params(r: dict) -> list:
+    return [
+        r["project_name"], r["owner"], r["status_raw"],
+        r["issued_date"], r["certified_date"], r["category"],
+        r["resubmit_name"], r["reject_date"], r["resubmit_date"],
+        r["reject_count"],
+        False, True, False, False, False,
+        False, None, None, None,
+    ]
 
 
 def _validate_record(record):
@@ -25,14 +51,12 @@ def request_create(project_name, owner, category, status_raw, issued_date, ctx):
     if errors:
         return json.dumps({"error": "；".join(errors)}, ensure_ascii=False)
 
-    con = duckdb.connect(ctx.db_path)
-    exists = con.execute(
-        f"SELECT COUNT(*) FROM {ctx.real_table} "
+    count_df = query_df(
+        f"SELECT COUNT(*) AS n FROM {ctx.real_table} "
         f"WHERE project_name = ? AND is_deleted = false",
         [project_name],
-    ).fetchone()[0]
-    con.close()
-    if exists > 0:
+    )
+    if int(count_df.iloc[0, 0]) > 0:
         return json.dumps(
             {"error": f"项目「{project_name}」已存在，不能重复新增"},
             ensure_ascii=False,
@@ -73,17 +97,15 @@ def request_batch_create(records: list, ctx):
             ensure_ascii=False,
         )
 
-    con = duckdb.connect(ctx.db_path)
     placeholders = ",".join(["?"] * len(names))
-    existing = con.execute(
+    existing_df = query_df(
         f"SELECT project_name FROM {ctx.real_table} "
         f"WHERE project_name IN ({placeholders}) AND is_deleted = false",
         names,
-    ).fetchall()
-    con.close()
-    if existing:
+    )
+    if len(existing_df) > 0:
         return json.dumps(
-            {"error": f"以下项目已存在：{[e[0] for e in existing]}"},
+            {"error": f"以下项目已存在：{existing_df['project_name'].tolist()}"},
             ensure_ascii=False,
         )
 
@@ -139,28 +161,8 @@ def format_batch_create_confirm(records: list) -> str:
     return "\n".join(lines)
 
 
-def _insert_one(con, real_table, r):
-    con.execute(f"""
-        INSERT INTO {real_table} (
-            project_name, owner, status_raw, issued_date, certified_date,
-            category, resubmit_name, reject_date, resubmit_date, reject_count,
-            is_pending, is_submitted, is_rejected, is_settled, is_certified,
-            is_deleted, deleted_at, deleted_by, delete_trace_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, [
-        r["project_name"], r["owner"], r["status_raw"],
-        r["issued_date"], r["certified_date"], r["category"],
-        r["resubmit_name"], r["reject_date"], r["resubmit_date"],
-        r["reject_count"],
-        False, True, False, False, False,
-        False, None, None, None,
-    ])
-
-
 def execute_create(record, db_path, real_table, trace_id, user_input):
-    con = duckdb.connect(db_path)
-    _insert_one(con, real_table, record)
-    con.close()
+    execute(_insert_sql(real_table), _insert_params(record))
     log("create", {
         "trace_id": trace_id, "user_input": user_input, "created_record": record,
     })
@@ -168,17 +170,10 @@ def execute_create(record, db_path, real_table, trace_id, user_input):
 
 
 def execute_batch_create(records, db_path, real_table, trace_id, user_input):
-    con = duckdb.connect(db_path)
-    try:
-        con.execute("BEGIN TRANSACTION")
+    with transaction() as tx:
         for r in records:
-            _insert_one(con, real_table, r)
-        con.execute("COMMIT")
-    except Exception:
-        con.execute("ROLLBACK")
-        con.close()
-        raise
-    con.close()
+            tx.execute(_insert_sql(real_table), _insert_params(r))
+
     log("batch_create", {
         "trace_id": trace_id, "user_input": user_input,
         "affected_count": len(records),

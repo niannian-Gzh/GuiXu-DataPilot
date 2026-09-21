@@ -1,4 +1,4 @@
-import duckdb
+from db import describe
 import yaml
 from datetime import date
 from llm import LLM
@@ -76,13 +76,12 @@ FIX_PROMPT = """你上次生成的SQL执行失败了，请修正。
 
 
 def get_schema(db_path: str, table_name: str) -> str:
-    con = duckdb.connect(db_path, read_only=True)
-    rows = con.execute(f"DESCRIBE {table_name}").fetchall()
-    con.close()
+    rows = describe(table_name)  # 返回 [{"name": ..., "type": ...}, ...]
 
     lines = []
     for r in rows:
-        col_name, col_type = r[0], r[1]
+        col_name = r["name"]
+        col_type = r["type"]
         desc = SCHEMA_DESC.get(col_name, "")
         lines.append(f"  - {col_name} ({col_type}): {desc}")
     return "\n".join(lines)

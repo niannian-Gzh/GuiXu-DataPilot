@@ -60,22 +60,18 @@ def summarize(question: str, df, llm: LLM) -> str:
 
 
 if __name__ == "__main__":
-    import duckdb
-    import yaml
-    from config import load_config, resolve, resolve_db_url
+    from config import load_config
+    from db import query_df
 
     cfg = load_config()["data"]
-    db_path = resolve_db_url()
 
-    con = duckdb.connect(db_path, read_only=True)
-    df = con.execute(
+    df = query_df(
         f"SELECT project_name, owner, reject_count FROM {cfg['table_name']} "
         "WHERE is_certified = true LIMIT 5"
-    ).fetchdf()
-    con.close()
+    )
 
     llm = LLM()
-
+    
     print("=== 测试1：小结果 ===")
     print(summarize("已下证的项目有哪些？", df, llm))
 

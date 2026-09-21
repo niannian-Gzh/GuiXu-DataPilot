@@ -1,6 +1,6 @@
 import json
 import pandas as pd
-import duckdb
+from db import query_df
 from display import format_table
 
 
@@ -21,9 +21,7 @@ def _to_date_str(v):
 
 
 def check(ctx) -> dict:
-    con = duckdb.connect(ctx.db_path, read_only=True)
-    df = con.execute(f"SELECT * FROM {ctx.real_table}").fetchdf()
-    con.close()
+    df = query_df(f"SELECT * FROM {ctx.real_table}")
 
     issues = []
 

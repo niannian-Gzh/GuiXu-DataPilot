@@ -1,5 +1,4 @@
 import json
-import duckdb
 from datetime import datetime
 from nl2sql import get_schema, generate_filter_sql
 from execute import execute_sql
@@ -7,6 +6,7 @@ from services import UserInputRequired, bulk_threshold
 from audit import log
 from display import format_table
 from config import setting
+from db import execute
 
 
 def find_deleted(filter_question: str, ctx) -> list:
@@ -95,15 +95,13 @@ def restore_confirm_prompt(candidates: list) -> str:
 
 def execute_restore(candidates, db_path: str, real_table: str, trace_id: str, user_input: str) -> int:
     names = [c["project_name"] for c in candidates]
-    con = duckdb.connect(db_path)
     placeholders = ",".join(["?"] * len(names))
-    con.execute(
+    execute(
         f"UPDATE {real_table} SET is_deleted = false, "
         f"deleted_at = NULL, deleted_by = NULL, delete_trace_id = NULL "
         f"WHERE project_name IN ({placeholders})",
         names,
     )
-    con.close()
 
     log("restore", {
         "trace_id": trace_id,

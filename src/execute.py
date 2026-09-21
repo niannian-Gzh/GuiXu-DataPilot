@@ -1,13 +1,14 @@
-import threading
-import duckdb
 from guard import SecurityError
 from config import setting
+from db import query_df
 
 
 def execute_sql(sql: str, db_path: str):
-    """执行 SQL。只允许 SELECT。带内存保护和超时保护。"""
-    # 这里读配置而不是用模块常量：execute 是热点路径，
-    # setting() 走 mtime 缓存，不会每次都读盘
+    """执行 SQL。只允许 SELECT。带内存保护和超时保护。
+
+    注意：db_path 参数保留，但已经不使用——数据源现在由 db.py 统一管理。
+    留着是为了不破坏调用方签名（agent / tools 还在传它）。
+    """
     max_rows = setting("safety.max_rows")
     query_timeout = setting("safety.query_timeout")
 
@@ -17,19 +18,7 @@ def execute_sql(sql: str, db_path: str):
     sql_clean = sql.strip().rstrip(";")
     wrapped_sql = f"SELECT * FROM ({sql_clean}) AS _limited LIMIT {max_rows + 1}"
 
-    con = duckdb.connect(db_path, read_only=True)
-    timer = threading.Timer(query_timeout, con.interrupt)
-    timer.start()
-
-    try:
-        df = con.execute(wrapped_sql).fetchdf()
-    except Exception as e:
-        if "interrupt" in str(e).lower():
-            raise TimeoutError(f"SQL 查询超过 {query_timeout} 秒，已中断")
-        raise
-    finally:
-        timer.cancel()
-        con.close()
+    df = query_df(wrapped_sql, timeout=query_timeout)
 
     if len(df) > max_rows:
         df = df.head(max_rows).copy()
