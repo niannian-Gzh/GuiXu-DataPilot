@@ -103,11 +103,14 @@ def resolve_db_url() -> str:
     ...
     """
     url = get("data.db_url")
-    if not url:
-        return resolve(get("data.db_path"))
+    if url:
+        if url.startswith("duckdb:///"):
+            return resolve(url[len("duckdb:///"):])
+        raise ValueError(f"暂不支持的数据源类型：{url}")
 
-    if url.startswith("duckdb:///"):
-        rel = url[len("duckdb:///"):]
-        return resolve(rel)
+    # 兼容老配置：只有 db_path 没有 db_url
+    old = get("data.db_path")
+    if old:
+        return resolve(old)
 
-    raise ValueError(f"暂不支持的数据源类型：{url}")
+    raise ValueError("配置缺少 data.db_url，请在 config.yaml 的 data 段添加")
