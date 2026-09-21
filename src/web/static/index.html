@@ -51,22 +51,43 @@
 
 <script type="module">
   // 动态 import 才能捕获加载失败。uvicorn --reload 重启的瞬间，
-  // 静态资源会 404，白屏就是那时候出现的
-  import('/js/main.js').catch((err) => {
-    const el = document.getElementById('boot-fallback');
-    if (!el) return;
-    el.innerHTML = '';
-    const msg = document.createElement('div');
-    msg.textContent = '服务正在启动，请稍候…';
-    const btn = document.createElement('button');
-    btn.textContent = '重新加载';
-    btn.style.cssText = 'padding:8px 20px;border:1px solid #4d6bfe;background:transparent;color:#4d6bfe;border-radius:8px;cursor:pointer;font-size:14px;font-family:inherit;';
-    btn.onclick = () => location.reload();
-    el.appendChild(msg);
-    el.appendChild(btn);
-    // 2 秒后自动重试一次——多数情况下服务已经起来了
-    setTimeout(() => location.reload(), 2000);
-  });
+  // 静态资源会 404，白屏就是那时候出现的。
+  //
+  // 重试次数存在 sessionStorage，不能写成脚本里的 let：location.reload()
+  // 会把这段脚本整个重新执行一遍，变量每次归零，计数器永远到不了上限，
+  // 服务真起不来时就变成每 2 秒无限刷新。sessionStorage 刷新还在、
+  // 关掉标签页才清，正好是「这个页面还没起来」这个粒度
+  const BOOT_TRIES = 'dp_boot_retries';
+  const MAX_TRIES = 3;
+  const tries = Number(sessionStorage.getItem(BOOT_TRIES) || 0);
+
+  import('/js/main.js')
+    .then(() => sessionStorage.removeItem(BOOT_TRIES))   // 起来了就把欠账清掉
+    .catch(() => {
+      const el = document.getElementById('boot-fallback');
+      if (!el) return;
+      el.innerHTML = '';
+
+      const msg = document.createElement('div');
+      msg.textContent = tries < MAX_TRIES
+        ? '服务正在启动，请稍候…'
+        : '服务好像起不来了，点下面重试';
+
+      const btn = document.createElement('button');
+      btn.textContent = '重新加载';
+      btn.style.cssText = 'padding:8px 20px;border:1px solid #4d6bfe;background:transparent;color:#4d6bfe;border-radius:8px;cursor:pointer;font-size:14px;font-family:inherit;';
+      // 手动点是有明确意愿的，把额度还回去，别让上一次的失败拖累这一次
+      btn.onclick = () => { sessionStorage.removeItem(BOOT_TRIES); location.reload(); };
+
+      el.appendChild(msg);
+      el.appendChild(btn);
+
+      // 2 秒后自动重试——多数情况下服务已经起来了
+      if (tries < MAX_TRIES) {
+        sessionStorage.setItem(BOOT_TRIES, tries + 1);
+        setTimeout(() => location.reload(), 2000);
+      }
+    });
 </script>
 </body>
 </html>
