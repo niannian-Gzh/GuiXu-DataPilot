@@ -15,18 +15,26 @@ from contextlib import contextmanager
 
 
 def _backend() -> str:
-    """判断当前数据源的类型。"""
     url = resolve_db_url()
-    if url.startswith("postgresql://") or url.startswith("postgresql+psycopg2://"):
+    if (url.startswith("postgresql://")
+            or url.startswith("postgresql+psycopg2://")
+            or url.startswith("postgresql+psycopg://")):
         return "postgres"
     return "duckdb"
 
 
 def _pg_url() -> str:
-    """SQLAlchemy 要求的 PG URL 要显式指定驱动。"""
+    """SQLAlchemy 要求的 PG URL 要显式指定驱动。
+
+    用 psycopg（第三版）——psycopg2 在中文 Windows 上有个编码 bug：
+    连接失败时把 GBK 错误文本按 UTF-8 解码，崩在"展示错误"这一步，
+    真实错误被掩盖（比如"密码错误"会变成"UnicodeDecodeError"）。
+    """
     url = resolve_db_url()
     if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql+psycopg2://"):
+        return url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
     return url
 
 

@@ -115,7 +115,7 @@ def _handle_update(question, session, pending, db_path, real_table):
 
 def _handle_transform(question, session, pending, db_path):
     n = pending["total"]
-    if n <= BULK_THRESHOLD:
+    if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
     else:
         valid = delete_service.is_bulk_confirm(question, n)
