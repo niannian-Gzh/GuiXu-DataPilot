@@ -1,5 +1,8 @@
 from services import bulk_threshold
-from services import delete_service, create_service, update_service, transform_service
+from services import (
+    delete_service, create_service, update_service,
+    transform_service, add_column_service,
+)
 from services import import_service, restore_service
 
 
@@ -29,7 +32,9 @@ def handle_pending(question: str, session, db_path: str, real_table: str, llm=No
         return _handle_import(question, session, pending, db_path, real_table, llm)
     if ptype == "transform":
         return _handle_transform(question, session, pending, db_path)
-    
+    if ptype == "add_column":
+        return _handle_add_column(question, session, pending, db_path)
+      
     return False, ""
 
 
@@ -130,6 +135,22 @@ def _handle_transform(question, session, pending, db_path):
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
+def _handle_add_column(question, session, pending, db_path):
+    if delete_service.is_confirm(question):
+        result = add_column_service.execute_add_column(
+            pending, db_path, pending["trace_id"], pending["user_input"]
+        )
+        session.clear_pending()
+
+        msg = f"已加列「{result['column']}」。"
+        if result["label_set"]:
+            msg += "中文含义已标注。"
+        else:
+            msg += "你可以在「数据库概览」页标注它的中文含义。"
+        return True, msg
+    return True, "请回复「确认」执行，或「取消」放弃。"
+
+
 def _handle_import(question, session, pending, db_path, real_table, llm):
     scan_result = pending["scan_result"]
     parsed = import_service.parse_user_answer(question, scan_result, llm)
@@ -193,6 +214,8 @@ def format_pending_display(pending: dict) -> str:
         return transform_service.format_transform_confirm(
             pending, pending.get("table_name", "")
         )
+    if ptype == "add_column":
+        return add_column_service.format_add_column_confirm(pending)
     if ptype == "import":
         return import_service.format_import_summary(pending["scan_result"])
 

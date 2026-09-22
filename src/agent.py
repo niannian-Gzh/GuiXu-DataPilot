@@ -8,7 +8,7 @@ from config import setting
 
 WRITE_TOOLS = {
     "request_create", "request_update", "request_delete",
-    "request_batch_create", "transform_data",
+    "request_batch_create", "transform_data", "add_column",
     "request_restore", "request_import",
 }
 

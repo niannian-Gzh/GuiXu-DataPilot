@@ -1,7 +1,7 @@
 import duckdb
 import pandas as pd
 from config import load_config, resolve, resolve_db_url, get
-from db import get_engine
+from db import get_engine, rebuild_view
 
 
 COLUMN_MAP = {
@@ -130,8 +130,8 @@ def _column_names() -> str:
     return ", ".join(c[0] for c in TABLE_SCHEMA)
 
 
-def _drop_old_objects(execute_fn, view_name: str, real_table: str):
-    """清掉旧对象。先删视图，再删表——表被视图依赖时反过来会报错。"""
+def _drop_old_objects_duckdb(con, view_name: str, real_table: str):
+    """DuckDB：try/except 就够——它没有"事务中毒"这回事。"""
     for stmt in [
         f"DROP VIEW IF EXISTS {view_name}",
         f"DROP TABLE IF EXISTS {view_name}",
@@ -139,15 +139,38 @@ def _drop_old_objects(execute_fn, view_name: str, real_table: str):
         f"DROP TABLE IF EXISTS {real_table}",
     ]:
         try:
-            execute_fn(stmt)
+            con.execute(stmt)
         except Exception:
             pass
+
+
+def _drop_old_objects_pg(conn, view_name: str, real_table: str):
+    """PG：每次尝试用 SAVEPOINT 隔离。
+
+    PG 事务是"一旦语句失败就中毒"的——后续所有语句都被拒绝。
+    这里"每个名字都试 DROP VIEW / DROP TABLE 各一遍"，
+    必然有语句失败——必须用 SAVEPOINT 圈住，否则事务就废了。
+    """
+    from sqlalchemy import text
+
+    for stmt in [
+        f"DROP VIEW IF EXISTS {view_name}",
+        f"DROP TABLE IF EXISTS {view_name}",
+        f"DROP VIEW IF EXISTS {real_table}",
+        f"DROP TABLE IF EXISTS {real_table}",
+    ]:
+        conn.execute(text("SAVEPOINT sp"))
+        try:
+            conn.execute(text(stmt))
+            conn.execute(text("RELEASE SAVEPOINT sp"))
+        except Exception:
+            conn.execute(text("ROLLBACK TO SAVEPOINT sp"))
 
 
 def _ingest_to_duckdb(df: pd.DataFrame, view_name: str, real_table: str):
     con = duckdb.connect(resolve_db_url())
     try:
-        _drop_old_objects(con.execute, view_name, real_table)
+        _drop_old_objects_duckdb(con, view_name, real_table)
 
         # 显式建表（带 NOT NULL），而非 CREATE TABLE AS SELECT
         con.execute(_create_table_ddl(real_table))
@@ -180,18 +203,15 @@ def _ingest_to_pg(df: pd.DataFrame, view_name: str, real_table: str):
     engine = get_engine()
 
     with engine.begin() as conn:
-        _drop_old_objects(lambda s: conn.execute(text(s)), view_name, real_table)
+        _drop_old_objects_pg(conn, view_name, real_table)
         conn.execute(text(_create_table_ddl(real_table)))
 
     # 表已建好，往里面追加。列名按 TABLE_SCHEMA 对齐
     df_for_pg = df[[c[0] for c in TABLE_SCHEMA]].copy()
     df_for_pg.to_sql(real_table, engine, if_exists="append", index=False)
 
-    with engine.begin() as conn:
-        conn.execute(text(
-            f"CREATE VIEW {view_name} AS "
-            f"SELECT * FROM {real_table} WHERE is_deleted = false"
-        ))
+    # 建视图——走 db.rebuild_view，不再自己写 CREATE VIEW
+    rebuild_view(view_name, real_table)
 
 
 def ingest():

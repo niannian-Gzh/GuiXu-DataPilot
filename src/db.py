@@ -122,6 +122,22 @@ def execute(sql: str, params=None) -> int:
         return result.rowcount or 0
 
 
+def rebuild_view(view_name: str, real_table: str, filter_clause: str = "is_deleted = false"):
+    """重建过滤视图。
+
+    PostgreSQL 的视图列在创建时固定——底层表加列后，视图不会自动反映。
+    所以任何改表结构的操作之后（加列 / 重建表），都要调它。
+
+    这是"数据库操作"，所以放 db.py；视图名 / 过滤条件由调用方传，
+    不硬编码——保持这层的通用性。
+    """
+    execute(f"DROP VIEW IF EXISTS {view_name}")
+    execute(
+        f"CREATE VIEW {view_name} AS "
+        f"SELECT * FROM {real_table} WHERE {filter_clause}"
+    )
+
+
 def execute_many(sql: str, rows: list) -> int:
     """批量执行（插入多行）。rows 是列表，每项是一个元组。"""
     if _backend() == "duckdb":
@@ -303,3 +319,4 @@ def raw():
     if _backend() == "duckdb":
         return duckdb.connect(resolve_db_url())
     raise NotImplementedError("raw() 目前只支持 DuckDB 后端")
+

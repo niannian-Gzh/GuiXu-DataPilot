@@ -1,7 +1,10 @@
 import json
 from nl2sql import get_schema
 from services import ServiceContext
-from services import query_service, delete_service, create_service, update_service, transform_service
+from services import (
+    query_service, delete_service, create_service,
+    update_service, transform_service, add_column_service,
+)
 from services import import_service, restore_service
 from services import consistency_service
 from services import export_service
@@ -264,6 +267,48 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_column",
+            "description": (
+                "给表加一个新列。这是改表结构的操作——执行后表的结构会变。\n"
+                "【何时用】用户说'加一列 xxx'、'增加字段'、'记一下 xxx' 时。\n"
+                "【参数】\n"
+                "- column_name：列名，只能是小写字母开头的英文标识符"
+                "（如 priority / due_date）\n"
+                "- column_type：类型，只能从以下里选："
+                "VARCHAR / INTEGER / BIGINT / DOUBLE / BOOLEAN / TIMESTAMP / DATE\n"
+                "- default_value（可选）：已有行的默认值\n"
+                "- label（可选）：这列的中文含义，例如'优先级'。"
+                "给了它之后，后续对话模型就能理解这列是什么。\n"
+                "系统会校验列名、类型、生成 SQL、展示给用户确认后执行。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "column_name": {
+                        "type": "string",
+                        "description": "列名，小写英文标识符",
+                    },
+                    "column_type": {
+                        "type": "string",
+                        "enum": ["VARCHAR", "INTEGER", "BIGINT", "DOUBLE",
+                                 "BOOLEAN", "TIMESTAMP", "DATE"],
+                    },
+                    "default_value": {
+                        "type": "string",
+                        "description": "可选。已有行的默认值",
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "可选。这列的中文含义，例如'优先级'",
+                    },
+                },
+                "required": ["column_name", "column_type"],
+            },
+        },
+    },
 ]
 
 
@@ -306,7 +351,10 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
         return report_service.run(period, items or [], ctx, custom_start, custom_end, offset)
     def transform_data(description):
         return transform_service.request_transform(description, ctx)
-        
+    def add_column(column_name, column_type, default_value=None, label=None):
+        return add_column_service.request_add_column(
+            column_name, column_type, default_value, label, ctx
+        )       
     return {
         "query_database": query_database,
         "request_delete": request_delete,
@@ -319,6 +367,7 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
         "export_to_excel": export_to_excel,
         "generate_report": generate_report,
         "transform_data": transform_data,
+        "add_column": add_column,
     }
 
 
