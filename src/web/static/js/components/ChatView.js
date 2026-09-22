@@ -105,37 +105,100 @@ export default {
           <div class="hello-mark">
             <svg viewBox="0 0 48 48" fill="none">
               <defs>
-                <!-- 扫掠尾迹：透明起、亮收，头部才是光点 -->
-                <linearGradient id="hmSweep" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%"   stop-color="#6b9dff" stop-opacity="0"></stop>
-                  <stop offset="55%"  stop-color="#7ba5ff" stop-opacity=".5"></stop>
-                  <stop offset="100%" stop-color="#b8ceff" stop-opacity=".95"></stop>
+                <linearGradient id="hm-lit" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
+                  <stop offset="0" stop-color="var(--rose-hi)"/>
+                  <stop offset="0.5" stop-color="var(--rose-mid)"/>
+                  <stop offset="1" stop-color="var(--rose-mid)" stop-opacity=".62"/>
                 </linearGradient>
+                <linearGradient id="hm-shade" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
+                  <stop offset="0" stop-color="var(--rose-mid)"/>
+                  <stop offset="0.5" stop-color="var(--rose-lo)"/>
+                  <stop offset="1" stop-color="var(--rose-lo)" stop-opacity=".48"/>
+                </linearGradient>
+                <linearGradient id="hm-tick" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
+                  <stop offset="0" stop-color="var(--mark)" stop-opacity=".72"/>
+                  <stop offset="1" stop-color="var(--mark)" stop-opacity=".3"/>
+                </linearGradient>
+                <linearGradient id="hm-ring" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
+                  <stop offset="0" stop-color="var(--mark)" style="stop-opacity:var(--ring-hi)"/>
+                  <stop offset="0.5" stop-color="var(--mark)" style="stop-opacity:var(--ring-mid)"/>
+                  <stop offset="1" stop-color="var(--mark)" style="stop-opacity:var(--ring-lo)"/>
+                </linearGradient>
+                <!-- 扫掠尾迹：透明起、亮收，头部才是光点 -->
+                <linearGradient id="hm-arc" gradientUnits="userSpaceOnUse"
+                                x1="24" y1="3" x2="38.85" y2="9.15">
+                  <stop offset="0" stop-color="var(--rose-mid)" stop-opacity="0"/>
+                  <stop offset="0.55" stop-color="var(--rose-mid)" stop-opacity=".45"/>
+                  <stop offset="1" stop-color="var(--rose-hi)" stop-opacity=".95"/>
+                </linearGradient>
+                <radialGradient id="hm-core">
+                  <stop offset="0" stop-color="var(--rose-core-hi)"/>
+                  <stop offset="0.45" stop-color="var(--rose-core)"/>
+                  <stop offset="1" stop-color="var(--rose-core)" stop-opacity=".22"/>
+                </radialGradient>
+                <radialGradient id="hm-halo">
+                  <stop offset="0" stop-color="var(--rose-hi)" style="stop-opacity:var(--rose-halo)"/>
+                  <stop offset="0.55" stop-color="var(--rose-hi)" style="stop-opacity:calc(var(--rose-halo) * .38)"/>
+                  <stop offset="1" stop-color="var(--rose-hi)" stop-opacity="0"/>
+                </radialGradient>
+                <filter id="hm-glow" x="-300%" y="-300%" width="700%" height="700%">
+                  <feGaussianBlur stdDeviation="1.4"/>
+                </filter>
+                <filter id="hm-spark" x="-400%" y="-400%" width="900%" height="900%">
+                  <feGaussianBlur stdDeviation="0.45"/>
+                </filter>
               </defs>
-              <circle class="hm-ticks" cx="24" cy="24" r="20.5"
-                      stroke="currentColor" stroke-width="2.6" stroke-dasharray="1.6 9.13"
-                      opacity=".42" transform="rotate(-90 24 24)"></circle>
-              <circle class="hm-ring" cx="24" cy="24" r="15.5"
-                      stroke="currentColor" stroke-width=".8" opacity=".16"></circle>
+
+              <circle cx="24" cy="24" r="23.5" fill="url(#hm-halo)"/>
+
+              <!-- 12 个方位各一条径向细线，0/90/180/270 为主刻度 -->
+              <g class="hm-ticks" stroke="url(#hm-tick)">
+                <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.22" transform="rotate(0 24 24)"/>
+                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(30 24 24)"/>
+                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(60 24 24)"/>
+                <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.22" transform="rotate(90 24 24)"/>
+                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(120 24 24)"/>
+                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(150 24 24)"/>
+                <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.22" transform="rotate(180 24 24)"/>
+                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(210 24 24)"/>
+                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(240 24 24)"/>
+                <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.22" transform="rotate(270 24 24)"/>
+                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(300 24 24)"/>
+                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(330 24 24)"/>
+              </g>
+              <circle class="hm-ring" cx="24" cy="24" r="14"
+                      stroke="url(#hm-ring)" stroke-width=".8"></circle>
 
               <g class="hm-rose">
-                <path d="M24 5 28.5 24 24 19.5 19.5 24Z" fill="currentColor"></path>
-                <path d="M24 43 28.5 24 24 28.5 19.5 24Z" fill="currentColor" opacity=".28"></path>
-                <path d="M5 24 24 19.5 19.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
-                <path d="M43 24 24 19.5 28.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
-                <circle cx="24" cy="24" r="2.2" fill="currentColor"></circle>
+                <path d="M24 5 L24 19.5 L19.5 24 Z"  fill="url(#hm-lit)"/>
+                <path d="M24 5 L28.5 24 L24 19.5 Z"  fill="url(#hm-shade)"/>
+                <path d="M24 43 L24 28.5 L19.5 24 Z" fill="url(#hm-lit)"   opacity=".88"/>
+                <path d="M24 43 L28.5 24 L24 28.5 Z" fill="url(#hm-shade)" opacity=".88"/>
+                <path d="M43 24 L24 19.5 L28.5 24 Z" fill="url(#hm-lit)"   opacity=".94"/>
+                <path d="M43 24 L28.5 24 L24 28.5 Z" fill="url(#hm-shade)" opacity=".94"/>
+                <path d="M5 24 L24 19.5 L19.5 24 Z"  fill="url(#hm-lit)"   opacity=".94"/>
+                <path d="M5 24 L19.5 24 L24 28.5 Z"  fill="url(#hm-shade)" opacity=".94"/>
+
+                <circle cx="24" cy="24" r="3.4" fill="var(--rose-hi)"
+                        style="opacity:var(--rose-core-glow)" filter="url(#hm-glow)"></circle>
+                <circle cx="24" cy="24" r="2.5" fill="url(#hm-core)"></circle>
+                <circle cx="24" cy="6.9" r="1.15" fill="var(--rose-spark)"
+                        opacity=".95" filter="url(#hm-spark)"></circle>
               </g>
 
               <!-- 扫描弧：盘面静止，只有这道光在转。罗盘转起来「指向」就没了意义，
-                   扫掠才是「工具正在工作」的表达 -->
+                   扫掠才是「工具正在工作」的表达。
+                   巡航半径从 19 提到 21——19 正好是芒尖尖端的位置，光点会撞上去 -->
               <g class="hm-sweep">
-                <circle class="hm-sweep-glow" cx="38.76" cy="12.05" r="4.2"
-                        fill="currentColor" opacity=".26"></circle>
-                <path class="hm-sweep-arc" d="M24 5A19 19 0 0 1 38.76 12.05"
-                      stroke="url(#hmSweep)" stroke-width="1.9"
+                <circle class="hm-sweep-glow" cx="38.85" cy="9.15" r="3.4"
+                        fill="var(--rose-hi)" opacity=".26"></circle>
+                <path class="hm-sweep-arc" d="M24 3 A21 21 0 0 1 38.85 9.15"
+                      stroke="url(#hm-arc)" stroke-width="1.9"
                       stroke-linecap="round" fill="none"></path>
-                <circle class="hm-sweep-dot" cx="38.76" cy="12.05" r="1.9"
-                        fill="currentColor"></circle>
+                <circle class="hm-sweep-dot" cx="38.85" cy="9.15" r="1.6"
+                        fill="var(--rose-mid)"></circle>
+                <circle class="hm-sweep-dot" cx="38.85" cy="9.15" r=".7"
+                        fill="var(--rose-hi)"></circle>
               </g>
             </svg>
           </div>
@@ -156,14 +219,51 @@ export default {
             <div class="avatar">
               <!-- 21px 下刻度环会糊成一团，这里去掉环，只留芒星、航迹弧和落点 -->
               <svg viewBox="0 0 48 48" fill="none">
-                <path d="M24 5 28.5 24 24 19.5 19.5 24Z" fill="currentColor"></path>
-                <path d="M24 43 28.5 24 24 28.5 19.5 24Z" fill="currentColor" opacity=".28"></path>
-                <path d="M5 24 24 19.5 19.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
-                <path d="M43 24 24 19.5 28.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
-                <path d="M9.2 32.5A17 17 0 0 1 36.4 10.6" stroke="currentColor" stroke-width="2.8"
-                      stroke-linecap="round" fill="none" opacity=".6"></path>
-                <circle cx="36.6" cy="10.4" r="3.4" fill="currentColor"></circle>
-                <circle cx="24" cy="24" r="2.4" fill="currentColor"></circle>
+                <defs>
+                  <linearGradient id="av-lit" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
+                    <stop offset="0" stop-color="var(--rose-hi)"/>
+                    <stop offset="0.5" stop-color="var(--rose-mid)"/>
+                    <stop offset="1" stop-color="var(--rose-mid)" stop-opacity=".62"/>
+                  </linearGradient>
+                  <linearGradient id="av-shade" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
+                    <stop offset="0" stop-color="var(--rose-mid)"/>
+                    <stop offset="0.5" stop-color="var(--rose-lo)"/>
+                    <stop offset="1" stop-color="var(--rose-lo)" stop-opacity=".48"/>
+                  </linearGradient>
+                  <linearGradient id="av-arc" gradientUnits="userSpaceOnUse"
+                                  x1="9.28" y1="32.5" x2="35.6" y2="11.6">
+                    <stop offset="0" stop-color="var(--rose-mid)" stop-opacity="0"/>
+                    <stop offset="0.55" stop-color="var(--rose-mid)" stop-opacity=".38"/>
+                    <stop offset="1" stop-color="var(--rose-mid)" stop-opacity=".8"/>
+                  </linearGradient>
+                  <radialGradient id="av-core">
+                    <stop offset="0" stop-color="var(--rose-core-hi)"/>
+                    <stop offset="0.45" stop-color="var(--rose-core)"/>
+                    <stop offset="1" stop-color="var(--rose-core)" stop-opacity=".22"/>
+                  </radialGradient>
+                  <filter id="av-glow" x="-300%" y="-300%" width="700%" height="700%">
+                    <feGaussianBlur stdDeviation="1.4"/>
+                  </filter>
+                </defs>
+
+                <path d="M24 5 L24 19.5 L19.5 24 Z"  fill="url(#av-lit)"/>
+                <path d="M24 5 L28.5 24 L24 19.5 Z"  fill="url(#av-shade)"/>
+                <path d="M24 43 L24 28.5 L19.5 24 Z" fill="url(#av-lit)"   opacity=".88"/>
+                <path d="M24 43 L28.5 24 L24 28.5 Z" fill="url(#av-shade)" opacity=".88"/>
+                <path d="M43 24 L24 19.5 L28.5 24 Z" fill="url(#av-lit)"   opacity=".94"/>
+                <path d="M43 24 L28.5 24 L24 28.5 Z" fill="url(#av-shade)" opacity=".94"/>
+                <path d="M5 24 L24 19.5 L19.5 24 Z"  fill="url(#av-lit)"   opacity=".94"/>
+                <path d="M5 24 L19.5 24 L24 28.5 Z"  fill="url(#av-shade)" opacity=".94"/>
+
+                <!-- 弧比大尺寸粗：2.4 到 21px 上只剩一个像素 -->
+                <path d="M9.28 32.5 A17 17 0 0 1 35.6 11.6" stroke="url(#av-arc)"
+                      stroke-width="2.4" stroke-linecap="round" fill="none"/>
+                <circle cx="35.6" cy="11.6" r="2" fill="var(--rose-mid)"></circle>
+                <circle cx="35.6" cy="11.6" r=".9" fill="var(--rose-hi)"></circle>
+
+                <circle cx="24" cy="24" r="3.2" fill="var(--rose-hi)"
+                        style="opacity:var(--rose-core-glow)" filter="url(#av-glow)"></circle>
+                <circle cx="24" cy="24" r="2.4" fill="url(#av-core)"></circle>
               </svg>
             </div>
             <div class="turn-body">

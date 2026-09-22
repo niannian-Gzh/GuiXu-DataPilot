@@ -28,11 +28,10 @@
   }
   .compass svg { width: 100%; height: 100%; overflow: visible; }
 
-  /* 刻度盘：12 段短弧，一边旋转一边展开 */
+  /* 刻度盘：12 条径向细线，一边旋转一边展开。
+     注意 stroke 不能写在这里——CSS 声明优先于表现属性，
+     写在这儿会把每条线自己的渐变整片盖掉 */
   .compass .ticks {
-    fill: none;
-    stroke: var(--mark);
-    stroke-width: 2.6;
     opacity: 0;
     transform-box: fill-box;
     transform-origin: center;
@@ -40,23 +39,21 @@
     animation: ticks-in 1.15s cubic-bezier(0.22, 1, 0.36, 1) 0.10s forwards;
   }
   @keyframes ticks-in {
-    to { opacity: 0.45; transform: rotate(-90deg) scale(1); }
+    to { opacity: 1; transform: rotate(-90deg) scale(1); }
   }
 
   .compass .ring-inner {
-    fill: none;
-    stroke: var(--mark);
-    stroke-width: 0.8;
     opacity: 0;
     animation: fade-in 0.8s var(--ease) 0.35s forwards;
   }
+  /* 内环的最终浓淡改由它自己的渐变（--ring-hi/mid/lo）给，
+     这里只负责"淡入"这件事 */
   @keyframes fade-in {
-    to { opacity: 0.14; }
+    to { opacity: 1; }
   }
 
   /* 中心点跟北方同时起落，同 2.40s 收尾 */
   .compass .rose-core {
-    fill: var(--mark);
     opacity: 0;
     animation: core-in 0.42s var(--ease) 1.98s forwards;
   }
@@ -78,20 +75,14 @@
   }
 
   .compass .helm-arc {
-    fill: none;
-    stroke: var(--mark);
-    stroke-width: 1.7;
     stroke-linecap: round;
   }
-
-  .compass .helm-dot { fill: #b8ceff; }
 
   /* ---------- 四个芒尖顺时针依次点亮 ----------
      东 -> 南 -> 西 -> 北，每个亮到顶再落回本色；
      北方是终点，不回撤，常亮并且最亮——它就是「航向锁定」的那一刻。
      基础亮度各不同（北 1 / 东西 0.5 / 南 0.28），所以用 --base 传进去 */
   .compass .tip {
-    fill: var(--mark);
     opacity: 0;
     animation: tip-flash 0.30s ease-out var(--d) forwards;
   }
@@ -118,6 +109,15 @@
     72%  { opacity: 0.16; filter: none; }
     88%  { opacity: 1;    filter: drop-shadow(0 0 12px rgba(178, 210, 255, 1)); }
     100% { opacity: 1;    filter: drop-shadow(0 0 5px rgba(150, 190, 255, 0.6)); }
+  }
+
+  /* 尖端高光跟北尖锁定同时出现，别在点亮过程中就杵在那儿 */
+  .compass .spark {
+    opacity: 0;
+    animation: spark-in 0.5s var(--ease) 2.30s forwards;
+  }
+  @keyframes spark-in {
+    to { opacity: .95; }
   }
 
   .boot-word {

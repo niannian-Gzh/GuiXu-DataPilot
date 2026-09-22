@@ -937,17 +937,74 @@ createApp({
     <div class="brand">
       <div class="brand-mark">
         <svg viewBox="0 0 48 48" fill="none">
-          <circle cx="24" cy="24" r="20.5" stroke="currentColor" stroke-width="2.6"
-                  stroke-dasharray="1.6 9.13" opacity=".45" transform="rotate(-90 24 24)"></circle>
-          <circle cx="24" cy="24" r="15.5" stroke="currentColor" stroke-width=".8" opacity=".14"></circle>
-          <path d="M24 5 28.5 24 24 19.5 19.5 24Z" fill="currentColor"></path>
-          <path d="M24 43 28.5 24 24 28.5 19.5 24Z" fill="currentColor" opacity=".28"></path>
-          <path d="M5 24 24 19.5 19.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
-          <path d="M43 24 24 19.5 28.5 24 24 28.5Z" fill="currentColor" opacity=".5"></path>
-          <path d="M9.2 32.5A17 17 0 0 1 36.4 10.6" stroke="currentColor" stroke-width="1.7"
-                stroke-linecap="round" fill="none" opacity=".6"></path>
-          <circle cx="36.6" cy="10.4" r="2.6" fill="currentColor"></circle>
-          <circle cx="24" cy="24" r="2.2" fill="currentColor"></circle>
+          <defs>
+            <linearGradient id="bm-lit" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
+              <stop offset="0" stop-color="var(--rose-hi)"/>
+              <stop offset="0.5" stop-color="var(--rose-mid)"/>
+              <stop offset="1" stop-color="var(--rose-mid)" stop-opacity=".62"/>
+            </linearGradient>
+            <linearGradient id="bm-shade" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
+              <stop offset="0" stop-color="var(--rose-mid)"/>
+              <stop offset="0.5" stop-color="var(--rose-lo)"/>
+              <stop offset="1" stop-color="var(--rose-lo)" stop-opacity=".48"/>
+            </linearGradient>
+            <linearGradient id="bm-tick" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
+              <stop offset="0" stop-color="var(--mark)" stop-opacity=".72"/>
+              <stop offset="1" stop-color="var(--mark)" stop-opacity=".3"/>
+            </linearGradient>
+            <linearGradient id="bm-ring" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
+              <stop offset="0" stop-color="var(--mark)" style="stop-opacity:var(--ring-hi)"/>
+              <stop offset="0.5" stop-color="var(--mark)" style="stop-opacity:var(--ring-mid)"/>
+              <stop offset="1" stop-color="var(--mark)" style="stop-opacity:var(--ring-lo)"/>
+            </linearGradient>
+            <linearGradient id="bm-arc" gradientUnits="userSpaceOnUse" x1="9.28" y1="32.5" x2="35.6" y2="11.6">
+              <stop offset="0" stop-color="var(--rose-mid)" stop-opacity="0"/>
+              <stop offset="0.55" stop-color="var(--rose-mid)" stop-opacity=".38"/>
+              <stop offset="1" stop-color="var(--rose-mid)" stop-opacity=".8"/>
+            </linearGradient>
+            <radialGradient id="bm-core">
+              <stop offset="0" stop-color="var(--rose-core-hi)"/>
+              <stop offset="0.45" stop-color="var(--rose-core)"/>
+              <stop offset="1" stop-color="var(--rose-core)" stop-opacity=".22"/>
+            </radialGradient>
+            <filter id="bm-glow" x="-300%" y="-300%" width="700%" height="700%">
+              <feGaussianBlur stdDeviation="1.4"/>
+            </filter>
+            <filter id="bm-spark" x="-400%" y="-400%" width="900%" height="900%">
+              <feGaussianBlur stdDeviation="0.45"/>
+            </filter>
+          </defs>
+
+          <!-- 34px 下只留四条主刻度：12 条挤到这个尺寸每条不到一个像素，
+               加粗只会糊成齿圈。外端对齐 23.2，主刻度向内伸到 19.9 -->
+          <g stroke="url(#bm-tick)">
+            <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.8" transform="rotate(0 24 24)"/>
+            <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.8" transform="rotate(90 24 24)"/>
+            <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.8" transform="rotate(180 24 24)"/>
+            <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.8" transform="rotate(270 24 24)"/>
+          </g>
+          <circle cx="24" cy="24" r="14" stroke="url(#bm-ring)" stroke-width=".8"/>
+
+          <!-- 四个芒尖各拆成受光面 / 背光面，光源在左上 -->
+          <path d="M24 5 L24 19.5 L19.5 24 Z"  fill="url(#bm-lit)"/>
+          <path d="M24 5 L28.5 24 L24 19.5 Z"  fill="url(#bm-shade)"/>
+          <path d="M24 43 L24 28.5 L19.5 24 Z" fill="url(#bm-lit)"   opacity=".88"/>
+          <path d="M24 43 L28.5 24 L24 28.5 Z" fill="url(#bm-shade)" opacity=".88"/>
+          <path d="M43 24 L24 19.5 L28.5 24 Z" fill="url(#bm-lit)"   opacity=".94"/>
+          <path d="M43 24 L28.5 24 L24 28.5 Z" fill="url(#bm-shade)" opacity=".94"/>
+          <path d="M5 24 L24 19.5 L19.5 24 Z"  fill="url(#bm-lit)"   opacity=".94"/>
+          <path d="M5 24 L19.5 24 L24 28.5 Z"  fill="url(#bm-shade)" opacity=".94"/>
+
+          <path d="M9.28 32.5 A17 17 0 0 1 35.6 11.6" stroke="url(#bm-arc)"
+                stroke-width="2" stroke-linecap="round" fill="none"/>
+          <circle cx="35.6" cy="11.6" r="2.6" fill="var(--rose-hi)" opacity=".2" filter="url(#bm-glow)"/>
+          <circle cx="35.6" cy="11.6" r="1.5" fill="var(--rose-mid)"/>
+          <circle cx="35.6" cy="11.6" r=".7" fill="var(--rose-hi)"/>
+
+          <circle cx="24" cy="24" r="3.4" fill="var(--rose-hi)"
+                  style="opacity:var(--rose-core-glow)" filter="url(#bm-glow)"/>
+          <circle cx="24" cy="24" r="2.5" fill="url(#bm-core)"/>
+          <circle cx="24" cy="6.9" r="1.15" fill="var(--rose-spark)" opacity=".95" filter="url(#bm-spark)"/>
         </svg>
       </div>
       <div style="flex:1;min-width:0">

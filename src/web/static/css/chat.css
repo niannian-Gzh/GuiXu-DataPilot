@@ -107,7 +107,9 @@
        又大过罗盘本体，看起来像罗盘压在一个脉动的蓝盘上 */
     filter: drop-shadow(0 0 26px rgba(61, 125, 255, 0.22));
   }
-  .hello-mark svg { width: 84px; height: 84px; }
+  /* overflow 必须放开：巡航弧的半径是 21，加上头部光晕会超出 48 的画布，
+     裁掉的话光点转到正上方时会被切平 */
+  .hello-mark svg { width: 84px; height: 84px; overflow: visible; }
 
   .hello-mark .hm-rose { opacity: 0.92; }
 

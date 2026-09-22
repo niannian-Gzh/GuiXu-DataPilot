@@ -41,6 +41,21 @@
     --scan-rgb: 107, 157, 255;
     --scan-dur: .62s;
     --scan-skew: -14deg;
+
+    /* 罗盘。指针的折面、刻度、内环都吃这组色，深浅各一套：
+       浅色底上"亮"等于"淡"，照搬深色那组指针会整体发飘 */
+    --rose-hi:   #dce9ff;
+    --rose-mid:  #9dbcff;
+    --rose-lo:   #33528f;
+    --rose-core: #cfe0ff;
+    --rose-core-hi: #ffffff;  /* 深色下核心是"白热"；浅色下同一处只是玻璃珠的
+                                 高光——一个白点画在白底上读起来就是个洞 */
+    --rose-core-glow: .36;
+    --rose-spark: #ffffff;
+    --rose-halo: .11;         /* 大尺寸那层外泛光 */
+    --ring-hi: .44;           /* 内环的渐隐梯度，浅色下要收得慢一些 */
+    --ring-mid: .2;
+    --ring-lo: .06;
   }
 
   [data-theme="light"] {
@@ -70,6 +85,17 @@
 
     /* 白底吃光：同一道光在浅色下要提一档，否则扫过等于没扫 */
     --scan-rgb:   47, 108, 224;
+
+    --rose-hi:   #1f5fd8;
+    --rose-mid:  #3d78e0;
+    --rose-lo:   #8aabe0;
+    --rose-core: #17429f;
+    --rose-core-hi: #c3d8ff;
+    --rose-core-glow: .2;
+    --rose-halo: .055;
+    --ring-hi: .38;
+    --ring-mid: .26;
+    --ring-lo: .16;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
