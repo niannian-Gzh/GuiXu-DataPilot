@@ -108,8 +108,8 @@ def request_add_column(column_name: str, column_type: str,
     pending = {
         "type": "add_column",
         "stage": "confirm",
-        "table_name": ctx.table_name,     # 视图名，写进 schema_meta
-        "real_table": real_table,
+        "table_name": ctx.table_name,
+        "real_table": ctx.real_table,
         "column_name": column_name,
         "column_type": pg_type,
         "default_value": default_value,

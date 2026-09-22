@@ -1,5 +1,6 @@
 import json
-from nl2sql import get_schema
+from nl2sql import get_schema, render_schema
+from schema_store import get_all_tables_schema
 from services import ServiceContext
 from services import (
     query_service, delete_service, create_service,
@@ -11,13 +12,20 @@ from services import export_service
 from services import report_service
 
 
+# 工具定义里"表名参数"的统一描述——12 处复用
+_TABLE_DESC = (
+    "要操作的表名（视图名，如 projects）。"
+    "从 system prompt 里的『可用表列表』中选一个。"
+)
+
+
 TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
             "name": "query_database",
             "description": (
-                "查询项目数据库。把用户的自然语言问题翻译成SQL并执行，返回自然语言答案。\n"
+                "查询数据。把用户的自然语言问题翻译成SQL并执行，返回自然语言答案。\n"
                 "【返回特征——必须遵守】\n"
                 "1. 如果返回包含 hint 字段：说明查询已完整执行、结果可信，"
                 "直接基于该结果回答，不要换问法反复查询。\n"
@@ -31,9 +39,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
                     "question": {"type": "string", "description": "要查询的完整自然语言问题"},
                 },
-                "required": ["question"],
+                "required": ["table_name", "question"],
             },
         },
     },
@@ -42,7 +51,7 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "request_delete",
             "description": (
-                "请求删除符合条件的项目记录。"
+                "请求删除符合条件的记录（软删除，7 天内可恢复）。"
                 "filter_question 是模糊筛选条件，系统会做模糊搜索并展示候选，"
                 "请用户确认后执行删除。"
                 "例：'家装项目'、'所有 web 类项目'、'所有项目'。"
@@ -51,9 +60,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
                     "filter_question": {"type": "string", "description": "自然语言筛选条件"},
                 },
-                "required": ["filter_question"],
+                "required": ["table_name", "filter_question"],
             },
         },
     },
@@ -62,7 +72,7 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "request_restore",
             "description": (
-                "恢复之前被软删除的项目记录。"
+                "恢复之前被软删除的记录。"
                 "filter_question 是模糊筛选条件，系统会在已删除的记录里搜索、"
                 "展示候选，请用户确认后恢复。"
                 "【何时用】用户说'恢复'、'撤销删除'、'把刚才删的找回来'、'还原'时。"
@@ -71,6 +81,7 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
                     "filter_question": {
                         "type": "string",
                         "description": (
@@ -79,7 +90,7 @@ TOOL_SCHEMAS = [
                         ),
                     },
                 },
-                "required": ["filter_question"],
+                "required": ["table_name", "filter_question"],
             },
         },
     },
@@ -87,18 +98,19 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "request_create",
-            "description": "请求新增一条项目记录。需要项目名、负责人、分类。"
+            "description": "请求新增一条记录。字段从该表的结构里看。"
             "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
                     "project_name": {"type": "string"},
                     "owner": {"type": "string"},
                     "category": {"type": "string", "description": "web 或 嵌入式"},
                     "status_raw": {"type": "string", "description": "默认'已提交'"},
                     "issued_date": {"type": "string", "description": "YYYY-MM-DD，默认今天"},
                 },
-                "required": ["project_name", "owner", "category"],
+                "required": ["table_name", "project_name", "owner", "category"],
             },
         },
     },
@@ -107,7 +119,7 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "request_update",
             "description": (
-                "请求修改符合条件的项目记录。"
+                "请求修改符合条件的记录。"
                 "filter_question 是模糊筛选条件，系统会搜索匹配记录、"
                 "展示改前改后对比、请用户确认。"
                 "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。"
@@ -115,10 +127,11 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
                     "filter_question": {"type": "string"},
                     "updates": {"type": "object", "description": "要改的字段和值"},
                 },
-                "required": ["filter_question", "updates"],
+                "required": ["table_name", "filter_question", "updates"],
             },
         },
     },
@@ -126,11 +139,12 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "request_batch_create",
-            "description": "请求批量新增项目记录。一次新增多条时使用。"
+            "description": "请求批量新增记录。一次新增多条时使用。"
             "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
                     "records": {
                         "type": "array",
                         "items": {
@@ -146,7 +160,7 @@ TOOL_SCHEMAS = [
                         },
                     },
                 },
-                "required": ["records"],
+                "required": ["table_name", "records"],
             },
         },
     },
@@ -155,7 +169,7 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "request_import",
             "description": (
-                "请求从 Excel 文件导入项目数据。会扫描文件与数据库的差异，"
+                "请求从 Excel 文件导入数据到指定表。会扫描文件与数据库的差异，"
                 "可能包括：新记录、字段冲突、已删除记录。"
                 "系统会展示差异并请求用户确认后执行导入。"
                 "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。"
@@ -163,12 +177,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Excel 文件路径",
-                    },
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
+                    "file_path": {"type": "string", "description": "Excel 文件路径"},
                 },
-                "required": ["file_path"],
+                "required": ["table_name", "file_path"],
             },
         },
     },
@@ -177,13 +189,22 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "check_consistency",
             "description": (
-                "检查数据库记录是否存在字段自相矛盾。"
-                "检查项包括：状态字段与状态文本不匹配、日期顺序异常（下证早于下发等）。"
-                "用于数据质量体检。不检查字段缺失（缺失是允许的）。"
+                "检查记录是否存在字段自相矛盾。"
+                "检查项包括：状态字段与状态文本不匹配、日期顺序异常。"
+                "用于数据质量体检。不检查字段缺失（缺失是允许的）。\n"
+                "table_name 不传时检查所有表。"
             ),
             "parameters": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "table_name": {
+                        "type": "string",
+                        "description": (
+                            "要检查的表名。不传则检查所有表。"
+                        ),
+                    },
+                },
+                "required": [],
             },
         },
     },
@@ -200,12 +221,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filter_question": {
-                        "type": "string",
-                        "description": "模糊筛选条件，描述要导出哪些记录",
-                    },
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
+                    "filter_question": {"type": "string", "description": "模糊筛选条件"},
                 },
-                "required": ["filter_question"],
+                "required": ["table_name", "filter_question"],
             },
         },
     },
@@ -227,6 +246,7 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
                     "period": {"type": "string", "enum": ["day", "week", "month"]},
                     "items": {
                         "type": "array",
@@ -236,17 +256,14 @@ TOOL_SCHEMAS = [
                     "custom_end": {"type": "string"},
                     "offset": {
                         "type": "integer",
-                        "description": "偏移量。0=当前（本周/本月/今天），-1=上一个（上周/上个月/昨天），-2=上上个。"
+                        "description": "偏移量。0=当前，-1=上一个，-2=上上个。",
                     },
                     "compare": {
                         "type": "boolean",
-                        "description": (
-                            "是否对比上一周期。用户说'对比'、'环比'、'跟上周/上月比'时传 true。"
-                            "自定义时间段（custom_start / custom_end）不支持环比。"
-                        ),
+                        "description": "是否对比上一周期。",
                     },
                 },
-                "required": ["period"],
+                "required": ["table_name", "period"],
             },
         },
     },
@@ -259,7 +276,7 @@ TOOL_SCHEMAS = [
                 "【和 request_update 的分界】\n"
                 "- request_update：新值由用户明确给出（'把 A 改成 B'）\n"
                 "- transform_data：新值由旧值通过规则算出（'所有打回次数加 1'、"
-                "'去掉 owner 的首尾空格'、'日期格式统一'、'按某条件批量置为某值'）\n"
+                "'去掉 owner 的首尾空格'、'日期格式统一'）\n"
                 "系统会翻译成 UPDATE 语句、展示预览（改哪些行、改前改后）、"
                 "请用户确认后执行。\n"
                 "【禁止】不能修改系统字段：is_deleted / deleted_at / deleted_by / delete_trace_id。"
@@ -267,12 +284,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "description": {
-                        "type": "string",
-                        "description": "自然语言的变换规则描述",
-                    },
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
+                    "description": {"type": "string", "description": "自然语言的变换规则描述"},
                 },
-                "required": ["description"],
+                "required": ["table_name", "description"],
             },
         },
     },
@@ -282,39 +297,26 @@ TOOL_SCHEMAS = [
             "name": "add_column",
             "description": (
                 "给表加一个新列。这是改表结构的操作——执行后表的结构会变。\n"
-                "【何时用】用户说'加一列 xxx'、'增加字段'、'记一下 xxx' 时。\n"
-                "【参数】\n"
-                "- column_name：列名，只能是小写字母开头的英文标识符"
-                "（如 priority / due_date）\n"
-                "- column_type：类型，只能从以下里选："
-                "VARCHAR / INTEGER / BIGINT / DOUBLE / BOOLEAN / TIMESTAMP / DATE\n"
+                "【何时用】用户说'加一列 xxx'、'增加字段' 时。\n"
+                "- column_name：列名，小写字母开头的英文标识符（如 priority）\n"
+                "- column_type：VARCHAR / INTEGER / BIGINT / DOUBLE / BOOLEAN / TIMESTAMP / DATE\n"
                 "- default_value（可选）：已有行的默认值\n"
-                "- label（可选）：这列的中文含义，例如'优先级'。"
-                "给了它之后，后续对话模型就能理解这列是什么。\n"
-                "系统会校验列名、类型、生成 SQL、展示给用户确认后执行。"
+                "- label（可选）：这列的中文含义。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "column_name": {
-                        "type": "string",
-                        "description": "列名，小写英文标识符",
-                    },
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
+                    "column_name": {"type": "string", "description": "列名，小写英文标识符"},
                     "column_type": {
                         "type": "string",
                         "enum": ["VARCHAR", "INTEGER", "BIGINT", "DOUBLE",
                                  "BOOLEAN", "TIMESTAMP", "DATE"],
                     },
-                    "default_value": {
-                        "type": "string",
-                        "description": "可选。已有行的默认值",
-                    },
-                    "label": {
-                        "type": "string",
-                        "description": "可选。这列的中文含义，例如'优先级'",
-                    },
+                    "default_value": {"type": "string", "description": "可选。已有行的默认值"},
+                    "label": {"type": "string", "description": "可选。这列的中文含义"},
                 },
-                "required": ["column_name", "column_type"],
+                "required": ["table_name", "column_name", "column_type"],
             },
         },
     },
@@ -322,52 +324,65 @@ TOOL_SCHEMAS = [
 
 
 def build_tool_functions(llm, db_path: str, table_name: str, trace):
-    schema = get_schema(db_path, table_name)
-    real_table = f"{table_name}_all"
-    ctx = ServiceContext(
-        llm=llm, db_path=db_path, table_name=table_name,
-        real_table=real_table, schema=schema, trace=trace,
-    )
+    """建工具函数表。
 
-    def query_database(question):
-        return query_service.run(question, ctx)
+    table_name 参数保留兼容——C1 阶段还不删（agent.py 还在传）。
+    C2 会把 agent.py 的调用改掉，那时再删这个参数。
+    工具函数内部不再用它——表名由每次工具调用时传入。
+    """
+    base_ctx = ServiceContext(llm=llm, db_path=db_path, trace=trace)
 
-    def request_delete(filter_question):
-        return delete_service.request_delete(filter_question, ctx)
+    def query_database(table_name, question):
+        return query_service.run(question, base_ctx.for_table(table_name))
 
-    def request_restore(filter_question):
-        return restore_service.request_restore(filter_question, ctx)
+    def request_delete(table_name, filter_question):
+        return delete_service.request_delete(filter_question, base_ctx.for_table(table_name))
 
-    def request_create(project_name, owner, category, status_raw="已提交", issued_date=None):
-        return create_service.request_create(project_name, owner, category, status_raw, issued_date, ctx)
+    def request_restore(table_name, filter_question):
+        return restore_service.request_restore(filter_question, base_ctx.for_table(table_name))
 
-    def request_update(filter_question, updates):
-        return update_service.request_update(filter_question, updates, ctx)
+    def request_create(table_name, project_name, owner, category,
+                       status_raw="已提交", issued_date=None):
+        return create_service.request_create(
+            project_name, owner, category, status_raw, issued_date,
+            base_ctx.for_table(table_name),
+        )
 
-    def request_batch_create(records):
-        return create_service.request_batch_create(records, ctx)
+    def request_update(table_name, filter_question, updates):
+        return update_service.request_update(filter_question, updates, base_ctx.for_table(table_name))
 
-    def request_import(file_path):
-        return import_service.request_import(file_path, ctx)
+    def request_batch_create(table_name, records):
+        return create_service.request_batch_create(records, base_ctx.for_table(table_name))
 
-    def check_consistency():
-        return consistency_service.run(ctx)
+    def request_import(table_name, file_path):
+        return import_service.request_import(file_path, base_ctx.for_table(table_name))
 
-    def export_to_excel(filter_question):
-        return export_service.run(filter_question, ctx)
+    def check_consistency(table_name=None):
+        # 传了表名——检查那一张；不传——检查所有表
+        if table_name:
+            return consistency_service.run(base_ctx.for_table(table_name))
+        return consistency_service.run_all(base_ctx)
 
-    def generate_report(period, items=None, custom_start=None, custom_end=None,
+    def export_to_excel(table_name, filter_question):
+        return export_service.run(filter_question, base_ctx.for_table(table_name))
+
+    def generate_report(table_name, period, items=None,
+                        custom_start=None, custom_end=None,
                         offset=0, compare=False):
-        return report_service.run(period, items or [], ctx,
-                                  custom_start, custom_end, offset, compare)
+        return report_service.run(
+            period, items or [], base_ctx.for_table(table_name),
+            custom_start, custom_end, offset, compare,
+        )
 
-    def transform_data(description):
-        return transform_service.request_transform(description, ctx)
-    
-    def add_column(column_name, column_type, default_value=None, label=None):
+    def transform_data(table_name, description):
+        return transform_service.request_transform(description, base_ctx.for_table(table_name))
+
+    def add_column(table_name, column_name, column_type, default_value=None, label=None):
         return add_column_service.request_add_column(
-            column_name, column_type, default_value, label, ctx
-        )       
+            column_name, column_type, default_value, label,
+            base_ctx.for_table(table_name),
+        )
+
     return {
         "query_database": query_database,
         "request_delete": request_delete,

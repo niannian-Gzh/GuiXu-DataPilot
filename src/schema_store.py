@@ -71,6 +71,56 @@ def get_field_label(table: str, field: str) -> str:
     return info.get("fields", {}).get(field, "") or field
 
 
+def get_table_schema(table: str) -> dict:
+    """返回一张表的结构化 schema——字段名、类型、必填、中文含义。
+
+    table 是视图名（如 projects）。内部按约定转真实表（projects_all）读结构。
+
+    返回：
+      {
+        "name": "projects",
+        "real_table": "projects_all",
+        "label": "项目表",
+        "fields": [
+          {"name": "project_name", "type": "VARCHAR",
+           "nullable": False, "label": "项目名称"},
+          ...
+        ]
+      }
+    """
+    real_table = f"{table}_all"
+    cols = db_module.describe(real_table)
+
+    meta = load()
+    table_meta = meta.get("tables", {}).get(table, {})
+    labels = table_meta.get("fields", {})
+
+    return {
+        "name": table,
+        "real_table": real_table,
+        "label": table_meta.get("label", ""),
+        "fields": [
+            {
+                "name": c["name"],
+                "type": c["type"],
+                "nullable": c.get("nullable", True),
+                "label": labels.get(c["name"], ""),
+            }
+            for c in cols
+        ],
+    }
+
+
+def get_all_tables_schema() -> list:
+    """返回数据字典里所有表的结构化 schema。
+
+    来源是 schema_meta 里的 tables——它反映"用户已认知的表"。
+    库里存在但用户没标注过的表不出现在这里。
+    """
+    meta = load()
+    return [get_table_schema(t) for t in meta.get("tables", {}).keys()]
+
+
 def refresh_from_db() -> dict:
     """把库里的表/字段同步进字典。
 

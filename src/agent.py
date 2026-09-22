@@ -4,6 +4,7 @@ from datetime import date
 from tools import TOOL_SCHEMAS, build_tool_functions, dispatch
 from services import UserInputRequired
 from config import setting
+from schema_store import get_all_tables_schema
 
 
 WRITE_TOOLS = {
@@ -13,6 +14,11 @@ WRITE_TOOLS = {
 }
 
 SYSTEM_PROMPT = """你是 DataPilot，一个数据处理 Agent。工具是你与数据世界交互的途径。
+
+当前数据源包含以下表：
+{tables}
+
+调用工具时，table_name 从这里选一个。
 
 原则：
 1. 自主组合工具达成目标，这是合理规划，不是降级。
@@ -78,7 +84,14 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
     start_time = time.time()
     functions = build_tool_functions(llm, db_path, table_name, trace)
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(today=date.today().isoformat())}]
+    tables_list = "\n".join(
+        f"  - {t['name']}（{t['label'] or '未命名'}）"
+        for t in get_all_tables_schema()
+    )
+    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(
+        today=date.today().isoformat(),
+        tables=tables_list,
+    )}]
     messages.extend(session.get_history())
     messages.append({"role": "user", "content": user_input})
 

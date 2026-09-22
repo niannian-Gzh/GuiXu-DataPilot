@@ -69,8 +69,13 @@ def request_create(project_name, owner, category, status_raw, issued_date, ctx):
         "resubmit_date": None, "reject_count": 0,
     }
     pending = {
-        "type": "create", "stage": "confirm", "record": record,
-        "user_input": ctx.trace.data["question"], "trace_id": ctx.trace.id,
+        "type": "create", 
+        "stage": "confirm", 
+        "table_name": ctx.table_name,
+        "real_table": ctx.real_table,
+        "record": record,
+        "user_input": ctx.trace.data["question"], 
+        "trace_id": ctx.trace.id,
     }
     raise UserInputRequired(
         question=f"等待用户确认新增项目「{project_name}」",
@@ -118,8 +123,13 @@ def request_batch_create(records: list, ctx):
     } for r in records]
 
     pending = {
-        "type": "batch_create", "stage": "confirm", "records": full_records,
-        "user_input": ctx.trace.data["question"], "trace_id": ctx.trace.id,
+        "type": "batch_create", 
+        "stage": "confirm", 
+        "table_name": ctx.table_name,
+        "real_table": ctx.real_table,
+        "records": full_records,
+        "user_input": ctx.trace.data["question"], 
+        "trace_id": ctx.trace.id,
     }
     raise UserInputRequired(
         question=f"待新增 {len(records)} 条，等待用户确认",

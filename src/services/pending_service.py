@@ -6,8 +6,12 @@ from services import (
 from services import import_service, restore_service
 
 
-def handle_pending(question: str, session, db_path: str, real_table: str, llm=None):
-    """处理待确认操作。返回 (handled: bool, message: str)。"""
+def handle_pending(question: str, session, db_path: str, llm=None):
+    """处理待确认操作。返回 (handled: bool, message: str)。
+
+    表名从 pending 里读——不再从参数传。因为"这次确认是针对哪张表"
+    在 pending 生成那一刻就定了，重新传参反而容易和 pending 不一致。
+    """
     pending = session.get_pending()
     if not pending:
         return False, ""
@@ -19,26 +23,26 @@ def handle_pending(question: str, session, db_path: str, real_table: str, llm=No
     ptype = pending.get("type")
 
     if ptype == "delete":
-        return _handle_delete(question, session, pending, db_path, real_table)
+        return _handle_delete(question, session, pending, db_path)
     if ptype == "restore":
-        return _handle_restore(question, session, pending, db_path, real_table)
+        return _handle_restore(question, session, pending, db_path)
     if ptype == "create":
-        return _handle_create(question, session, pending, db_path, real_table)
+        return _handle_create(question, session, pending, db_path)
     if ptype == "batch_create":
-        return _handle_batch_create(question, session, pending, db_path, real_table)
+        return _handle_batch_create(question, session, pending, db_path)
     if ptype == "update":
-        return _handle_update(question, session, pending, db_path, real_table)
+        return _handle_update(question, session, pending, db_path)
     if ptype == "import":
-        return _handle_import(question, session, pending, db_path, real_table, llm)
+        return _handle_import(question, session, pending, db_path, llm)
     if ptype == "transform":
         return _handle_transform(question, session, pending, db_path)
     if ptype == "add_column":
         return _handle_add_column(question, session, pending, db_path)
-      
+
     return False, ""
 
 
-def _handle_delete(question, session, pending, db_path, real_table):
+def _handle_delete(question, session, pending, db_path):
     n = len(pending["candidates"])
     if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
@@ -47,7 +51,7 @@ def _handle_delete(question, session, pending, db_path, real_table):
 
     if valid:
         count = delete_service.execute_delete(
-            pending["candidates"], db_path, real_table,
+            pending["candidates"], db_path, pending["real_table"],
             pending["trace_id"], pending["user_input"],
         )
         session.clear_pending()
@@ -55,7 +59,7 @@ def _handle_delete(question, session, pending, db_path, real_table):
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
-def _handle_restore(question, session, pending, db_path, real_table):
+def _handle_restore(question, session, pending, db_path):
     n = len(pending["candidates"])
     if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
@@ -64,7 +68,7 @@ def _handle_restore(question, session, pending, db_path, real_table):
 
     if valid:
         count = restore_service.execute_restore(
-            pending["candidates"], db_path, real_table,
+            pending["candidates"], db_path, pending["real_table"],
             pending["trace_id"], pending["user_input"],
         )
         session.clear_pending()
@@ -72,10 +76,10 @@ def _handle_restore(question, session, pending, db_path, real_table):
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
-def _handle_create(question, session, pending, db_path, real_table):
+def _handle_create(question, session, pending, db_path):
     if delete_service.is_confirm(question):
         create_service.execute_create(
-            pending["record"], db_path, real_table,
+            pending["record"], db_path, pending["real_table"],
             pending["trace_id"], pending["user_input"],
         )
         name = pending["record"]["project_name"]
@@ -84,7 +88,7 @@ def _handle_create(question, session, pending, db_path, real_table):
     return True, "请回复「确认」执行新增，或「取消」放弃。"
 
 
-def _handle_batch_create(question, session, pending, db_path, real_table):
+def _handle_batch_create(question, session, pending, db_path):
     n = len(pending["records"])
     if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
@@ -93,7 +97,7 @@ def _handle_batch_create(question, session, pending, db_path, real_table):
 
     if valid:
         count = create_service.execute_batch_create(
-            pending["records"], db_path, real_table,
+            pending["records"], db_path, pending["real_table"],
             pending["trace_id"], pending["user_input"],
         )
         session.clear_pending()
@@ -101,7 +105,7 @@ def _handle_batch_create(question, session, pending, db_path, real_table):
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
-def _handle_update(question, session, pending, db_path, real_table):
+def _handle_update(question, session, pending, db_path):
     n = len(pending["candidates"])
     if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
@@ -110,7 +114,7 @@ def _handle_update(question, session, pending, db_path, real_table):
 
     if valid:
         count = update_service.execute_update(
-            pending["candidates"], pending["updates"], db_path, real_table,
+            pending["candidates"], pending["updates"], db_path, pending["real_table"],
             pending["trace_id"], pending["user_input"],
         )
         session.clear_pending()
@@ -127,7 +131,7 @@ def _handle_transform(question, session, pending, db_path):
 
     if valid:
         count = transform_service.execute_transform(
-            pending, db_path, pending["table_name"],
+            pending, db_path, pending["real_table"],
             pending["trace_id"], pending["user_input"],
         )
         session.clear_pending()
@@ -151,7 +155,7 @@ def _handle_add_column(question, session, pending, db_path):
     return True, "请回复「确认」执行，或「取消」放弃。"
 
 
-def _handle_import(question, session, pending, db_path, real_table, llm):
+def _handle_import(question, session, pending, db_path, llm):
     scan_result = pending["scan_result"]
     parsed = import_service.parse_user_answer(question, scan_result, llm)
 
@@ -174,7 +178,7 @@ def _handle_import(question, session, pending, db_path, real_table, llm):
 
         stats = import_service.execute_import(
             scan_result, rename_map, deleted_action, conflict_action,
-            db_path, real_table, pending["trace_id"], pending["user_input"],
+            db_path, pending["real_table"], pending["trace_id"], pending["user_input"],
         )
         session.clear_pending()
 

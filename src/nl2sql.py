@@ -63,6 +63,22 @@ def get_schema(db_path: str, table_name: str) -> str:
         lines.append(f"  - {col_name} ({col_type}, {tag}): {desc}")
     return "\n".join(lines)
 
+
+def render_schema(schema: dict) -> str:
+    """把结构化的表 schema 渲染成给模型看的文本。
+
+    输入是 schema_store.get_table_schema() 的返回。
+    这是"schema 对象 → prompt 文本"的唯一转换点——
+    要改格式只改这里。
+    """
+    lines = []
+    for f in schema["fields"]:
+        tag = "可空" if f["nullable"] else "必填"
+        desc = f["label"] or ""
+        lines.append(f"  - {f['name']} ({f['type']}, {tag}): {desc}")
+    return "\n".join(lines)
+
+
 def _clean_sql(sql: str) -> str:
     sql = sql.strip()
     if sql.startswith("```"):

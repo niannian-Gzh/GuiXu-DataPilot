@@ -93,6 +93,7 @@ def request_transform(description: str, ctx) -> str:
         "type": "transform",
         "stage": "confirm",
         "table_name": ctx.table_name,
+        "real_table": ctx.real_table,
         "update_sql": update_sql,
         "preview_sql": preview_sql,
         "columns": list(preview_df.columns),

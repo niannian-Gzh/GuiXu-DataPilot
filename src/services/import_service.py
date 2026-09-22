@@ -146,6 +146,8 @@ def request_import(file_path: str, ctx) -> str:
     pending = {
         "type": "import",
         "stage": "awaiting",
+        "table_name": ctx.table_name,
+        "real_table": ctx.real_table,
         "scan_result": result,
         "file_path": file_path,
         "user_input": ctx.trace.data["question"],

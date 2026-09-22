@@ -22,6 +22,8 @@ def request_delete(filter_question: str, ctx) -> str:
     pending = {
         "type": "delete",
         "stage": "confirm",
+        "table_name": ctx.table_name,
+        "real_table": ctx.real_table,
         "candidates": candidates,
         "user_input": ctx.trace.data["question"],
         "trace_id": ctx.trace.id,

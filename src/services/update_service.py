@@ -44,9 +44,14 @@ def request_update(filter_question: str, updates: dict, ctx) -> str:
         )
 
     pending = {
-        "type": "update", "stage": "confirm", "candidates": candidates,
+        "type": "update", 
+        "stage": "confirm",
+        "table_name": ctx.table_name,
+        "real_table": ctx.real_table, 
+        "candidates": candidates,
         "updates": updates,
-        "user_input": ctx.trace.data["question"], "trace_id": ctx.trace.id,
+        "user_input": ctx.trace.data["question"], 
+        "trace_id": ctx.trace.id,
     }
     raise UserInputRequired(
         question=f"找到 {len(candidates)} 条匹配，等待用户确认",

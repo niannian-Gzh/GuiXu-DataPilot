@@ -295,8 +295,7 @@ def chat(req: ChatRequest):
 
             handled, msg = pending_service.handle_pending(
                 req.question, session,
-                _state["db_path"], _state["real_table"],
-                _state["llm"],
+                _state["db_path"], _state["llm"],
             )
             if handled:
                 sink({"type": "answer", "content": msg})
