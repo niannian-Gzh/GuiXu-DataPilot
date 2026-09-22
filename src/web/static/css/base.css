@@ -35,6 +35,12 @@
 
     --mono: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', Consolas, monospace;
     --ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+    /* 左栏的扫描光。角度、时长全栏共用，强度由元素各自的 --fx-a 给——
+       同一个动作在侧栏里只该有一种速度，差的是亮度不是节奏 */
+    --scan-rgb: 107, 157, 255;
+    --scan-dur: .62s;
+    --scan-skew: -14deg;
   }
 
   [data-theme="light"] {
@@ -61,6 +67,9 @@
     --err:        #d64545;
 
     --mark:       #2f6ce0;
+
+    /* 白底吃光：同一道光在浅色下要提一档，否则扫过等于没扫 */
+    --scan-rgb:   47, 108, 224;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }

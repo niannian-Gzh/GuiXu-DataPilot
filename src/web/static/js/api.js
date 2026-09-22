@@ -95,6 +95,29 @@ async function _req(url, method, body) {
   }
 }
 
+/* ---------------- 数据字典 ---------------- */
+
+/* 表结构一次拿全，不分页——一个数据源就那几张表，分了只会让
+   前端多一层"下一页"的状态要管 */
+export async function getSchema() {
+  try {
+    const res = await fetch(API + '/schema');
+    if (!res.ok) return { ok: false, tables: [], message: '读取表结构失败' };
+    return { ok: true, ...(await res.json()) };
+  } catch (e) {
+    return { ok: false, tables: [], message: e.message };
+  }
+}
+
+/* 只发改动的那部分：后端是逐字段合并，没发的字段原样不动。
+   table 用 /schema 返回的 name（去掉 _all 后缀的那个），不是 real_table */
+export const updateSchema = (table, data) =>
+  _req('/schema/' + encodeURIComponent(table), 'PUT', data);
+
+/* 扫库同步。除了加新表新字段，它也会把库里已不存在的字段从字典里删掉——
+   连同那个字段上写好的中文含义。所以调用方拿到 changes 要如实报出来 */
+export const refreshSchema = () => _req('/schema/refresh', 'POST');
+
 export const createConfig = (data) => _req('/configs', 'POST', data);
 export const updateConfig = (id, data) => _req('/configs/' + id, 'PUT', data);
 export const deleteConfig = (id) => _req('/configs/' + id, 'DELETE');

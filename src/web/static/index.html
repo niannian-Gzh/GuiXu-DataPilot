@@ -24,14 +24,17 @@
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
 <!-- CSS 按层叠顺序加载，顺序不可重排：
-     末尾 settings.css 里的「统一质感」依赖前面卡片的 background 简写已声明，
-     提前加载会被后者的 background 简写重置掉 -->
+     settings.css 里的「统一质感」依赖前面卡片的 background 简写已声明，
+     提前加载会被后者的 background 简写重置掉；
+     schema.css 复用 settings.css 的 .set-input / .set-head，且要在
+     同优先级下覆盖它（表名那格换成正文字体），必须排在它后面 -->
 <link rel="stylesheet" href="/css/base.css">
 <link rel="stylesheet" href="/css/splash.css">
 <link rel="stylesheet" href="/css/layout.css">
 <link rel="stylesheet" href="/css/chat.css">
 <link rel="stylesheet" href="/css/files.css">
 <link rel="stylesheet" href="/css/settings.css">
+<link rel="stylesheet" href="/css/schema.css">
 </head>
 <body>
 

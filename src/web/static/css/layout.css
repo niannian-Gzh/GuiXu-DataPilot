@@ -23,7 +23,60 @@
   }
   .col.hidden { opacity: 0; pointer-events: none; }
 
-  /* ===================== 左栏 ===================== */
+  /* ===================== 左栏 =====================
+
+     基调：刻度 · 扫描。
+
+     悬停色不新加，沿用全项目本来就在跑的规律——有实体边框的可点元素
+     泛蓝（.btn / .new-chat），无框的泛灰（.btn.ghost / .icon-btn /
+     .set-nav / 各类列表项）。左栏原先就合这条规律，真正乱的是另外
+     三处：光效只长在两个按钮上、选中态忽有框忽无框、胶囊分段与
+     别的块并列。所以这里不引入新颜色，只补三条：
+
+     ① 扫描光只有一道。角度 / 宽度 / 时长全栏共用同一个伪元素，
+        只按层级分强度。被光扫过是光路过，不是元素自己亮。
+     ② 选中不是框，是刻度。一条两端渐隐的宝石蓝刻度线代替
+        .sess.on 原来的 1px 边框：列表用竖线、横向 tab 用横线，
+        是同一语言的两个朝向。
+     ③ 按下统一内缩。全栏一个手感。
+
+     ================================================ */
+
+  /* 扫描光本体。元素之间只差 --fx-a（强度），其余全部共用 */
+  .fx { position: relative; overflow: hidden; }
+  .fx::after {
+    content: '';
+    position: absolute; top: -45%; bottom: -45%; left: 0; width: 85%;
+    background: linear-gradient(100deg,
+      rgba(var(--scan-rgb), 0) 0%,
+      rgba(var(--scan-rgb), calc(var(--fx-a, .17) * .38)) 35%,
+      rgba(var(--scan-rgb), var(--fx-a, .17)) 50%,
+      rgba(var(--scan-rgb), calc(var(--fx-a, .17) * .38)) 65%,
+      rgba(var(--scan-rgb), 0) 100%);
+    transform: translateX(-110%) skewX(var(--scan-skew));
+    pointer-events: none;
+  }
+  .fx:hover::after {
+    transition: transform var(--scan-dur) var(--ease);
+    transform: translateX(130%) skewX(var(--scan-skew));
+  }
+  [data-theme="light"] .fx::after {
+    background: linear-gradient(100deg,
+      rgba(var(--scan-rgb), 0) 0%,
+      rgba(var(--scan-rgb), calc(var(--fx-a, .17) * .6)) 35%,
+      rgba(var(--scan-rgb), calc(var(--fx-a, .17) * 1.7)) 50%,
+      rgba(var(--scan-rgb), calc(var(--fx-a, .17) * .6)) 65%,
+      rgba(var(--scan-rgb), 0) 100%);
+  }
+
+  /* 强度分档：主按钮 > 次按钮 > 导航项 */
+  .new-chat { --fx-a: .34; }
+  .db-nav   { --fx-a: .24; }
+  .side-col .side-tabs button,
+  .side-col .sess,
+  .side-col .round-nav,
+  .side-col .icon-btn,
+  .side-col .btn.ghost { --fx-a: .17; }
   .brand {
     display: flex;
     align-items: center;
@@ -95,14 +148,16 @@
   .side-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 12px; }
 
   /* 新对话：从品牌区那个小 + 挪出来做成显式按钮。
-     它是左栏最高频的动作，不该藏成一个需要认的图标 */
+     它是左栏最高频的动作，不该藏成一个需要认的图标。
+     悬停"整块填实"不是另一套语言——所有元素悬停都是泛蓝，
+     它只是泛到实心，同一方向的加强，因为它要压过下面那个次级入口 */
   .new-chat {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 7px;
     flex: none;
-    margin: 0 12px 10px;
+    margin: 0 12px 7px;
     padding: 9px 0;
     border-radius: var(--r-sm);
     background: var(--acc-soft);
@@ -115,43 +170,97 @@
     background: var(--acc);
     border-color: var(--acc);
     color: #fff;
+    box-shadow: 0 8px 26px -11px var(--acc);
+    transform: translateY(-1px);
+  }
+  .new-chat:active {
+    transform: translateY(1px) scale(.985);
+    box-shadow: 0 2px 10px -7px var(--acc), inset 0 2px 5px rgba(0,0,0,.25);
   }
   .new-chat svg { width: 14px; height: 14px; flex: none; }
 
-  /* 左栏顶部的主视图切换：会话 / 轨迹 */
+  /* 数据库概览：与新对话同构的整行入口，但降一档——它是配置入口，
+     不是每次开对话都要点的东西。有边框，所以按全局规律泛蓝悬停；
+     与 .new-chat 的区别只在强度（淡底 vs 实心），不另起一套语言 */
+  .db-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    flex: none;
+    margin: 0 12px 10px;
+    padding: 9px 0;
+    border-radius: var(--r-sm);
+    background: var(--glass-lift);
+    border: 1px solid var(--edge);
+    color: var(--fg-dim);
+    font-size: 12.5px;
+    transition: all 0.18s var(--ease);
+  }
+  .db-nav:hover {
+    color: var(--acc-lift);
+    border-color: var(--acc-line);
+    background: var(--acc-soft);
+    box-shadow: 0 6px 20px -11px var(--acc);
+    transform: translateY(-1px);
+  }
+  .db-nav:active {
+    transform: translateY(1px) scale(.985);
+    box-shadow: inset 0 2px 5px rgba(0,0,0,.22);
+  }
+  .db-nav svg { width: 14px; height: 14px; flex: none; }
+
+  /* 左栏顶部的主视图切换：会话 / 轨迹。
+     原先是胶囊分段控件——它自己一个框，紧挨着的按钮又一个框，再往下
+     列表项没有框，三种形态挤在一起。改成刻度标签：去掉外框，选中态
+     落在底部一道横刻度上，与列表的竖刻度同源 */
   .side-tabs {
     display: flex;
     gap: 2px;
-    margin: 0 12px 6px;
-    padding: 2px;
-    border-radius: var(--r-sm);
-    background: var(--glass-deep);
-    border: 1px solid var(--edge-soft);
+    margin: 0 12px 10px;
+    padding: 0;
+    border-radius: 0;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--edge-soft);
     flex: none;
   }
   .side-tabs button {
     flex: 1;
-    padding: 6px 0;
-    border-radius: 5px;
+    padding: 7px 0 9px;
+    border-radius: 0;
     font-size: 12px;
     color: var(--fg-faint);
-    transition: all 0.16s var(--ease);
+    transition: color 0.16s var(--ease);
   }
   .side-tabs button:hover { color: var(--fg-dim); }
-  .side-tabs button.on { background: var(--acc-soft); color: var(--fg); }
+  .side-tabs button.on { color: var(--fg); }
+  /* 刻度线画在 bottom:0 而不是压在容器边框上——按钮为了裁扫描光
+     带了 overflow:hidden，越界的伪元素会被整条裁掉 */
+  .side-tabs button.on::before {
+    content: '';
+    position: absolute;
+    left: 50%; bottom: 0;
+    transform: translateX(-50%);
+    width: 24px; height: 2px;
+    border-radius: 1px;
+    background: linear-gradient(90deg, transparent, var(--acc-lift), transparent);
+    box-shadow: 0 0 8px var(--acc-line);
+  }
 
   /* 轨迹里的轮次导航 */
   .round-nav {
     display: block;
     width: 100%;
     text-align: left;
-    padding: 8px 11px;
+    padding: 9px 12px;
     margin-bottom: 3px;
     border-radius: var(--r-sm);
-    border: 1px solid transparent;
+    border: none;
     transition: all 0.16s var(--ease);
   }
   .round-nav:hover { background: var(--glass-lift); }
+  .round-nav:active { transform: scale(.985); }
   .round-nav .q {
     font-size: 12.5px;
     color: var(--fg);
@@ -309,28 +418,48 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 4px 7px;
+    padding: 13px 4px 9px;
     font-size: 10.5px;
     letter-spacing: 0.12em;
     color: var(--fg-faint);
     text-transform: uppercase;
+    /* 底部分隔线做成刻度尺：2px 实 + 7px 空，直接呼应罗盘刻度环的
+       stroke-dasharray: 1.6 9.13。这里拉一条实线太"界面"了 */
+    background-image: repeating-linear-gradient(90deg,
+      var(--edge) 0, var(--edge) 2px, transparent 2px, transparent 9px);
+    background-size: 100% 1px;
+    background-position: 0 100%;
+    background-repeat: no-repeat;
   }
 
+  /* 会话项：无框。选中态不再描边——那样它和"新对话"就成了同一形态，
+     而一个是导航项、一个是动作按钮。改用一道竖刻度，与 tab 的横刻度同源。
+     padding 比原先多 1px：去掉 1px 透明边框后内容会缩，补回来 */
   .sess {
     position: relative;
     display: block;
     width: 100%;
     text-align: left;
-    padding: 9px 11px;
+    padding: 10px 12px;
     margin-bottom: 3px;
     border-radius: var(--r-sm);
-    border: 1px solid transparent;
+    border: none;
     transition: all 0.16s var(--ease);
   }
   .sess:hover { background: var(--glass-lift); }
-  .sess.on {
-    background: var(--acc-soft);
-    border-color: var(--acc-line);
+  .sess:active { transform: scale(.985); }
+  .sess.on { background: var(--acc-soft); }
+  /* 竖刻度。left 取 3px：外发光会被 overflow:hidden 裁掉左半边，
+     往里挪一点，让可见的那半边刚好托住这条线 */
+  .sess.on::before {
+    content: '';
+    position: absolute;
+    left: 3px; top: 50%;
+    transform: translateY(-50%);
+    width: 2px; height: 56%;
+    border-radius: 1px;
+    background: linear-gradient(180deg, transparent, var(--acc-lift), transparent);
+    box-shadow: 0 0 6px var(--acc);
   }
   .sess-title {
     font-size: 12.5px;
@@ -380,6 +509,12 @@
     font-size: 11.5px;
     color: var(--fg-faint);
   }
+
+  /* 左栏底部的设置与收起。悬停色沿用全局的灰——它们无框，按规律不泛蓝，
+     也不该为了"栏内一致"去特例化一个全局类。只补按下内缩：
+     收起那枚只有 30px，缩 1.5% 还不到半个像素，所以它单独用 .94 */
+  .side-col .btn.ghost:active { transform: scale(.985); }
+  .side-col .icon-btn:active  { transform: scale(.94); }
 
   /* ===================== 中栏 ===================== */
   .chat-head {

@@ -1,0 +1,249 @@
+  /* ===================== 数据库概览页 =====================
+
+     沿用设置页的视觉语言：.glass 面板、.set-head 头部、.set-input 输入框。
+     这里只加设置页没有的两样——表卡片里的字段表，和三个弹层。 */
+
+  .sch-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px 40px; }
+  .sch-inner { max-width: 900px; margin: 0 auto; }
+
+  .sch-desc { margin-bottom: 16px; }
+
+  .sch-error {
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    border-radius: var(--r-sm);
+    background: rgba(248, 114, 114, 0.12);
+    color: var(--err);
+    font-size: 12.5px;
+  }
+
+  /* ---------------- 表卡片 ---------------- */
+  /* 比外层面板沉一档（--glass-deep）：同色同边框会和外层糊成一片 */
+  .sch-card {
+    margin-bottom: 12px;
+    border-radius: var(--r);
+    border: 1px solid var(--edge);
+    background: var(--glass-deep);
+    overflow: hidden;
+  }
+
+  .sch-card-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 12px;
+    background: var(--acc-soft);
+  }
+
+  .sch-fold {
+    display: grid;
+    place-items: center;
+    width: 22px; height: 22px;
+    flex: none;
+    border-radius: 5px;
+    color: var(--fg-dim);
+    transition: transform 0.18s var(--ease), color 0.16s var(--ease),
+                background 0.16s var(--ease);
+  }
+  .sch-fold svg { width: 14px; height: 14px; }
+  .sch-fold:hover { color: var(--fg); background: var(--glass-lift); }
+  .sch-fold.closed { transform: rotate(-90deg); }
+
+  /* 表的中文名。用正文字体而不是 .set-input 默认的等宽——
+     这一格填的是中文，等宽字体排中文既散又不好认 */
+  .sch-table-label {
+    width: 210px;
+    max-width: 210px;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .sch-table-meta {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-faint);
+  }
+
+  /* ---------------- 字段表 ---------------- */
+  /* 边框加在字段区顶部而不是卡头底部：折叠时卡头不该还挂一条线 */
+  .sch-fields { border-top: 1px solid var(--edge-soft); }
+
+  .sch-row {
+    display: grid;
+    grid-template-columns: 196px 118px 56px minmax(0, 1fr);
+    gap: 14px;
+    align-items: center;
+    padding: 6px 14px;
+  }
+  .sch-row-head {
+    padding-top: 9px;
+    padding-bottom: 7px;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    color: var(--fg-faint);
+    border-bottom: 1px solid var(--edge-soft);
+  }
+  .sch-row:not(.sch-row-head):hover { background: var(--glass-lift); }
+
+  .sch-fname {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 类型与约束是数据库的事实，压暗一档，和可改的那一格拉开距离 */
+  .sch-ftype {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sch-tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-style: normal;
+  }
+  .sch-tag.req { color: var(--err);     background: rgba(248, 114, 114, 0.14); }
+  .sch-tag.opt { color: var(--fg-dim);  background: rgba(134, 142, 156, 0.14); }
+
+  /* 中文含义这一格本身就是个按钮：常态是单行截断的文本，点了才开面板。
+     不做成常驻 input——真实内容是上百字的提示语（比如 status_raw 那条
+     取值说明），一行 input 只看得到开头，还把表格撑得高低不齐 */
+  .sch-fvalue {
+    display: block;
+    width: 100%;
+    padding: 4px 8px;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    text-align: left;
+    font-size: 12px;
+    color: var(--fg-sub);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: all 0.16s var(--ease);
+  }
+  .sch-fvalue:hover {
+    border-color: var(--acc-line);
+    background: var(--acc-soft);
+    color: var(--fg);
+  }
+  .sch-fvalue.empty { color: var(--fg-faint); }
+
+  /* ---------------- 弹层 ---------------- */
+  .sch-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    /* 深色底本来就近黑，只叠一层暗色等于没叠——那道模糊才是
+       "底下这层是背景"的实际信号 */
+    background: rgba(4, 6, 10, 0.62);
+    backdrop-filter: blur(3px);
+    animation: sch-fade 0.16s var(--ease);
+  }
+  [data-theme="light"] .sch-mask {
+    background: rgba(20, 26, 40, 0.34);
+    backdrop-filter: blur(2px);
+  }
+  @keyframes sch-fade { from { opacity: 0; } to { opacity: 1; } }
+
+  .sch-modal {
+    width: 100%;
+    max-width: 520px;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 18px 20px 16px;
+    /* 复用 --sheen：它已经是"深色低、浅色高"的那道顶边高光 */
+    box-shadow: inset 0 1px 0 0 var(--sheen), 0 24px 60px -20px rgba(0, 0, 0, 0.66);
+    animation: sch-rise 0.2s var(--ease);
+  }
+  .sch-modal-sm { max-width: 370px; }
+  @keyframes sch-rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .sch-modal-head { display: flex; align-items: baseline; gap: 10px; }
+  .sch-modal-name { font-family: var(--mono); font-size: 13.5px; color: var(--fg); }
+  .sch-modal-meta { font-size: 11px; color: var(--fg-faint); }
+  .sch-modal-title { font-size: 13.5px; color: var(--fg); margin-bottom: 12px; }
+  .sch-modal-hint { margin-top: 8px; }
+
+  .sch-textarea {
+    width: 100%;
+    min-height: 132px;
+    margin-top: 10px;
+    padding: 9px 11px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge);
+    background: var(--glass-deep);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 12.5px;
+    line-height: 1.7;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.18s var(--ease);
+  }
+  .sch-textarea:focus { border-color: var(--acc-line); }
+
+  .sch-modal-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  /* ---------------- 改动清单 ---------------- */
+  .sch-changes {
+    max-height: 46vh;
+    overflow-y: auto;
+    margin: 0 -4px;
+    padding: 0 4px;
+  }
+  .sch-change-group + .sch-change-group { margin-top: 12px; }
+  .sch-change-table { font-size: 12px; color: var(--fg-sub); margin-bottom: 5px; }
+
+  .sch-change-row {
+    display: grid;
+    grid-template-columns: 128px minmax(0, 1fr) 14px minmax(0, 1fr);
+    gap: 8px;
+    align-items: baseline;
+    padding: 3px 0 3px 10px;
+    font-size: 11.5px;
+  }
+  /* 前后值都可能是上百字，一律截断，完整内容挂在 title 上 */
+  .sch-change-key,
+  .sch-change-from,
+  .sch-change-to {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sch-change-key  { font-family: var(--mono); color: var(--fg-dim); }
+  .sch-change-from { color: var(--fg-faint); }
+  .sch-change-arrow { color: var(--fg-faint); text-align: center; }
+  .sch-change-to   { color: var(--acc-lift); }
+
+  /* ---------------- 自适应 ---------------- */
+  @media (max-width: 860px) {
+    .sch-body { padding: 14px 14px 32px; }
+    .sch-row { grid-template-columns: 148px 88px 48px minmax(0, 1fr); gap: 10px; }
+    .sch-table-label { width: 150px; max-width: 150px; }
+  }

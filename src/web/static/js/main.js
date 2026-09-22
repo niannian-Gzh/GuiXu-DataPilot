@@ -10,6 +10,7 @@ import BootSplash from './components/Splash.js';
 import ChatView from './components/ChatView.js';
 import FilesPanel from './components/FilesPanel.js';
 import SettingsView from './components/SettingsView.js';
+import SchemaView from './components/SchemaView.js';
 
 /* 应用入口。
 
@@ -24,7 +25,7 @@ const { createApp, ref, computed, watch, onMounted, nextTick, provide } = Vue;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 createApp({
-  components: { BootSplash, ChatView, FilesPanel, SettingsView },
+  components: { BootSplash, ChatView, FilesPanel, SettingsView, SchemaView },
   setup() {
     /* ---------------- 状态 ---------------- */
     const turns = ref([]);
@@ -40,7 +41,7 @@ createApp({
     const viewer = ref(null);
 
     /* ---------------- 设置 ---------------- */
-    const view = ref('chat');              // 'chat' | 'settings'
+    const view = ref('chat');              // 'chat' | 'settings' | 'schema'
     const settings = ref({ groups: [], params: [], info: {} });
     const activeGroup = ref('model');
     const leftTab = ref('sessions');        // 'sessions' | 'trace'
@@ -229,6 +230,12 @@ createApp({
     const goChat = () => {
       draft.value = {};
       view.value = 'chat';
+    };
+
+    /* 数据字典页。加载由 SchemaView 自己 onMounted 做——这里的
+       状态（草稿、改动）属于那个页面，离开即销毁，不该挂在 store 上 */
+    const goSchema = () => {
+      view.value = 'schema';
     };
 
     const saveSettings = async () => {
@@ -888,7 +895,7 @@ createApp({
       view, settings, activeGroup, draft, advanced, saving, saveMsg,
       allGroups, isLocalGroup, activeGroupParams, activeGroupDesc,
       dirty, groupDirty, dirtyCount, editValue, onEdit, resetField,
-      discardDraft, loadSettings, goSettings, goChat, saveSettings,
+      discardDraft, loadSettings, goSettings, goChat, goSchema, saveSettings,
 
       // 模型配置
       providers, configs, activeId, editor, formModels, formState,
@@ -926,7 +933,7 @@ createApp({
 <div class="shell" v-if="view === 'chat'"
      :class="{'right-open': railOpen, 'left-shut': leftShut}">
 
-  <aside class="col glass" :class="{hidden: leftShut}">
+  <aside class="col glass side-col" :class="{hidden: leftShut}">
     <div class="brand">
       <div class="brand-mark">
         <svg viewBox="0 0 48 48" fill="none">
@@ -951,19 +958,33 @@ createApp({
 
     <!-- 主视图切换：会话 / 轨迹 -->
     <div class="side-tabs">
-      <button :class="{on: leftTab === 'sessions'}" @click="leftTab = 'sessions'">会话</button>
-      <button :class="{on: leftTab === 'trace'}" @click="leftTab = 'trace'">
+      <button class="fx" :class="{on: leftTab === 'sessions'}"
+              @click="leftTab = 'sessions'">会话</button>
+      <button class="fx" :class="{on: leftTab === 'trace'}"
+              @click="leftTab = 'trace'">
         轨迹{{ allTools.length ? ' · ' + allTools.length : '' }}
       </button>
     </div>
 
-    <button class="new-chat" @click="newSession">
+    <button class="new-chat fx" @click="newSession">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
            stroke-linecap="round" stroke-linejoin="round">
         <line x1="12" y1="5" x2="12" y2="19"></line>
         <line x1="5" y1="12" x2="19" y2="12"></line>
       </svg>
       新对话
+    </button>
+
+    <!-- 数据字典。与"新对话"同构的整行入口，放它下面独立成块：
+         底部那行只有 254px，塞不下"设置 + 数据库概览 + 收起"三样 -->
+    <button class="db-nav fx" @click="goSchema">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="5.5" rx="8.5" ry="3"></ellipse>
+        <path d="M3.5 5.5v13c0 1.66 3.8 3 8.5 3s8.5-1.34 8.5-3v-13"></path>
+        <path d="M3.5 12c0 1.66 3.8 3 8.5 3s8.5-1.34 8.5-3"></path>
+      </svg>
+      {{ t.schemaTitle }}
     </button>
 
     <div class="side-scroll">
@@ -977,7 +998,7 @@ createApp({
           还没有工具调用<br>
           <span style="font-size:10.5px">执行过程只属于当前这次对话</span>
         </div>
-        <button v-for="(r, i) in roundsWithTools" :key="i" class="round-nav"
+        <button v-for="(r, i) in roundsWithTools" :key="i" class="round-nav fx"
                 @click="scrollToRound(r.roundIndex)">
           <div class="q">{{ r.question }}</div>
           <div class="m">{{ r.tools.length }} 步 · {{ (r.totalMs / 1000).toFixed(1) }}s</div>
@@ -992,7 +1013,7 @@ createApp({
       </div>
       <div v-if="!sessions.length" class="empty-note">还没有历史会话</div>
       <button v-for="s in sessions" :key="s.session_id"
-              class="sess" :class="{on: s.session_id === sessionId}"
+              class="sess fx" :class="{on: s.session_id === sessionId}"
               @click="openSession(s.session_id)">
         <div class="sess-title">{{ s.title }}</div>
         <div class="sess-meta">
@@ -1014,7 +1035,7 @@ createApp({
     </div>
 
     <div style="padding:9px 12px;border-top:1px solid var(--edge-soft);display:flex;gap:6px">
-      <button class="btn ghost" @click="goSettings" style="flex:1;justify-content:center">
+      <button class="btn ghost fx" @click="goSettings" style="flex:1;justify-content:center">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
@@ -1022,7 +1043,7 @@ createApp({
         </svg>
         设置
       </button>
-      <button class="icon-btn" @click="leftShut = true" title="收起侧栏">
+      <button class="icon-btn fx" @click="leftShut = true" title="收起侧栏">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
              stroke-linecap="round" stroke-linejoin="round">
           <polyline points="15 18 9 12 15 6"></polyline>
@@ -1038,7 +1059,8 @@ createApp({
   <files-panel></files-panel>
 </div>
 
-<settings-view v-else></settings-view>
+<settings-view v-else-if="view === 'settings'"></settings-view>
+<schema-view v-else-if="view === 'schema'"></schema-view>
 
 <div v-if="toast" class="toast" :class="toast.ok ? 'ok' : 'err'">
   <svg v-if="toast.ok" viewBox="0 0 24 24" fill="none" stroke="currentColor"
