@@ -1,5 +1,5 @@
 from services import bulk_threshold
-from services import delete_service, create_service, update_service
+from services import delete_service, create_service, update_service, transform_service
 from services import import_service, restore_service
 
 
@@ -27,7 +27,9 @@ def handle_pending(question: str, session, db_path: str, real_table: str, llm=No
         return _handle_update(question, session, pending, db_path, real_table)
     if ptype == "import":
         return _handle_import(question, session, pending, db_path, real_table, llm)
-
+    if ptype == "transform":
+        return _handle_transform(question, session, pending, db_path)
+    
     return False, ""
 
 
@@ -111,6 +113,23 @@ def _handle_update(question, session, pending, db_path, real_table):
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
+def _handle_transform(question, session, pending, db_path):
+    n = pending["total"]
+    if n <= BULK_THRESHOLD:
+        valid = delete_service.is_confirm(question)
+    else:
+        valid = delete_service.is_bulk_confirm(question, n)
+
+    if valid:
+        count = transform_service.execute_transform(
+            pending, db_path, pending["table_name"],
+            pending["trace_id"], pending["user_input"],
+        )
+        session.clear_pending()
+        return True, f"已修改 {count} 条记录。"
+    return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
+
+
 def _handle_import(question, session, pending, db_path, real_table, llm):
     scan_result = pending["scan_result"]
     parsed = import_service.parse_user_answer(question, scan_result, llm)
@@ -170,6 +189,11 @@ def format_pending_display(pending: dict) -> str:
         return create_service.format_batch_create_confirm(pending["records"])
     if ptype == "update":
         return update_service.format_update_confirm(pending["candidates"], pending["updates"])
+    if ptype == "transform":
+        return transform_service.format_transform_confirm(
+            pending, pending.get("table_name", "")
+        )
     if ptype == "import":
         return import_service.format_import_summary(pending["scan_result"])
+
     return "需要用户确认"

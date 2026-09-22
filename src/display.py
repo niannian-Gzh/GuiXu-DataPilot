@@ -9,7 +9,7 @@ def format_table(rows: list[dict]) -> str:
         "|" + "|".join(["---"] * len(columns)) + "|",
     ]
     for row in rows:
-        cells = [str(row.get(c, "") or "") for c in columns]
+        cells = ["" if row.get(c) is None else str(row.get(c)) for c in columns]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 

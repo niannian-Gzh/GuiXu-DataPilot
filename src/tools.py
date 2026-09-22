@@ -1,7 +1,7 @@
 import json
 from nl2sql import get_schema
 from services import ServiceContext
-from services import query_service, delete_service, create_service, update_service
+from services import query_service, delete_service, create_service, update_service, transform_service
 from services import import_service, restore_service
 from services import consistency_service
 from services import export_service
@@ -238,6 +238,32 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "transform_data",
+            "description": (
+                "对已有数据按【规则】批量重塑。\n"
+                "【和 request_update 的分界】\n"
+                "- request_update：新值由用户明确给出（'把 A 改成 B'）\n"
+                "- transform_data：新值由旧值通过规则算出（'所有打回次数加 1'、"
+                "'去掉 owner 的首尾空格'、'日期格式统一'、'按某条件批量置为某值'）\n"
+                "系统会翻译成 UPDATE 语句、展示预览（改哪些行、改前改后）、"
+                "请用户确认后执行。\n"
+                "【禁止】不能修改系统字段：is_deleted / deleted_at / deleted_by / delete_trace_id。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": "自然语言的变换规则描述",
+                    },
+                },
+                "required": ["description"],
+            },
+        },
+    },
 ]
 
 
@@ -278,7 +304,9 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
 
     def generate_report(period, items=None, custom_start=None, custom_end=None, offset=0):
         return report_service.run(period, items or [], ctx, custom_start, custom_end, offset)
-    
+    def transform_data(description):
+        return transform_service.request_transform(description, ctx)
+        
     return {
         "query_database": query_database,
         "request_delete": request_delete,
@@ -290,6 +318,7 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
         "check_consistency": check_consistency,
         "export_to_excel": export_to_excel,
         "generate_report": generate_report,
+        "transform_data": transform_data,
     }
 
 

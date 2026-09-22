@@ -156,3 +156,65 @@ def generate_filter_sql(filter_question: str, llm: LLM, schema: str, table_name:
         today=date.today().isoformat(),
     )
     return _clean_sql(llm.chat(system, filter_question))
+
+
+TRANSFORM_SYSTEM_PROMPT = """你是数据变换助手。用户描述一个变换规则，你把它翻译成 SQL。
+
+规则：
+1. 生成两段 SQL，用单独一行 `---` 分隔：
+   - 第一段：UPDATE 语句（真正执行）
+   - 第二段：SELECT 语句（预览：会改哪些行、改前改后）
+2. UPDATE 必须带 WHERE 子句——绝不允许全表无条件更新。
+   如果用户意图是"全部数据"，也要用 `WHERE 1=1`（明确表达"全部"），不要省略 WHERE。
+3. 只允许 UPDATE，禁止 DELETE / DROP / INSERT / ALTER
+4. 不能改这几个系统字段：is_deleted / deleted_at / deleted_by / delete_trace_id
+5. 严格使用下面提供的表名和列名，不要臆造
+6. 当前日期是 {today}
+7. 不要解释、不要 markdown 代码块、不要结尾分号
+
+表名（真实表）：{table_name}
+（这是底层存储表。视图 projects 只是它的过滤视图，写操作一律用真实表。）
+
+表结构：
+{schema}
+
+输出示例：
+UPDATE projects_all SET reject_count = reject_count + 1 WHERE owner = '关梓鹤';
+---
+SELECT project_name, reject_count FROM projects_all WHERE owner = '关梓鹤';
+"""
+
+
+def _build_transform_system(schema: str, table_name: str) -> str:
+    return TRANSFORM_SYSTEM_PROMPT.format(
+        schema=schema,
+        today=date.today().isoformat(),
+        table_name=table_name,
+    )
+
+
+def generate_transform_sql(question: str, llm: LLM, schema: str, table_name: str) -> tuple:
+    """生成数据变换 SQL。返回 (update_sql, preview_sql)。
+
+    模型输出两段 SQL 用 `---` 分隔。第一段是 UPDATE，第二段是 SELECT。
+    这里只负责解析成两段——执行与确认由 transform_service 负责。
+    """
+    real_table = f"{table_name}_all"
+    raw = llm.chat(_build_transform_system(schema, real_table), question).strip()
+
+    # 剥 markdown 代码块
+    if raw.startswith("```"):
+        lines = [l for l in raw.split("\n") if not l.startswith("```")]
+        raw = "\n".join(lines).strip()
+
+    # 按 --- 分割
+    parts = [p.strip() for p in raw.split("---") if p.strip()]
+    if len(parts) < 2:
+        raise ValueError(
+            f"模型没有按约定输出两段 SQL（需要 UPDATE 和 SELECT，用 --- 分隔）。"
+            f"实际输出：\n{raw[:300]}"
+        )
+
+    update_sql = _clean_sql(parts[0])
+    preview_sql = _clean_sql(parts[1])
+    return update_sql, preview_sql
