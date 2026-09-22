@@ -220,7 +220,9 @@ TOOL_SCHEMAS = [
                 "如果用户没指定 items，默认用 ['issued', 'certified', 'rejected']。"
                 "如果用户说'上个/上次/昨天/上周/上个月'，用 offset=-1；"
                 "'上上/前天'用 offset=-2。"
+                "如果用户说'对比/环比/跟上周/上月比'，传 compare=true。"
                 "如果用户指定了自定义时间段，传 custom_start 和 custom_end（YYYY-MM-DD）。"
+                "注意：自定义时间段不支持环比。"
             ),
             "parameters": {
                 "type": "object",
@@ -232,9 +234,16 @@ TOOL_SCHEMAS = [
                     },
                     "custom_start": {"type": "string"},
                     "custom_end": {"type": "string"},
-                                        "offset": {
+                    "offset": {
                         "type": "integer",
                         "description": "偏移量。0=当前（本周/本月/今天），-1=上一个（上周/上个月/昨天），-2=上上个。"
+                    },
+                    "compare": {
+                        "type": "boolean",
+                        "description": (
+                            "是否对比上一周期。用户说'对比'、'环比'、'跟上周/上月比'时传 true。"
+                            "自定义时间段（custom_start / custom_end）不支持环比。"
+                        ),
                     },
                 },
                 "required": ["period"],
@@ -347,10 +356,14 @@ def build_tool_functions(llm, db_path: str, table_name: str, trace):
     def export_to_excel(filter_question):
         return export_service.run(filter_question, ctx)
 
-    def generate_report(period, items=None, custom_start=None, custom_end=None, offset=0):
-        return report_service.run(period, items or [], ctx, custom_start, custom_end, offset)
+    def generate_report(period, items=None, custom_start=None, custom_end=None,
+                        offset=0, compare=False):
+        return report_service.run(period, items or [], ctx,
+                                  custom_start, custom_end, offset, compare)
+
     def transform_data(description):
         return transform_service.request_transform(description, ctx)
+    
     def add_column(column_name, column_type, default_value=None, label=None):
         return add_column_service.request_add_column(
             column_name, column_type, default_value, label, ctx

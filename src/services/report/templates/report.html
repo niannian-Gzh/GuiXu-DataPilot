@@ -145,6 +145,16 @@
     font-weight: 500;
   }
 
+  /* 环比：卡片上的"上周 X ↑+N" */
+  .stat-card .delta {
+    font-size: 11px;
+    margin-top: 8px;
+    color: #64748b;
+    font-weight: 500;
+  }
+  .stat-card .delta.up { color: #16a34a; }
+  .stat-card .delta.down { color: #dc2626; }
+
   .event-section {
     margin-bottom: 32px;
     padding: 20px 22px;
@@ -201,6 +211,9 @@
   <div class="header">
     <h1>{{ period_type_label }}</h1>
     <div class="period">统计周期：{{ period.start }} 至 {{ period.end }}</div>
+    {% if has_compare %}
+    <div class="period">对比周期：{{ prev_period.start }} 至 {{ prev_period.end }}（{{ prev_label }}）</div>
+    {% endif %}
   </div>
 
   {% if summary %}
@@ -216,6 +229,11 @@
     <div class="stat-card">
       <div class="value">{{ e.count }}</div>
       <div class="label">{{ e.label }}</div>
+      {% if has_compare %}
+      <div class="delta {% if e.change > 0 %}up{% elif e.change < 0 %}down{% endif %}">
+        {{ prev_label }} {{ e.prev_count }}{% if e.change > 0 %} ↑ +{{ e.change }}{% elif e.change < 0 %} ↓ {{ e.change }}{% else %} — 持平{% endif %}
+      </div>
+      {% endif %}
     </div>
     {% endfor %}
   </div>
@@ -229,6 +247,11 @@
     <div class="event-header">
       <span class="name">{{ e.label }}</span>
       <span class="badge">{{ e.count }} 条</span>
+      {% if has_compare %}
+      <span class="badge" style="background:#64748b">
+        {{ prev_label }} {{ e.prev_count }}{% if e.change > 0 %} · +{{ e.change }}{% elif e.change < 0 %} · {{ e.change }}{% else %} · 持平{% endif %}
+      </span>
+      {% endif %}
     </div>
 
     {% if e.details %}
