@@ -141,25 +141,83 @@ def execute_many(sql: str, rows: list) -> int:
         return len(rows)
 
 def describe(table: str) -> list:
-    """读表结构。返回 [{"name": ..., "type": ...}, ...]"""
+    """读表结构。
+
+    返回 [{"name": str, "type": str, "nullable": bool}, ...]
+    nullable=True 表示允许 NULL；False 表示 NOT NULL（必填）。
+    """
     if _backend() == "duckdb":
         con = duckdb.connect(resolve_db_url(), read_only=True)
         try:
-            rows = con.execute(f"DESCRIBE {table}").fetchall()
-            return [{"name": r[0], "type": r[1]} for r in rows]
+            df = con.execute(f"DESCRIBE {table}").fetchdf()
         finally:
             con.close()
+        # DuckDB 的 DESCRIBE 返回六列：column_name / column_type /
+        # null / key / default / extra。按列名读，不按位置——
+        # 列顺序可能随版本变
+        return [
+            {
+                "name": row["column_name"],
+                "type": row["column_type"],
+                "nullable": str(row["null"]).upper() == "YES",
+            }
+            for _, row in df.iterrows()
+        ]
 
+    # PG
     from sqlalchemy import create_engine, text
     engine = create_engine(_pg_url())
     with engine.connect() as conn:
         result = conn.execute(text(
-            "SELECT column_name, data_type "
+            "SELECT column_name, data_type, is_nullable "
             "FROM information_schema.columns "
             "WHERE table_name = :t "
             "ORDER BY ordinal_position"
         ), {"t": table})
-        return [{"name": r[0], "type": r[1]} for r in result.fetchall()]
+        return [
+            {
+                "name": r[0],
+                "type": r[1],
+                "nullable": (r[2] == "YES"),
+            }
+            for r in result.fetchall()
+        ]
+
+
+def list_tables() -> list:
+    """列出当前库里的所有表。
+
+    只返回表，不含视图——视图是派生对象，不该出现在"数据字典"里让用户标注。
+    """
+    if _backend() == "duckdb":
+        con = duckdb.connect(resolve_db_url(), read_only=True)
+        try:
+            df = con.execute("SHOW TABLES").fetchdf()
+        finally:
+            con.close()
+        # 排除视图
+        names = df["name"].tolist() if "name" in df.columns else []
+        # DuckDB 的 SHOW TABLES 会同时列出表和视图。用 information_schema 区分
+        con = duckdb.connect(resolve_db_url(), read_only=True)
+        try:
+            tables_df = con.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'main' AND table_type = 'BASE TABLE'"
+            ).fetchdf()
+        finally:
+            con.close()
+        return sorted(tables_df["table_name"].tolist())
+
+    # PG
+    from sqlalchemy import create_engine, text
+    engine = create_engine(_pg_url())
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_type = 'BASE TABLE' "
+            "ORDER BY table_name"
+        ))
+        return [r[0] for r in result.fetchall()]
 
 
 class _TxHandle:

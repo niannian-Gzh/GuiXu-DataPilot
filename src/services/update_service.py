@@ -1,7 +1,7 @@
 import json
 from services import UserInputRequired, bulk_threshold
 from services._filters import find_candidates
-from nl2sql import SCHEMA_DESC
+from db import describe
 from audit import log
 from display import format_table
 from db import execute
@@ -28,14 +28,14 @@ def request_update(filter_question: str, updates: dict, ctx) -> str:
                 ensure_ascii=False,
             )
 
-    valid_fields = set(SCHEMA_DESC.keys())
+    valid_fields = {c["name"] for c in describe(ctx.real_table)}
     for field in updates:
         if field not in valid_fields:
             return json.dumps(
                 {"error": f"字段 {field} 不存在。可用字段：{sorted(valid_fields)}"},
                 ensure_ascii=False,
             )
-
+        
     candidates = find_candidates(filter_question, ctx)
     if not candidates:
         return json.dumps(

@@ -8,38 +8,6 @@ import logging
 from config import load_config, resolve_db_url
 
 
-SCHEMA_DESC = {
-    "project_name": "项目名称",
-    "owner": "负责人姓名（人名，例如张三、李四）",
-    "status_raw": (
-        "原始状态文本，可能值：'已提交' / '已结算' / '已结算已打回' / "
-        "'已结算已下证' / '已打回待提交'。这是组合状态。"
-        "【何时用】用户说'仅为/只/精确/恰好/就是'某状态时，用这个字段做精确匹配。"
-        "其他情况优先使用下面的布尔字段。"
-    ),
-    "issued_date": "项目下发时间",
-    "certified_date": "项目下证时间（拿到证书的时间，可能为空）",
-    "category": "项目分类，取值：web / 嵌入式",
-    "resubmit_name": "重提项目时使用的原项目名，不是人名，通常为空",
-    "reject_date": "最近一次被打回的时间（可能为空）",
-    "resubmit_date": "被打回后重新提交的时间（可能为空）",
-    "reject_count": "被打回的次数，整数",
-    "is_pending": "是否待提交（布尔）。状态包含'待提交'时为 true",
-    "is_submitted": "是否已提交（布尔）。状态包含'已提交'时为 true",
-    "is_rejected": "是否被打回（布尔）。状态包含'已打回'时为 true",
-    "is_settled": (
-        "是否已结算（布尔）。状态包含'已结算'时为 true，"
-        "包括'已结算已下证'和'已结算已打回'。"
-        "【默认用这个】当用户说'已结算'但没有'仅/只/精确'等修饰词时。"
-    ),
-    "is_certified": "是否已下证（布尔）。状态包含'已下证'时为 true",
-    "is_deleted": "是否已被软删除（布尔）。true 表示这条记录已被删除、等待恢复或等待清理",
-    "deleted_at": "删除时间（可能为空）",
-    "deleted_by": "执行删除的操作者",
-    "delete_trace_id": "删除操作的追踪 ID，同一次删除的记录共享同一个 ID",
-}
-
-
 SYSTEM_PROMPT = """你是一个SQL生成助手。用户会用自然语言提问，你需要生成一条DuckDB兼容的SQL查询语句。
 
 规则：
@@ -76,16 +44,24 @@ FIX_PROMPT = """你上次生成的SQL执行失败了，请修正。
 
 
 def get_schema(db_path: str, table_name: str) -> str:
-    rows = describe(table_name)  # 返回 [{"name": ..., "type": ...}, ...]
+    """拼装表结构描述：字段名 + 类型 + 必填/可空 + 中文含义。
+
+    类型和必填是"事实"——从库读（describe）。
+    中文含义是"标注"——从 schema_store 读（用户可编辑）。
+    """
+    from schema_store import get_field_label
+
+    rows = describe(table_name)
 
     lines = []
     for r in rows:
         col_name = r["name"]
         col_type = r["type"]
-        desc = SCHEMA_DESC.get(col_name, "")
-        lines.append(f"  - {col_name} ({col_type}): {desc}")
+        nullable = r.get("nullable", True)
+        tag = "可空" if nullable else "必填"
+        desc = get_field_label(table_name, col_name)
+        lines.append(f"  - {col_name} ({col_type}, {tag}): {desc}")
     return "\n".join(lines)
-
 
 def _clean_sql(sql: str) -> str:
     sql = sql.strip()

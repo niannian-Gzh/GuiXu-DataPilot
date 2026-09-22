@@ -9,12 +9,10 @@ import shutil
 import threading
 import uuid
 from urllib.parse import quote
-
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-
 from llm import LLM
 from session import Session
 from agent import run_agent
@@ -29,14 +27,13 @@ from settings_spec import PARAMS, GROUPS, param_by_key, defaults as spec_default
 from cleanup import cleanup
 from services import UserInputRequired
 from services import pending_service
-
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from openai import OpenAI
 import pandas as pd
 from db import query_df
 from session import ARCHIVE_DIR
-
+import schema_store
 
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 EXPORT_DIR = PROJECT_ROOT / "data" / "exports"
@@ -105,6 +102,11 @@ async def lifespan(app: FastAPI):
     _state["db_path"] = resolve_db_url()
     _state["table_name"] = cfg["table_name"]
     _state["real_table"] = f"{cfg['table_name']}_all"
+    # 启动时同步一次数据字典——库里新出现的表/字段进字典
+    try:
+        schema_store.refresh_from_db()
+    except Exception as e:
+        print(f"[字典] 启动同步失败：{e}")
     cleanup()
     yield
     _sessions.clear()
@@ -525,6 +527,90 @@ def update_settings(req: SettingsUpdate):
     _state["llm"] = LLM()
 
     return {"status": "ok", "message": "已保存并生效"}
+
+
+# ============ 数据字典 ============
+
+@app.get("/schema")
+def get_schema_api():
+    """返回所有表的完整视图：表名 + 中文名 + 字段（名字/类型/必填/中文含义）。
+
+    前端消费这个渲染树。只读——改中文映射走 PUT。
+    """
+    from db import describe, list_tables
+
+    meta = schema_store.load()
+    tables = []
+
+    for real_table in list_tables():
+        key = real_table[:-4] if real_table.endswith("_all") else real_table
+        table_meta = meta.get("tables", {}).get(key, {})
+        labels = table_meta.get("fields", {})
+
+        cols = describe(real_table)
+        fields = [
+            {
+                "name": c["name"],
+                "type": c["type"],
+                "nullable": c.get("nullable", True),
+                "label": labels.get(c["name"], ""),
+            }
+            for c in cols
+        ]
+        tables.append({
+            "name": key,
+            "real_table": real_table,
+            "label": table_meta.get("label", ""),
+            "fields": fields,
+        })
+
+    return {"tables": tables}
+
+
+class FieldLabelUpdate(BaseModel):
+    label: str
+
+
+class TableSchemaUpdate(BaseModel):
+    label: Optional[str] = None
+    fields: Optional[dict] = None  # {field_name: label}
+
+
+@app.put("/schema/{table}")
+def update_schema_api(table: str, req: TableSchemaUpdate):
+    """更新中文映射。只接受 label 和 fields 的 label——其余字段忽略。
+
+    表名、字段名、类型、必填都不在这里改——它们从库里读，不归字典管。
+    """
+    meta = schema_store.load()
+    if "tables" not in meta:
+        meta["tables"] = {}
+
+    if table not in meta["tables"]:
+        meta["tables"][table] = {"label": "", "fields": {}}
+
+    entry = meta["tables"][table]
+
+    if req.label is not None:
+        entry["label"] = req.label.strip()
+
+    if req.fields:
+        entry.setdefault("fields", {})
+        for name, label in req.fields.items():
+            entry["fields"][name] = (label or "").strip()
+
+    schema_store.save(meta)
+    return {"status": "ok"}
+
+
+@app.post("/schema/refresh")
+def refresh_schema_api():
+    """手动刷新——把库里新出现的表/字段同步进字典。
+
+    返回变化的摘要，前端可以提示用户"新增 2 个字段"。
+    """
+    changes = schema_store.refresh_from_db()
+    return {"status": "ok", "changes": changes}
 
 
 # ============ 供应商预设 ============
