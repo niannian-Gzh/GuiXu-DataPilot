@@ -55,9 +55,29 @@ REQUIRED_INPUT_COLUMNS = [
 ]
 
 
+# ============ 第二张表：打回记录 ============
+
+REJECT_LOGS_TABLE = "reject_logs"
+
+# 打回记录表的结构。加 is_deleted 是为了和其他表一致——
+# 视图统一带 WHERE is_deleted = false，所有表一套规则，不搞特例。
+REJECT_LOGS_SCHEMA = [
+    ("id", "INTEGER", True),
+    ("project_name", "VARCHAR", True),
+    ("reject_date", "TIMESTAMP", True),
+    ("reject_reason", "VARCHAR", False),
+    ("resubmit_date", "TIMESTAMP", False),
+    ("is_deleted", "BOOLEAN", True),
+]
+
+
 def _is_pg() -> bool:
     url = get("data.db_url") or ""
-    return url.startswith("postgresql://") or url.startswith("postgresql+psycopg2://")
+    return (
+        url.startswith("postgresql://")
+        or url.startswith("postgresql+psycopg2://")
+        or url.startswith("postgresql+psycopg://")
+    )
 
 
 def _read_and_clean_excel(excel_path: str) -> pd.DataFrame:
@@ -214,6 +234,96 @@ def _ingest_to_pg(df: pd.DataFrame, view_name: str, real_table: str):
     rebuild_view(view_name, real_table)
 
 
+# ============ 第二张表：反推 + 写库 ============
+
+def derive_reject_logs(projects_df: pd.DataFrame) -> pd.DataFrame:
+    """从 projects 表反推"打回记录"明细。
+
+    对每个 reject_count > 0 的项目生成 N 条记录（N = reject_count）：
+      - 最新一条：reject_date = projects.reject_date
+                  resubmit_date = projects.resubmit_date（可能为空）
+      - 往前第 i 条：reject_date 再往前推 7*i 天
+                    resubmit_date = 该 reject_date + 2 天
+
+    reject_reason 全留空——不造假内容，只造结构真实的数据。
+
+    注意：本表是【派生合成数据】，不是 Excel 导入的。除每个项目最新
+    一条的日期取自 projects 的真实字段，更早那几条的日期都是推的。
+    """
+    rows = []
+    rid = 1
+
+    for _, p in projects_df.iterrows():
+        n = int(p.get("reject_count") or 0)
+        if n <= 0:
+            continue
+
+        latest_reject = p.get("reject_date")
+        if latest_reject is None or pd.isna(latest_reject):
+            # 有打回次数但没有打回时间——数据缺，跳过
+            continue
+
+        latest_reject = pd.Timestamp(latest_reject)
+        latest_resubmit = p.get("resubmit_date")
+
+        for i in range(n):
+            r_date = latest_reject - pd.Timedelta(days=7 * i)
+            if i == 0:
+                rs_date = (
+                    pd.Timestamp(latest_resubmit)
+                    if latest_resubmit is not None and not pd.isna(latest_resubmit)
+                    else None
+                )
+            else:
+                rs_date = r_date + pd.Timedelta(days=2)
+
+            rows.append({
+                "id": rid,
+                "project_name": p["project_name"],
+                "reject_date": r_date,
+                "reject_reason": None,
+                "resubmit_date": rs_date,
+                "is_deleted": False,
+            })
+            rid += 1
+
+    return pd.DataFrame(
+        rows,
+        columns=["id", "project_name", "reject_date",
+                 "reject_reason", "resubmit_date", "is_deleted"],
+    )
+
+
+def _reject_logs_ddl() -> str:
+    """按 REJECT_LOGS_SCHEMA 生成第二张表的 CREATE TABLE。"""
+    real_table = f"{REJECT_LOGS_TABLE}_all"
+    cols = []
+    for name, type_, not_null in REJECT_LOGS_SCHEMA:
+        cols.append(f"  {name} {type_}{' NOT NULL' if not_null else ''}")
+    return f"CREATE TABLE {real_table} (\n" + ",\n".join(cols) + "\n)"
+
+
+def _ingest_reject_logs_pg(df: pd.DataFrame):
+    """把打回记录写进 PG。空表也建——表结构是承诺。"""
+    from sqlalchemy import text
+
+    engine = get_engine()
+    view_name = REJECT_LOGS_TABLE
+    real_table = f"{REJECT_LOGS_TABLE}_all"
+
+    with engine.begin() as conn:
+        _drop_old_objects_pg(conn, view_name, real_table)
+        conn.execute(text(_reject_logs_ddl()))
+
+    if not df.empty:
+        df_for_pg = df[[c[0] for c in REJECT_LOGS_SCHEMA]].copy()
+        df_for_pg.to_sql(real_table, engine, if_exists="append", index=False)
+
+    rebuild_view(view_name, real_table)
+
+
+# ============ 主入口 ============
+
 def ingest():
     cfg = load_config()["data"]
     real_table = f"{cfg['table_name']}_all"
@@ -231,6 +341,18 @@ def ingest():
     print(f"✅ 导入 {len(df)} 行 → {resolve_db_url()}")
     print(f"   真实表：{real_table}")
     print(f"   视图：{cfg['table_name']}（已自动过滤 is_deleted）")
+
+    # 第二张表：从 projects 反推打回记录
+    reject_logs_df = derive_reject_logs(df)
+
+    if _is_pg():
+        _ingest_reject_logs_pg(reject_logs_df)
+        print(f"✅ 生成 {len(reject_logs_df)} 条打回记录 → reject_logs")
+    else:
+        # DuckDB 分支暂不做——主力是 PG，DuckDB 保留为向后兼容。
+        # 将来补一个 _ingest_reject_logs_duckdb 即可。
+        print(f"[跳过] DuckDB 分支暂不生成 reject_logs（{len(reject_logs_df)} 条）")
+
     # 导入完成后同步数据字典——新表/新字段进字典
     try:
         import schema_store

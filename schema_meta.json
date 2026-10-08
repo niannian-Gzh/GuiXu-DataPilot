@@ -24,6 +24,17 @@
         "deleted_by": "执行删除的操作者",
         "delete_trace_id": "删除操作的追踪 ID，同一次删除的记录共享同一个 ID"
       }
+    },
+    "reject_logs": {
+      "label": "打回记录表",
+      "fields": {
+        "id": "记录 ID",
+        "project_name": "项目名称（关联 projects 表）",
+        "reject_date": "本次打回时间",
+        "reject_reason": "打回原因",
+        "resubmit_date": "重提时间",
+        "is_deleted": "是否已软删除"
+      }
     }
   }
 }
