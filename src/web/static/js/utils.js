@@ -122,7 +122,7 @@ export const thinkGist = (text) =>
 export const confirmColumns = (c) => (c.rows && c.rows.length ? Object.keys(c.rows[0]) : []);
 export const confirmTitle = (c) => {
   if (!c.resolved) return c.scope + ' · 等待确认';
-  return c.scope + ' · ' + (c.cancelled ? '已取消' : '已执行');
+  return c.scope + ' · ' + (c.cancelled ? '已终止' : '已执行');
 };
 
 /* ---------------- 确认卡片构造 ---------------- */
@@ -135,7 +135,12 @@ export const candidateRows = (list) =>
 
 export const buildConfirm = (pending) => {
   const type = pending.type;
-  const base = { resolved: false, verdict: '', rows: [], diffs: null, verb: '确认' };
+  const base = {
+    resolved: false, verdict: '', rows: [], diffs: null, verb: '确认',
+    confirm_mode: pending.confirm_mode || 'simple',
+    confirm_hint: pending.confirm_hint || '确认',
+    typed_input: '',
+  };
 
   if (type === 'delete') {
     const n = pending.candidates.length;
@@ -202,6 +207,33 @@ export const buildConfirm = (pending) => {
       })),
       diffs,
       note: '确认后立即写入台账。',
+    });
+  }
+
+  if (type === 'transform') {
+    const n = pending.total || 0;
+    const full = !!pending.is_full_table;
+    const bulk = pending.confirm_mode === 'typed';
+    const levelLabel = full ? '全表修改' : (bulk ? '大批量修改' : '修改');
+
+    // 预览行的列名是英文列名，转成中文标签；值也统一走 fmtVal
+    const rows = (pending.rows || []).map((r) => {
+      const out = {};
+      Object.entries(r).forEach(([k, v]) => {
+        out[FIELD_LABELS[k] || k] = fmtVal(v);
+      });
+      return out;
+    });
+
+    return Object.assign(base, {
+      scope: '修改 ' + n + ' 条记录',
+      level_label: levelLabel,
+      verb: '确认修改',
+      danger: full,
+      rows: rows,
+      note: full
+        ? '⚠️ 此操作没有筛选条件，将修改全表所有记录。'
+        : '将修改 ' + n + ' 条记录，请核对下方预览。',
     });
   }
 

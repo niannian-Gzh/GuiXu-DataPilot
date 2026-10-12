@@ -1,9 +1,30 @@
+import re
 from services import bulk_threshold
 from services import (
     delete_service, create_service, update_service,
     transform_service, add_column_service,
 )
 from services import import_service, restore_service
+
+
+def _looks_like_confirm(text: str) -> bool:
+    """判断输入看起来像一次"确认"动作。
+
+    用途：pending 已经失效（比如服务重启导致内存丢失），但用户仍以为
+    自己在确认某个操作，输入了一个确认词。这时若按新问题交给 agent，
+    用户会拿到莫名其妙的回答。改用一个明确的失效提示更清楚。
+
+    只认两种形态：完全等于确认词，或"动词 + 数字 + 条"的批量确认格式
+    （如"删除166条"）。两者都是整串匹配，正常提问不会撞上，
+    所以不需要再另设长度门槛。
+    """
+    s = text.strip().lower()
+    if not s:
+        return False
+    if s in delete_service.CONFIRM_WORDS:
+        return True
+    # 批量确认的典型格式："删除166条" / "修改64条"
+    return bool(re.fullmatch(r"(删除|修改|恢复|新增)\s*\d+\s*条", s))
 
 
 def handle_pending(question: str, session, db_path: str, llm=None):
@@ -14,6 +35,12 @@ def handle_pending(question: str, session, db_path: str, llm=None):
     """
     pending = session.get_pending()
     if not pending:
+        if _looks_like_confirm(question):
+            return True, (
+                "你似乎在确认一个操作，但服务端已经没有待确认的记录。\n\n"
+                "这通常是因为服务重启，导致待确认状态失效。"
+                "请重新发起原始请求。"
+            )
         return False, ""
 
     if delete_service.is_cancel(question):
@@ -40,6 +67,39 @@ def handle_pending(question: str, session, db_path: str, llm=None):
         return _handle_add_column(question, session, pending, db_path)
 
     return False, ""
+
+
+def enrich_pending(pending: dict) -> dict:
+    """给 pending 补上确认模式信息，供前端决定渲染形态。
+
+    - simple: 单条或少量，普通确认按钮即可（发送"确认"）
+    - typed:  批量操作，需要用户输入包含数量的确认文本（如"修改166条"）
+    """
+    ptype = pending.get("type")
+
+    if ptype in ("delete", "restore", "update"):
+        n = len(pending.get("candidates", []))
+        verb = {"delete": "删除", "restore": "恢复", "update": "修改"}[ptype]
+    elif ptype == "batch_create":
+        n = len(pending.get("records", []))
+        verb = "新增"
+    elif ptype == "transform":
+        n = pending.get("total", 0)
+        verb = "修改"
+    else:
+        # create / add_column / import：不涉及批量，一律 simple
+        pending["confirm_mode"] = "simple"
+        pending["confirm_hint"] = "确认"
+        return pending
+
+    if n <= bulk_threshold():
+        pending["confirm_mode"] = "simple"
+        pending["confirm_hint"] = "确认"
+    else:
+        pending["confirm_mode"] = "typed"
+        pending["confirm_hint"] = f"{verb}{n}条"
+
+    return pending
 
 
 def _handle_delete(question, session, pending, db_path):

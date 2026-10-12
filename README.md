@@ -260,6 +260,8 @@ Agent 可以自主组合工具（删除时没找到目标 → 用查询搜索候
 
 ## 项目结构
 
+> 想知道**代码怎么分层**（每层负责什么、文件怎么归位），见 [docs/architecture.md](docs/architecture.md)。
+
 ```
 src/
 ├── api.py              FastAPI 入口（SSE、设置、字典、会话、文件）
@@ -273,7 +275,7 @@ src/
 ├── config.py           配置与路径解析
 ├── config_store.py     模型配置卡片（configs.json + secrets.json）
 ├── providers.py        供应商预设
-├── settings_spec.py    22 个参数的唯一真源
+├── settings_spec.py    23 个参数的唯一真源
 │
 ├── web/static/         前端（无构建）
 │   ├── index.html

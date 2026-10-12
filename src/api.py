@@ -298,6 +298,8 @@ def chat(req: ChatRequest):
                 _state["db_path"], _state["llm"],
             )
             if handled:
+                session.add_user(req.question)
+                session.add_assistant(msg)
                 sink({"type": "answer", "content": msg})
             else:
                 run_agent(
@@ -308,7 +310,8 @@ def chat(req: ChatRequest):
 
         except UserInputRequired as e:
             status = "needs_input"
-            pending = e.pending_action
+            pending = pending_service.enrich_pending(e.pending_action)
+            session.add_user(req.question)
             session.set_pending(pending)
             sink({
                 "type": "pending",
@@ -850,7 +853,7 @@ def get_session(session_id: str):
         "session_id": session_id,
         "title": session.title(),
         "messages": session.messages,
-        "has_pending": session.get_pending() is not None,
+        "pending": session.get_pending(),
     }
 
 

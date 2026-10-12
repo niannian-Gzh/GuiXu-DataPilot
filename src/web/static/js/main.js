@@ -580,7 +580,7 @@ createApp({
       const cancelled = text === '取消';
       turn.confirm.resolved = true;
       turn.confirm.cancelled = cancelled;
-      turn.confirm.verdict = cancelled ? '已取消，未执行任何操作' : '正在执行…';
+      turn.confirm.verdict = cancelled ? '任务已被终止' : '正在执行…';
 
       // 取消掉的那个工具不会再有结果回来，别让它永远停在「待确认」
       if (cancelled) {
@@ -590,7 +590,9 @@ createApp({
       await runStream(text, turn);
 
       // 卡片里直接给结论，answer 就不再单独渲染了
-      turn.confirm.verdict = turn.answer || (cancelled ? '已取消，未执行任何操作' : '已执行');
+      // 取消时忽略后端回传的文本，用固定文案——"任务已被终止"是流程语言，
+      // 比后端的"已取消操作"更准确
+      turn.confirm.verdict = cancelled ? '任务已被终止' : (turn.answer || '已执行');
     };
 
 
@@ -677,6 +679,16 @@ createApp({
         sessionId.value = id;
         localStorage.setItem('dp_session', id);
         turns.value = messagesToTurns(data.messages || []);
+
+        // 服务端可能还挂着 pending_action，但 messages 里没有它——
+        // 不重建的话，用户看不到确认入口，下一条消息会被当成"确认"吞掉
+        if (data.pending) {
+          const lastTurn = turns.value[turns.value.length - 1];
+          if (lastTurn && !lastTurn.confirm) {
+            lastTurn.confirm = buildConfirm(data.pending);
+          }
+        }
+
         await scrollDown();
       } catch (e) {
         if (!silent) notify('读取会话失败：' + e.message, false);

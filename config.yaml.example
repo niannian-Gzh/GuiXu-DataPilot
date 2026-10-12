@@ -1,0 +1,14 @@
+# 复制这个文件为 config.yaml，再按自己的情况改。
+# config.yaml 不进版本库（每台机器一份），所以这里只放占位符。
+#
+#   cp config.yaml.example config.yaml
+
+data:
+  # Excel 数据源（导入时用）
+  excel_path: data/你的数据.xlsx
+
+  # PostgreSQL 连接串。换成自己的主机 / 端口 / 库名 / 用户 / 密码
+  db_url: "postgresql://用户名:密码@localhost:5432/库名?client_encoding=utf8"
+
+  # 主表名（导入后生成的视图名）
+  table_name: projects

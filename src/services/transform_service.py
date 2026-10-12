@@ -64,7 +64,7 @@ def request_transform(description: str, ctx) -> str:
         )
 
     # 安全检查——不允许非 UPDATE、不带 WHERE、改系统字段
-    ok, reason = check_transform_safety(update_sql)
+    ok, reason, is_full_table = check_transform_safety(update_sql)
     if not ok:
         return json.dumps(
             {"error": f"变换被拒绝：{reason}", "is_security": True},
@@ -99,6 +99,7 @@ def request_transform(description: str, ctx) -> str:
         "columns": list(preview_df.columns),
         "rows": records,
         "total": len(preview_df),
+        "is_full_table": is_full_table,
         "user_input": ctx.trace.data["question"],
         "trace_id": ctx.trace.id,
     }
@@ -122,6 +123,8 @@ def format_transform_confirm(pending: dict, table_name: str) -> str:
     ]
 
     lines = [f"即将执行数据变换，影响 **{total}** 条记录。\n"]
+    if pending.get("is_full_table"):
+        lines.append("⚠️ **此操作没有筛选条件，将修改全表所有记录。**\n")
     lines.append(format_table(table_rows))
     if total > len(rows):
         lines.append(f"\n（共 {total} 条，此处仅显示前 {len(rows)} 条）")

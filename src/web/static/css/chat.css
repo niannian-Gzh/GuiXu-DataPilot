@@ -414,6 +414,19 @@
     border-color: var(--edge);
     background: var(--glass);
   }
+  /* 取消 / 中断：不是成功，是流程终止。用灰调压下去，
+     和"已执行"的常规 resolved 拉开距离 */
+  .confirm.resolved.cancelled {
+    background: var(--glass-deep);
+    opacity: 0.68;
+  }
+  .confirm.resolved.cancelled .confirm-head .dot {
+    background: rgba(134,142,156,0.14);
+    color: var(--fg-faint);
+  }
+  .confirm.resolved.cancelled .confirm-verdict {
+    color: var(--fg-faint);
+  }
   .confirm-head {
     display: flex;
     align-items: center;
@@ -451,8 +464,31 @@
   .confirm-actions {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     gap: 8px;
     margin-top: 12px;
+  }
+  .confirm-actions > .btn {
+    flex-shrink: 0;
+  }
+  .typed-confirm {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 12px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--edge);
+    background: var(--glass-deep);
+    color: var(--fg);
+    font: inherit;
+    font-size: 12.5px;
+    outline: none;
+    transition: border-color 0.18s var(--ease);
+  }
+  .typed-confirm:focus {
+    border-color: var(--acc-line);
+  }
+  .typed-confirm::placeholder {
+    color: var(--fg-faint);
   }
   .confirm-verdict {
     display: flex;

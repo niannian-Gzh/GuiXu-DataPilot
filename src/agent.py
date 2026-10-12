@@ -165,23 +165,30 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
                 })
 
                 if _is_success(result):
-                    # 思维熔断：成功的调用
-                    success_counts[name] = success_counts.get(name, 0) + 1
-                    if success_counts[name] > limit:
+                    # 思维熔断：按 (工具名 + 参数) 计数。
+                    # 按工具名累计会误杀探索——LLM 换了参数的调用是"新操作"，
+                    # 不是绕圈。只有完全相同的调用反复才是真卡住。
+                    call_key = f"{name}::{tc.function.arguments}"
+                    success_counts[call_key] = success_counts.get(call_key, 0) + 1
+                    if success_counts[call_key] > limit:
                         return _finish(emit, (
                             f"抱歉，我在处理这个请求时反复尝试了多次，未能完成。\n\n"
-                            f"> 工具「{name}」已成功调用 {success_counts[name]} 次，结果始终不理想\n\n"
+                            f"> 工具「{name}」以相同参数已成功调用 {success_counts[call_key]} 次，"
+                            f"结果始终不理想\n\n"
                             f"**建议**：请确认你的请求是否明确，或换一种说法再试。"
                         ))
                 elif _is_security_error(result):
                     # 安全拒绝：不计数，交由 agent 处理
                     pass
                 else:
-                    # 异常熔断：失败的调用
-                    failure_counts[name] = failure_counts.get(name, 0) + 1
-                    if failure_counts[name] > limit:
+                    # 异常熔断：失败也按 (工具名 + 参数) 计数——
+                    # 参数不同说明 LLM 在换策略，不该算作重试
+                    fail_key = f"{name}::{tc.function.arguments}"
+                    failure_counts[fail_key] = failure_counts.get(fail_key, 0) + 1
+                    if failure_counts[fail_key] > limit:
                         return _finish(emit, (
-                            f"抱歉，工具「{name}」已连续失败 {failure_counts[name]} 次，无法完成请求。\n\n"
+                            f"抱歉，工具「{name}」以相同参数已连续失败 "
+                            f"{failure_counts[fail_key]} 次，无法完成请求。\n\n"
                             f"> 最后一次错误：{result[:200]}\n\n"
                             f"**建议**：请检查请求是否合理，或稍后重试。"
                         ))

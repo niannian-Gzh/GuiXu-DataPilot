@@ -180,8 +180,8 @@ TRANSFORM_SYSTEM_PROMPT = """你是数据变换助手。用户描述一个变换
 1. 生成两段 SQL，用单独一行 `---` 分隔：
    - 第一段：UPDATE 语句（真正执行）
    - 第二段：SELECT 语句（预览：会改哪些行、改前改后）
-2. UPDATE 必须带 WHERE 子句——绝不允许全表无条件更新。
-   如果用户意图是"全部数据"，也要用 `WHERE 1=1`（明确表达"全部"），不要省略 WHERE。
+2. 如果用户意图是"部分数据"（有筛选条件），必须写 WHERE 条件。
+   如果用户明确要求修改"全部"数据，可以不写 WHERE——系统会识别为全表操作并警告用户。
 3. 只允许 UPDATE，禁止 DELETE / DROP / INSERT / ALTER
 4. 不能改这几个系统字段：is_deleted / deleted_at / deleted_by / delete_trace_id
 5. 严格使用下面提供的表名和列名，不要臆造

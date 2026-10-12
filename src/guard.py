@@ -1,23 +1,10 @@
+import sqlglot
+from sqlglot import exp
+
+
 class SecurityError(Exception):
     """写操作或危险 SQL 被拒绝时抛出。"""
     pass
-
-
-WRITE_KEYWORDS = ("delete", "update", "insert", "drop", "alter", "truncate", "create")
-
-
-def check_sql_safety(sql: str) -> tuple[bool, str]:
-    """检查 SQL 是否安全。返回 (是否安全, 原因)。"""
-    normalized = sql.strip().lower()
-
-    if normalized.startswith("select"):
-        return True, "OK"
-
-    for kw in WRITE_KEYWORDS:
-        if normalized.startswith(kw):
-            return False, f"检测到写操作（{kw.upper()}），当前版本仅支持查询"
-
-    return False, "无法识别的 SQL 类型，已拒绝执行"
 
 
 FORBIDDEN_TRANSFORM_COLUMNS = {
@@ -25,41 +12,80 @@ FORBIDDEN_TRANSFORM_COLUMNS = {
 }
 
 
-def check_transform_safety(sql: str) -> tuple[bool, str]:
-    """检查变换 SQL 是否安全。返回 (是否安全, 原因)。
+def _parse_one(sql: str):
+    """解析单条 SQL。返回表达式对象。"""
+    try:
+        statements = [s for s in sqlglot.parse(sql, read="postgres") if s is not None]
+    except Exception as e:
+        raise ValueError(f"无法解析 SQL：{e}")
+    if len(statements) == 0:
+        raise ValueError("SQL 为空")
+    if len(statements) > 1:
+        raise ValueError("不允许多条语句")
+    return statements[0]
+
+
+def check_sql_safety(sql: str) -> tuple[bool, str]:
+    """检查 SQL 是否安全（只允许 SELECT）。返回 (是否安全, 原因)。"""
+    try:
+        stmt = _parse_one(sql)
+    except ValueError as e:
+        return False, str(e)
+
+    if not isinstance(stmt, (exp.Select, exp.Union)):
+        return False, f"只允许 SELECT 查询，检测到 {type(stmt).__name__}"
+    return True, "OK"
+
+
+def check_transform_safety(sql: str) -> tuple[bool, str, bool]:
+    """检查变换 SQL 是否安全。
+
+    返回 (是否安全, 原因, 是否全表操作)。
 
     规则：
-      1. 必须以 UPDATE 开头
-      2. 必须带 WHERE —— 不允许全表无条件更新
-      3. 不能改系统字段（软删除 / 审计相关）
-      4. 不能包含多条语句
+      1. 必须是单条 UPDATE
+      2. 不能改系统字段
+      3. 全表操作不拒绝——用 is_full_table=True 标记
     """
-    s = sql.strip()
-    normalized = s.lower()
+    try:
+        stmt = _parse_one(sql)
+    except ValueError as e:
+        return False, str(e), False
 
-    # 1. 只允许 UPDATE
-    if not normalized.startswith("update"):
-        return False, "变换只允许 UPDATE 语句"
+    if not isinstance(stmt, exp.Update):
+        return False, f"变换只允许 UPDATE 语句，检测到 {type(stmt).__name__}", False
 
-    # 2. 必须有 WHERE
-    if " where " not in normalized:
-        return False, "UPDATE 必须带 WHERE 子句，不允许全表无条件更新"
+    for assignment in stmt.expressions:
+        col = assignment.this
+        if not isinstance(col, exp.Column):
+            return False, f"无法识别的赋值目标：{col}", False
+        col_name = col.name.lower()
+        if col_name in FORBIDDEN_TRANSFORM_COLUMNS:
+            return False, f"不允许修改系统字段：{col_name}", False
 
-    # 3. 检查 SET 部分是否动了系统字段
-    set_part = normalized.split(" where ", 1)[0]
-    if " set " in set_part:
-        assignments = set_part.split(" set ", 1)[1]
-        for assignment in assignments.split(","):
-            lhs = assignment.split("=")[0].strip()
-            # 去掉可能的表名前缀
-            lhs = lhs.split(".")[-1].strip().strip('"').strip("`")
-            if lhs in FORBIDDEN_TRANSFORM_COLUMNS:
-                return False, f"不允许修改系统字段：{lhs}"
+    is_full_table = _is_full_table(stmt)
+    return True, "OK", is_full_table
 
-    # 4. 不允许多条语句
-    # 先剥掉末尾分号，再看中间有没有
-    body = s.rstrip().rstrip(";").strip()
-    if ";" in body:
-        return False, "不允许包含多条语句"
 
-    return True, "OK"
+def _is_full_table(update_stmt) -> bool:
+    """UPDATE 是否是无约束的全表操作。"""
+    where = update_stmt.args.get("where")
+    if where is None:
+        return True
+    return _is_always_true(where.this)
+
+
+def _is_always_true(condition) -> bool:
+    """检测条件是否恒真。识别：TRUE、1=1、'x'='x'。"""
+    if condition is None:
+        return True
+    if isinstance(condition, exp.Boolean):
+        return condition.this is True
+    if isinstance(condition, exp.EQ):
+        left, right = condition.this, condition.expression
+        if isinstance(left, exp.Literal) and isinstance(right, exp.Literal):
+            if left.is_int and right.is_int and left.this == right.this:
+                return True
+            if left.is_string and right.is_string and left.this == right.this:
+                return True
+    return False

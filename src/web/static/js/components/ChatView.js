@@ -5,7 +5,12 @@ export default {
   setup() {
     // 共享 store 展开后仍是 ref 对象本身，响应性不丢，
     // 模板里的插值和事件绑定一个字都不用改
-    return { ...Vue.inject('store') };
+    const store = Vue.inject('store');
+    // 字典另起别名 i18n：对话流用的是 v-for="(t, ti) in turns"，
+    // 循环内的 t 是 turn 对象，会把 store 里的字典 t 遮住——
+    // 循环里那些本该取词的地方就取成了 turn 上不存在的字段，
+    // 按钮有框无字（取消、预览、无输出提示都栽在这上面）
+    return { ...store, i18n: store.t };
   },
   template: `
   <main class="col glass" style="overflow:hidden">
@@ -85,7 +90,7 @@ export default {
                      v-html="highlightSql(t.parsed.sql)"></div>
                 <div class="rawbox" v-if="t.parsed">{{ prettyJson(t.parsed) }}</div>
                 <div class="rawbox" v-else-if="t.raw">{{ t.raw }}</div>
-                <div class="set-hint" v-else>{{ t.noToolOutput }}</div>
+                <div class="set-hint" v-else>{{ i18n.noToolOutput }}</div>
               </div>
             </div>
           </div>
@@ -355,7 +360,8 @@ export default {
               </template>
 
               <!-- 确认卡片 -->
-              <div v-if="t.confirm" class="confirm" :class="{resolved: t.confirm.resolved}">
+              <div v-if="t.confirm" class="confirm"
+                   :class="{resolved: t.confirm.resolved, cancelled: t.confirm.cancelled}">
                 <div class="confirm-head">
                   <span class="dot">
                     <svg v-if="!t.confirm.resolved" viewBox="0 0 24 24" fill="none"
@@ -364,6 +370,11 @@ export default {
                       <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                       <line x1="12" y1="9" x2="12" y2="13"></line>
                       <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <svg v-else-if="t.confirm.cancelled" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="3.2" stroke-linecap="round"
+                         stroke-linejoin="round">
+                      <line x1="7" y1="12" x2="17" y2="12"></line>
                     </svg>
                     <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor"
                          stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
@@ -405,9 +416,26 @@ export default {
 
                   <div class="confirm-actions" v-if="!t.confirm.resolved">
                     <button class="btn" @click="answerConfirm(ti, '取消')"
-                            :disabled="busy">{{ t.cancel }}</button>
-                    <button class="btn" :class="t.confirm.danger ? 'danger' : 'primary'"
-                            @click="answerConfirm(ti, t.confirm.verb)"
+                            :disabled="busy">{{ i18n.cancel }}</button>
+
+                    <!-- 大批量：必须手动输入含数量的确认文本 -->
+                    <template v-if="t.confirm.confirm_mode === 'typed'">
+                      <input class="typed-confirm" v-model="t.confirm.typed_input"
+                             :placeholder="'请输入「' + t.confirm.confirm_hint + '」'"
+                             :disabled="busy"
+                             @keydown.enter.prevent="
+                               t.confirm.typed_input.trim()
+                                 && answerConfirm(ti, t.confirm.typed_input)">
+                      <button class="btn" :class="t.confirm.danger ? 'danger' : 'primary'"
+                              @click="answerConfirm(ti, t.confirm.typed_input)"
+                              :disabled="busy || !t.confirm.typed_input.trim()">
+                        执行
+                      </button>
+                    </template>
+
+                    <!-- 小批量：普通确认按钮 -->
+                    <button v-else class="btn" :class="t.confirm.danger ? 'danger' : 'primary'"
+                            @click="answerConfirm(ti, t.confirm.confirm_hint)"
                             :disabled="busy">
                       {{ t.confirm.verb }}
                     </button>
@@ -452,7 +480,7 @@ export default {
                   </div>
                 </div>
                 <div class="artifact-acts">
-                  <button class="btn" @click="previewFile(a)">{{ t.preview }}</button>
+                  <button class="btn" @click="previewFile(a)">{{ i18n.preview }}</button>
                   <button class="btn" @click="download(a.path, a.name)">下载</button>
                 </div>
               </div>
