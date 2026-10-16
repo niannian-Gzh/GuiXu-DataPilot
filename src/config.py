@@ -98,18 +98,16 @@ def resolve(relative_path: str) -> str:
     return str(PROJECT_ROOT / relative_path)
 
 
-def resolve_db_url() -> str:
-    """把 data.db_url 解析成驱动能吃的连接信息。"""
-    url = get("data.db_url")
-    if url:
-        if url.startswith("duckdb:///"):
-            return resolve(url[len("duckdb:///"):])
-        if url.startswith("postgresql://") or url.startswith("postgresql+psycopg2://"):
-            return url
-        raise ValueError(f"暂不支持的数据源类型：{url}")
+# 库文件，相对项目根。打包后 config.yaml 会把它指到
+# %LOCALAPPDATA%\GuiXu\data\ 去——安装目录不该塞用户数据。
+DEFAULT_DB = "data/guixu.db"
 
-    old = get("data.db_path")
-    if old:
-        return resolve(old)
 
-    raise ValueError("配置缺少 data.db_url，请在 config.yaml 的 data 段添加")
+def resolve_db_path() -> str:
+    """库文件的绝对路径。
+
+    只有一个答案，一个文件——design 零章把数据源定成 SQLite 单文件之后，
+    "解析连接串"这件事就不存在了。旧版要认三种前缀（duckdb:/// / postgresql://
+    / postgresql+psycopg2://），现在一种也不用认。
+    """
+    return resolve(get("data.db_path") or DEFAULT_DB)

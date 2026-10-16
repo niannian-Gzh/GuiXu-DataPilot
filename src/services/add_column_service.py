@@ -1,26 +1,31 @@
 """加列——改表结构。
 
-只做 PG。DuckDB 分支已不再维护。
+类型映射按 SQLite 的亲和性来（它没有真正的 VARCHAR / BOOLEAN，
+建表时写的类型名只决定存储取向）。这里仍然给规范名，因为
+**表定义要显示给模型看**——列一堆 `TEXT` 比列一堆乱七八糟的
+类型名更容易判断该往里填什么。
 """
 
 import json
 import re
 
-from db import execute, describe, rebuild_view
+import storage
+from runner import using
+from storage import describe
 from schema_store import refresh_from_db, load, save
 from audit import log
 from services import UserInputRequired
 
 
-# 受控类型清单：用户传的类型名 → PG 实际类型
+# 受控类型清单：用户传的类型名 → 库里实际落的类型
 COLUMN_TYPES = {
-    "VARCHAR":   "VARCHAR",
+    "VARCHAR":   "TEXT",       # SQLite 无变长字符类型，TEXT 就是它
     "INTEGER":   "INTEGER",
-    "BIGINT":    "BIGINT",
-    "DOUBLE":    "DOUBLE PRECISION",
-    "BOOLEAN":   "BOOLEAN",
-    "TIMESTAMP": "TIMESTAMP",
-    "DATE":      "DATE",
+    "BIGINT":    "INTEGER",    # SQLite 的整数是 64 位，BIGINT 与它同宽
+    "DOUBLE":    "REAL",
+    "BOOLEAN":   "INTEGER",    # 存 0/1
+    "TIMESTAMP": "TEXT",       # 存 'YYYY-MM-DD HH:MM:SS'，跟别处一致
+    "DATE":      "TEXT",       # 存 'YYYY-MM-DD'
 }
 
 # 系统保留列——不能被新列名撞上
@@ -85,7 +90,7 @@ def request_add_column(column_name: str, column_type: str,
                        default_value=None, label=None, ctx=None) -> str:
     """请求加列。校验 → 生成 SQL → 抛确认。"""
     real_table = ctx.real_table
-    existing = {c["name"] for c in describe(real_table)}
+    existing = {c["name"] for c in using(describe, ctx.table_name)["columns"]}
 
     err = _validate_column_name(column_name, existing)
     if err:
@@ -100,10 +105,10 @@ def request_add_column(column_name: str, column_type: str,
     except ValueError as e:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
-    pg_type = COLUMN_TYPES[column_type]
-    sql = f"ALTER TABLE {real_table} ADD COLUMN {column_name} {pg_type}"
+    col_type = COLUMN_TYPES[column_type]
+    coldef = f"{column_name} {col_type}"
     if default_clause:
-        sql += f" DEFAULT {default_clause}"
+        coldef += f" DEFAULT {default_clause}"
 
     pending = {
         "type": "add_column",
@@ -111,10 +116,13 @@ def request_add_column(column_name: str, column_type: str,
         "table_name": ctx.table_name,
         "real_table": ctx.real_table,
         "column_name": column_name,
-        "column_type": pg_type,
+        "column_type": col_type,
         "default_value": default_value,
         "label": label,
-        "sql": sql,
+        # coldef 是真正执行时喂给 storage.add_column 的东西；
+        # sql 只用来在确认卡片上给用户看一眼
+        "coldef": coldef,
+        "sql": f"ALTER TABLE {real_table} ADD COLUMN {coldef}",
         "user_input": ctx.trace.data["question"],
         "trace_id": ctx.trace.id,
     }
@@ -144,14 +152,18 @@ def format_add_column_confirm(pending: dict) -> str:
     return "\n".join(lines)
 
 
-def execute_add_column(pending: dict, db_path: str, trace_id: str, user_input: str) -> dict:
-    """执行加列。返回 {column, label_set}。"""
-    execute(pending["sql"])
+def execute_add_column(pending: dict, trace_id: str, user_input: str) -> dict:
+    """执行加列。返回 {column, label_set}。
 
-    # 重建视图——PG 的视图列在创建时固定，底层表加列后视图不会自动反映
-    rebuild_view(pending["table_name"], pending["real_table"])
+    走 `storage.add_column`——它把"改底表 + 重建视图 + 重建触发器"
+    当一个事务做掉。旧版要手动 `rebuild_view`，那是 PG 时代的事：
+    视图列在那儿是创建时固定的。现在视图列本来就跟着列走，
+    但**触发器里的列列表还是写死的**，所以重建这一步没得省——
+    只是它现在归 storage 管，调用方不用记着。
+    """
+    using(storage.add_column, pending["table_name"], pending["coldef"])
 
-    # 刷新字典
+    # 刷新字典（现在它只剩"发现裸表"这一件事）
     refresh_from_db()
 
     # 如果带了 label，直接写进字典（用户不用再去概览页手填）

@@ -323,14 +323,14 @@ TOOL_SCHEMAS = [
 ]
 
 
-def build_tool_functions(llm, db_path: str, table_name: str, trace):
+def build_tool_functions(llm, trace):
     """建工具函数表。
 
-    table_name 参数保留兼容——C1 阶段还不删（agent.py 还在传）。
-    C2 会把 agent.py 的调用改掉，那时再删这个参数。
-    工具函数内部不再用它——表名由每次工具调用时传入。
+    **没有"默认表"这个参数。** 表名由每次工具调用时传入——
+    那是多表的前提：模型自己决定操作哪张表，而不是启动时绑死一张。
+    （旧版有两个死参数 `db_path` / `table_name`，一路传到底没人读。）
     """
-    base_ctx = ServiceContext(llm=llm, db_path=db_path, trace=trace)
+    base_ctx = ServiceContext(llm=llm, trace=trace)
 
     def query_database(table_name, question):
         return query_service.run(question, base_ctx.for_table(table_name))

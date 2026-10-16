@@ -6,19 +6,19 @@ from services import UserInputRequired, bulk_threshold
 from audit import log
 from display import format_table
 from config import setting
-from db import execute
+from runner import execute
 
 
 def find_deleted(filter_question: str, ctx) -> list:
     """在已软删除的记录里按自然语言条件筛选。"""
-    schema = get_schema(ctx.db_path, ctx.real_table)
+    schema = get_schema(ctx.real_table)
     sql = generate_filter_sql(filter_question, ctx.llm, schema, ctx.real_table)
     # 外层强制限定在已删除集合内，无论模型生成了什么条件
     wrapped = (
         f"SELECT * FROM ({sql}) WHERE is_deleted = true "
         f"ORDER BY deleted_at DESC"
     )
-    df = execute_sql(wrapped, ctx.db_path)
+    df = execute_sql(wrapped)
     return df.to_dict("records")
 
 
@@ -95,7 +95,7 @@ def restore_confirm_prompt(candidates: list) -> str:
     )
 
 
-def execute_restore(candidates, db_path: str, real_table: str, trace_id: str, user_input: str) -> int:
+def execute_restore(candidates, real_table: str, trace_id: str, user_input: str) -> int:
     names = [c["project_name"] for c in candidates]
     placeholders = ",".join(["?"] * len(names))
     execute(

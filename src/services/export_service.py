@@ -41,7 +41,7 @@ EXPORT_COLUMNS = {
 def run(filter_question: str, ctx) -> str:
     try:
         sql = generate_filter_sql(filter_question, ctx.llm, ctx.schema, ctx.table_name)
-        df = execute_sql(sql, ctx.db_path)
+        df = execute_sql(sql)
     except Exception as e:
         return json.dumps({"error": f"导出失败：{e}"}, ensure_ascii=False)
 

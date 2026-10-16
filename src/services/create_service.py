@@ -3,7 +3,7 @@ from datetime import date
 from services import UserInputRequired, bulk_threshold
 from audit import log
 from display import format_table
-from db import query_df, execute, transaction
+from runner import query_df, execute, transaction
 
 
 # 插入语句的列。新增字段时只改这里，SQL 和参数各自动跟着变
@@ -171,7 +171,7 @@ def format_batch_create_confirm(records: list) -> str:
     return "\n".join(lines)
 
 
-def execute_create(record, db_path, real_table, trace_id, user_input):
+def execute_create(record, real_table, trace_id, user_input):
     execute(_insert_sql(real_table), _insert_params(record))
     log("create", {
         "trace_id": trace_id, "user_input": user_input, "created_record": record,
@@ -179,7 +179,7 @@ def execute_create(record, db_path, real_table, trace_id, user_input):
     return 1
 
 
-def execute_batch_create(records, db_path, real_table, trace_id, user_input):
+def execute_batch_create(records, real_table, trace_id, user_input):
     with transaction() as tx:
         for r in records:
             tx.execute(_insert_sql(real_table), _insert_params(r))

@@ -4,11 +4,9 @@
 #   cp config.yaml.example config.yaml
 
 data:
-  # Excel 数据源（导入时用）
+  # 库文件。数据全在这一个文件里，备份就是复制它。
+  # 相对路径基于项目根；打包后指向 %LOCALAPPDATA%\GuiXu\data\
+  db_path: data/guixu.db
+
+  # Excel 导入源（可选——也可以直接在界面上传）
   excel_path: data/你的数据.xlsx
-
-  # PostgreSQL 连接串。换成自己的主机 / 端口 / 库名 / 用户 / 密码
-  db_url: "postgresql://用户名:密码@localhost:5432/库名?client_encoding=utf8"
-
-  # 主表名（导入后生成的视图名）
-  table_name: projects

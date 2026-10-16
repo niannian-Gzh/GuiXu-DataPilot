@@ -3,7 +3,7 @@ from guard import SecurityError
 from nl2sql import generate_sql_with_retry
 from execute import execute_sql
 from summarize import summarize
-from db import query_df
+from runner import query_df
 
 
 AMBIGUOUS_FIELD_MAP = {
@@ -21,7 +21,7 @@ def _detect_ambiguity(sql, df, ctx):
         if old in sql:
             alt_sql = sql.replace(old, new)
             try:
-                alt_df = execute_sql(alt_sql, ctx.db_path)
+                alt_df = execute_sql(alt_sql)
             except Exception:
                 continue
             if df.to_string() != alt_df.to_string():
@@ -42,9 +42,9 @@ def _detect_ambiguity(sql, df, ctx):
 def run(question: str, ctx) -> str:
     try:
         sql, _ = generate_sql_with_retry(
-            question, ctx.llm, ctx.schema, ctx.db_path, ctx.table_name, max_retries=2
+            question, ctx.llm, ctx.schema, ctx.table_name, max_retries=2
         )
-        df = execute_sql(sql, ctx.db_path)
+        df = execute_sql(sql)
         answer = summarize(question, df, ctx.llm)
 
         result = {"sql": sql, "row_count": len(df), "answer": answer}

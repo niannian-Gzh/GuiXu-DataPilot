@@ -1,5 +1,5 @@
 import json
-from db import query_df, transaction
+from runner import query_df, transaction
 from nl2sql import generate_transform_sql
 from guard import check_transform_safety
 from audit import log
@@ -139,7 +139,7 @@ def format_transform_confirm(pending: dict, table_name: str) -> str:
 
     return "\n".join(lines)
 
-def execute_transform(pending: dict, db_path: str, table_name: str,
+def execute_transform(pending: dict, table_name: str,
                      trace_id: str, user_input: str) -> int:
     """执行变换。事务包裹，失败自动回滚。
 

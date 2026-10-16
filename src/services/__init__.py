@@ -21,7 +21,6 @@ class ServiceContext:
     而不是启动时绑定一张表。
     """
     llm: Any
-    db_path: str
     trace: Any
     # 表相关——for_table() 填充
     table_name: str = ""
@@ -39,7 +38,6 @@ class ServiceContext:
         s = get_table_schema(table)
         return ServiceContext(
             llm=self.llm,
-            db_path=self.db_path,
             trace=self.trace,
             table_name=s["name"],
             real_table=s["real_table"],

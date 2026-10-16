@@ -4,7 +4,7 @@ from services import UserInputRequired
 from display import format_table
 from audit import log
 from config import setting
-from db import query_df, transaction
+from runner import query_df, transaction
 
 
 
@@ -359,7 +359,7 @@ def _row_to_dict(row) -> dict:
 
 
 def execute_import(scan_result, rename_map, deleted_action, conflict_action,
-                   db_path, real_table, trace_id, user_input):
+real_table, trace_id, user_input):
     stats = {"renamed": 0, "restored": 0, "inserted": 0, "updated": 0}
 
     with transaction() as tx:

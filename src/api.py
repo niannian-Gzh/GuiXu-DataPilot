@@ -18,7 +18,7 @@ from session import Session
 from agent import run_agent
 from trace import Trace
 from config import (
-    load_config, resolve, resolve_db_url, PROJECT_ROOT, CONFIG_PATH,
+    load_config, resolve, resolve_db_path, PROJECT_ROOT, CONFIG_PATH,
     setting, get, get_config, save_config,
 )
 import config_store as store
@@ -31,9 +31,11 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from openai import OpenAI
 import pandas as pd
-from db import query_df
+from runner import connect, query_df
 from session import ARCHIVE_DIR
 import schema_store
+import storage
+from storage import SOFTDEL_SUFFIX, describe, list_tables
 
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 EXPORT_DIR = PROJECT_ROOT / "data" / "exports"
@@ -43,9 +45,6 @@ STATIC_DIR = PROJECT_ROOT / "src" / "web" / "static"
 
 _state = {
     "llm": None,
-    "db_path": None,
-    "table_name": None,
-    "real_table": None,
 }
 
 _sessions: dict[str, Session] = {}
@@ -97,16 +96,14 @@ async def lifespan(app: FastAPI):
     if store.migrate_if_needed():
         print("[迁移] config.yaml 的 llm 段已转成第一张模型配置")
 
-    cfg = load_config()["data"]
     _rebuild_llm()
-    _state["db_path"] = resolve_db_url()
-    _state["table_name"] = cfg["table_name"]
-    _state["real_table"] = f"{cfg['table_name']}_all"
-    # 启动时同步一次数据字典——库里新出现的表/字段进字典
+    # 启动时扫一遍：把绕过系统建的表补上软删保护
+    # （以前这一步叫"同步数据字典"，因为字典是 JSON 快照、会跟库脱节；
+    #  现在标注存在库里、结构实时读，只剩这一个用途）
     try:
         schema_store.refresh_from_db()
     except Exception as e:
-        print(f"[字典] 启动同步失败：{e}")
+        print(f"[存储] 启动检查失败：{e}")
     cleanup()
     yield
     _sessions.clear()
@@ -194,18 +191,19 @@ def health():
 
 @app.get("/db/ping")
 def db_ping():
-    """探活数据源。DuckDB 和 PG 共用一套逻辑。"""
-    from sqlalchemy import create_engine, text
+    """探活数据源。
 
-    url = resolve_db_url()
-    if url.startswith("postgresql://"):
-        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
-
+    走 `storage.connect` 而不是裸 `sqlite3.connect`：它顺带建 meta 表，
+    所以这个接口除了"能不能连上"，还保证库是完整的。
+    """
+    path = resolve_db_path()
     try:
-        engine = create_engine(url)
-        with engine.connect() as conn:
-            version = conn.execute(text("SELECT version()")).scalar()
-        return {"ok": True, "version": version}
+        con = storage.connect(path)
+        try:
+            version = con.execute("SELECT sqlite_version()").fetchone()[0]
+        finally:
+            con.close()
+        return {"ok": True, "version": f"SQLite {version}", "path": path}
     except Exception as e:
         return {"ok": False, "message": f"{type(e).__name__}: {e}"}
 
@@ -224,32 +222,36 @@ def overview_api():
     out = {"source": {}, "model": {}}
 
     # —— 数据源 ——
-    url = resolve_db_url()
-    out["source"]["kind"] = "postgresql" if url.startswith("postgresql://") else "duckdb"
+    out["source"]["kind"] = "sqlite"
     try:
-        version = query_df("SELECT version() AS v", timeout=5).iloc[0]["v"]
-        # PG 的 version() 是一整句，只取开头两个词："PostgreSQL 16.2"
+        version = query_df("SELECT sqlite_version() AS v", timeout=5).iloc[0]["v"]
         out["source"]["ok"] = True
-        out["source"]["version"] = " ".join(str(version).split()[:2])
+        out["source"]["version"] = f"SQLite {version}"
+        out["source"]["path"] = resolve_db_path()
     except Exception as e:
         out["source"]["ok"] = False
         out["source"]["message"] = f"{type(e).__name__}: {e}"
 
     # —— 规模：左栏「数据源概览」右端的那个计数 ——
+    # 数的是**底表**的行数——视图会把软删的行藏掉，那不是"库里有几行"
     try:
-        tables = schema_store.get_all_tables_schema()
-        out["source"]["tables"] = len(tables)
-        total = 0
-        for t in tables:
-            real = t.get("real_table") or t.get("name")
-            if not real:
-                continue
-            try:
-                total += int(query_df(f'SELECT COUNT(*) AS n FROM "{real}"', timeout=4).iloc[0]["n"])
-            except Exception:
-                # 单表数不出来不该让整个读数塌掉——跳过它，其余照常
-                pass
-        out["source"]["rows"] = total
+        con = connect()
+        try:
+            names = list_tables(con)
+            out["source"]["tables"] = len(names)
+            total = 0
+            for name in names:
+                try:
+                    total += int(query_df(
+                        f"SELECT COUNT(*) AS n FROM {storage.quote(name + SOFTDEL_SUFFIX)}",
+                        timeout=4,
+                    ).iloc[0]["n"])
+                except Exception:
+                    # 单表数不出来不该让整个读数塌掉——跳过它，其余照常
+                    pass
+            out["source"]["rows"] = total
+        finally:
+            con.close()
     except Exception:
         out["source"]["tables"] = None
 
@@ -390,16 +392,14 @@ def chat(req: ChatRequest):
             })
 
             handled, msg = pending_service.handle_pending(
-                req.question, session,
-                _state["db_path"], _state["llm"],
+                req.question, session, _state["llm"],
             )
             if handled:
                 session.add_assistant(msg)
                 sink({"type": "answer", "content": msg})
             else:
                 run_agent(
-                    req.question, session, _state["llm"],
-                    _state["db_path"], _state["table_name"], trace,
+                    req.question, session, _state["llm"], trace,
                     emit=tally,
                 )
 
@@ -645,35 +645,34 @@ def get_schema_api():
     """返回所有表的完整视图：表名 + 中文名 + 字段（名字/类型/必填/中文含义）。
 
     前端消费这个渲染树。只读——改中文映射走 PUT。
+
+    **返回结构保持旧形状**（`label` / `real_table` / `fields[].label`）：
+    数据源换到 SQLite 不该让前端返工。新数据里多出来的东西
+    （`relations` / `unique` / `pk`）留到交互层改造时一起露出来，
+    那时候前端改一次就够。
     """
-    from db import describe, list_tables
-
-    meta = schema_store.load()
-    tables = []
-
-    for real_table in list_tables():
-        key = real_table[:-4] if real_table.endswith("_all") else real_table
-        table_meta = meta.get("tables", {}).get(key, {})
-        labels = table_meta.get("fields", {})
-
-        cols = describe(real_table)
-        fields = [
-            {
-                "name": c["name"],
-                "type": c["type"],
-                "nullable": c.get("nullable", True),
-                "label": labels.get(c["name"], ""),
-            }
-            for c in cols
-        ]
-        tables.append({
-            "name": key,
-            "real_table": real_table,
-            "label": table_meta.get("label", ""),
-            "fields": fields,
-        })
-
-    return {"tables": tables}
+    con = connect()
+    try:
+        tables = []
+        for name in list_tables(con):
+            d = describe(con, name)
+            tables.append({
+                "name": name,
+                "real_table": name + SOFTDEL_SUFFIX,
+                "label": d["note"],
+                "fields": [
+                    {
+                        "name": c["name"],
+                        "type": c["type"],
+                        "nullable": c["nullable"],
+                        "label": c["note"],
+                    }
+                    for c in d["columns"]
+                ],
+            })
+        return {"tables": tables}
+    finally:
+        con.close()
 
 
 class FieldLabelUpdate(BaseModel):

@@ -4,7 +4,8 @@ from datetime import date
 from tools import TOOL_SCHEMAS, build_tool_functions, dispatch
 from services import UserInputRequired
 from config import setting
-from schema_store import get_all_tables_schema
+from runner import using
+from storage import render
 
 
 WRITE_TOOLS = {
@@ -65,7 +66,7 @@ def _finish(sink, text: str) -> str:
     return text
 
 
-def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trace,
+def run_agent(user_input: str, session, llm, trace,
               max_iterations: int = 10, emit=None):
     """Agent 主循环。emit 是可选的事件接收器，用于把过程推给前端。"""
     # 每轮开始时读一次配置，改完设置不必重启
@@ -82,12 +83,12 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
         session.compact(llm, keep_recent=setting("agent.keep_recent_turns"))
 
     start_time = time.time()
-    functions = build_tool_functions(llm, db_path, table_name, trace)
+    functions = build_tool_functions(llm, trace)
 
-    tables_list = "\n".join(
-        f"  - {t['name']}（{t['label'] or '未命名'}）"
-        for t in get_all_tables_schema()
-    )
+    # 库里全部的表定义，完整给——不是只给一个表名清单。
+    # design 工具层：查看表结构不是工具，是上下文（Agent 总是看得见）。
+    # 空库时 render 会明说"数据库当前没有任何表"，模型不会自己编表名。
+    tables_list = using(render)
     messages = [{"role": "system", "content": SYSTEM_PROMPT.format(
         today=date.today().isoformat(),
         tables=tables_list,

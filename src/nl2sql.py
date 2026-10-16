@@ -1,11 +1,11 @@
-from db import describe
+from storage import describe
 import yaml
 from datetime import date
 from llm import LLM
 from execute import execute_sql
 from guard import check_sql_safety, SecurityError
 import logging
-from config import load_config, resolve_db_url
+from config import load_config, resolve_db_path
 
 
 SYSTEM_PROMPT = """你是一个SQL生成助手。用户会用自然语言提问，你需要生成一条DuckDB兼容的SQL查询语句。
@@ -43,7 +43,7 @@ FIX_PROMPT = """你上次生成的SQL执行失败了，请修正。
 
 
 
-def get_schema(db_path: str, table_name: str) -> str:
+def get_schema(table_name: str) -> str:
     """拼装表结构描述：字段名 + 类型 + 必填/可空 + 中文含义。
 
     类型和必填是"事实"——从库读（describe）。
@@ -105,7 +105,7 @@ def fix_sql(question: str, bad_sql: str, error: str, llm: LLM, schema: str, tabl
 
 
 def generate_sql_with_retry(
-    question: str, llm: LLM, schema: str, db_path: str, table_name: str, max_retries: int = 2
+    question: str, llm: LLM, schema: str, table_name: str, max_retries: int = 2
 ):
     """返回 (sql, 重试次数)。写操作直接拒绝，不走自修正。"""
     sql = generate_sql(question, llm, schema, table_name)
@@ -117,7 +117,7 @@ def generate_sql_with_retry(
 
     for attempt in range(max_retries + 1):
         try:
-            execute_sql(sql, db_path)
+            execute_sql(sql)
             return sql, attempt
         except Exception as e:
             if attempt == max_retries:
@@ -132,15 +132,20 @@ def generate_sql_with_retry(
 
 
 if __name__ == "__main__":
-    cfg = load_config()["data"]
-    db_path = resolve_db_url()
-    llm = LLM()
-    schema = get_schema(db_path, cfg["table_name"])
+    # 手动试一次 nl2sql。表取库里第一张——不再是配置里那个"唯一那张表"。
+    from runner import using
+    from storage import list_tables
 
+    tables = using(list_tables)
+    if not tables:
+        raise SystemExit("库里还没有表。先在界面上传一个 Excel。")
+
+    table = tables[0]
+    llm = LLM()
+    schema = get_schema(table)
     question = "打回次数最多的项目是哪个"
-    sql, retries = generate_sql_with_retry(
-        question, llm, schema, db_path, cfg["table_name"], max_retries=2
-    )
+    sql, retries = generate_sql_with_retry(question, llm, schema, table, max_retries=2)
+    print(f"表：{table}")
     print(f"问题：{question}")
     print(f"SQL：{sql}")
     print(f"重试：{retries} 次")

@@ -5,7 +5,7 @@ from services._filters import find_candidates
 from audit import log
 from display import format_table
 from config import setting
-from db import execute
+from runner import execute
 
 
 CONFIRM_WORDS = {"确认", "确定", "是", "对", "好", "可以", "删", "删除", "删吧", "yes", "y", "ok"}
@@ -84,7 +84,7 @@ def is_bulk_confirm(text: str, expected_count: int) -> bool:
     return str(expected_count) in nums
 
 
-def execute_delete(candidates, db_path, real_table, trace_id, user_input):
+def execute_delete(candidates, real_table, trace_id, user_input):
     names = [c["project_name"] for c in candidates]
     placeholders = ",".join(["?"] * len(names))
     execute(

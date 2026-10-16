@@ -89,9 +89,10 @@
    ├── import / consistency / export / transform / add_column
    └── report（stats + charts + render + templates）
    ↓
-[数据层] db.py（统一访问层，收敛后端差异）
-   ├─ PostgreSQL（默认）
-   └─ DuckDB（本地单文件，保留兼容）
+[数据层] storage.py   表 · 软删除隔离 · 表定义 · 关系
+        snapshot.py  快照 · 回滚（破坏性操作前的退路）
+        runner.py    跑 SQL：连接 · 事务 · 超时
+   └─ SQLite 单文件
 
 [横切] guard（安全）· trace（可观测）· audit（审计）· cleanup（清理）· display（展示）
 ```
@@ -108,7 +109,8 @@
 
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv)
-- PostgreSQL（默认后端；也可改用本地的 DuckDB，见配置一节）
+
+**不需要装数据库。** 数据存在一个 SQLite 文件里，备份就是复制它。
 
 报告中转 PDF 用的是 Playwright 自带的 Chromium，不依赖系统浏览器 —— 装过之后到哪都一样。
 
@@ -131,26 +133,22 @@ uv run playwright install chromium
 DEEPSEEK_API_KEY=你的key
 ```
 
-`config.yaml` 指定数据源：
+`config.yaml` 只指定库文件放哪：
 
 ```yaml
 data:
-  excel_path: data/软著项目申报管理系统.xlsx
-  db_url: "postgresql://用户:密码@localhost:5432/库名?client_encoding=utf8"
-  table_name: projects
+  db_path: data/guixu.db
 ```
 
-数据库要换成 DuckDB，把 `db_url` 改成 `duckdb:///data/projects.duckdb` 即可 —— 两者的差异收敛在 `db.py` 一个文件里，其余代码不感知。
+（打包后会指向 `%LOCALAPPDATA%\GuiXu\data\`——安装目录不该塞用户数据。）
 
 模型地址、key、以及 Agent 行为（熔断上限、超时、压缩阈值）都能在 WebUI 的设置页里改，不必回来动配置文件。
 
 ### 导入数据
 
-```bash
-uv run src/ingest.py
-```
-
-Excel 是唯一的数据来源，列名映射、状态拆布尔字段、清洗都在这一个文件里。导入完会自动同步数据字典。
+**在界面上传。** 新建的库是空的（0 表 0 字段）——这是正常状态，不是故障。
+传一个 Excel，Agent 会先推测它可能是哪张表（或是一张新表）、跟已有的表有没有关联，
+推完问你一次，确认后建表灌数据。
 
 ### 启动
 
@@ -166,8 +164,8 @@ uv run uvicorn api:app --app-dir src
 |---|---|---|
 | 语言 | Python 3.12 | Agent 生态成熟 |
 | 包管理 | uv | 快、锁文件可靠 |
-| 数据库 | PostgreSQL | 生产形态；DuckDB 作为本地后端保留 |
-| 数据访问 | 自建 `db.py` | 读路径的后端差异收在这一个文件里 |
+| 数据库 | SQLite | 单文件、零依赖、备份即复制 |
+| 数据访问 | 自建 `storage.py` + `runner.py` | 结构理解与语句执行分开 |
 | 接口 | FastAPI + uvicorn | SSE 原生好写，Pydantic 兜住入参 |
 | 前端 | Vue 3 + marked（本地引入） | 无构建步骤，改完刷新即可 |
 | 模型 | DeepSeek | 性价比高，中文好 |
@@ -191,11 +189,11 @@ Agent 可以自主组合工具（删除时没找到目标 → 用查询搜索候
 
 工具只做"菜单 + 传话筒"，所有业务逻辑在 services。加新功能 = 加 service + 在 tools 里注册。
 
-### 4. 数据源抽象：读路径的差异只在一个文件
+### 4. 数据源：一个文件，两件事分开
 
-查询、表结构描述、行数统计都走 `db.py`，连 `?` 占位符到 PG 具名参数的改写也收在那里。换数据库是改一个字符串，不是改一轮代码。
+SQLite 单文件。备份 = 复制一个文件。**没有要起、要停、要占端口、要设密码的进程。**
 
-写路径是有意留的例外：`ingest.py` 要建表建视图，`api.py` 的 `/db/ping` 要探活，这两处直接拿驱动。
+这一层分两个模块，按关注点分：`storage.py` 管**库长什么样**（表、软删除隔离、表定义、关系），`runner.py` 管**把语句跑出去**（连接、事务、超时）。混在一起，改一个会碰另一个。
 
 ### 5. 数据字典只存"用户可改的"
 
@@ -247,7 +245,9 @@ src/
 ├── tools.py            工具定义与分发
 ├── display.py          统一 markdown 展示
 │
-├── db.py               数据访问层（PostgreSQL / DuckDB）
+├── storage.py          表 · 软删除隔离 · 表定义 · 关系
+├── snapshot.py         快照 · 回滚（破坏性操作前的退路）
+├── runner.py           跑 SQL：连接 · 事务 · 超时
 ├── schema_store.py     数据字典
 ├── config.py           配置与路径解析
 ├── config_store.py     模型配置卡片（configs.json + secrets.json）

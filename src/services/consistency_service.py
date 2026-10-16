@@ -1,7 +1,7 @@
 import json
 import pandas as pd
 from display import format_table
-from db import query_df
+from runner import query_df
 
 
 def _recompute_flags(status_raw: str) -> dict:

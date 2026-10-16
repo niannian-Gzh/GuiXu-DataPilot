@@ -1,6 +1,6 @@
 import pandas as pd
 from datetime import date, timedelta
-from db import query_df
+from runner import query_df
 
 
 EVENT_FIELDS = {

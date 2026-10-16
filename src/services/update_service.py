@@ -1,10 +1,10 @@
 import json
 from services import UserInputRequired, bulk_threshold
 from services._filters import find_candidates
-from db import describe
+from storage import describe
 from audit import log
 from display import format_table
-from db import execute
+from runner import execute
 
 
 FORBIDDEN_FIELDS = {"is_deleted", "deleted_at", "deleted_by", "delete_trace_id"}
@@ -106,7 +106,7 @@ def format_update_confirm(candidates: list, updates: dict) -> str:
     return text
 
 
-def execute_update(candidates, updates, db_path, real_table, trace_id, user_input):
+def execute_update(candidates, updates, real_table, trace_id, user_input):
     if "status_raw" in updates:
         updates = dict(updates)
         updates.update(recompute_status_flags(updates["status_raw"]))

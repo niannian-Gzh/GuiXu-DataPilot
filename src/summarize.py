@@ -61,7 +61,7 @@ def summarize(question: str, df, llm: LLM) -> str:
 
 if __name__ == "__main__":
     from config import load_config
-    from db import query_df
+    from runner import query_df
 
     cfg = load_config()["data"]
 

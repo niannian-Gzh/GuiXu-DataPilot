@@ -1,182 +1,145 @@
-"""数据字典——用户对当前数据源的字段标注。
+"""数据字典——**薄转发层**，真东西已经搬进库里了。
 
-只存"用户可改的"（中文含义）；类型、必填这些"事实"从 db.describe() 读。
-这样数据库变了（加列/改类型），字典不会过期。
+## 它从前是什么
+
+旧版把用户标注的中文含义存在 `schema_meta.json` 一个文件里，
+靠 mtime 缓存，还要 `refresh_from_db()` 定期跟库对账——因为
+**文件会跟库脱节**。
+
+## 它现在是什么
+
+标注存在库内的 `_gx_meta` 表里（`storage.set_note`），结构**实时读**
+（`storage.describe` 每次都走 PRAGMA）。于是"脱节"这件事不存在了，
+`refresh_from_db()` 只剩下一个用途：**发现库里冒出来的新表**——
+而那正是 `storage.repair()`。
+
+design 那句"没有硬编码、没有 JSON 文件、没有第二份"说的是这个。
+
+## 为什么还留着这个壳
+
+因为调用点有 13 处、散在 8 个文件，其中一半在**上层**
+（agent 拼提示词、nl2sql 渲染 schema、services 取字段中文名）。
+硬改它们等于提前做"逐层改造"那一轮的活。
+
+留着壳，**这一轮就能独立验证**：换完数据源，上层行为应该
+一模一样——不一样，就是数据层换错了，而不是上层也在改。
+
+**死期**：工具层 / 交互层改造时，调用方直接对 `storage` 说话，
+这个文件删掉。
 """
 
-import json
-import os
-import threading
-from config import PROJECT_ROOT
-import db as db_module
-
-
-META_PATH = PROJECT_ROOT / "schema_meta.json"
-
-_lock = threading.Lock()
-_cache = {"mtime": None, "data": None}
-
-
-def _empty() -> dict:
-    return {"version": 1, "tables": {}}
+from runner import connect, using
+import storage
+from storage import SOFTDEL_SUFFIX, describe as _describe, list_tables as _list
 
 
 def load() -> dict:
-    """读字典。带 mtime 缓存。文件不存在时返回空结构。"""
-    if not META_PATH.exists():
-        return _empty()
+    """整个字典，**旧形状**（`{"version", "tables": {表: {label, fields}}}`）。
 
-    try:
-        mtime = os.path.getmtime(META_PATH)
-    except OSError:
-        return _cache["data"] or _empty()
+    从库内 meta 现拼。保留旧形状是为了让 api.py 那几处少改。
+    """
+    def _build(con):
+        out = {"version": 1, "tables": {}}
+        for name in _list(con):
+            d = _describe(con, name)
+            out["tables"][name] = {
+                "label": d["note"],
+                "fields": {c["name"]: c["note"] for c in d["columns"]},
+            }
+        return out
 
-    if _cache["mtime"] == mtime and _cache["data"] is not None:
-        return _cache["data"]
-
-    with _lock:
-        if _cache["mtime"] != mtime:
-            try:
-                _cache["data"] = json.loads(META_PATH.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                _cache["data"] = _empty()
-            _cache["mtime"] = mtime
-
-    return _cache["data"]
+    return using(_build)
 
 
 def save(data: dict) -> None:
-    """写回字典，并让缓存立即失效。"""
-    with _lock:
-        META_PATH.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        _cache["data"] = data
-        try:
-            _cache["mtime"] = os.path.getmtime(META_PATH)
-        except OSError:
-            _cache["mtime"] = None
+    """把整个字典写回库。
+
+    逐条 `set_note`——**库内 meta 表就是真源**，没有第二份要同步。
+    """
+    def _write(con):
+        for table, info in (data.get("tables") or {}).items():
+            storage.set_note(con, table, "", (info or {}).get("label", ""))
+            for field, label in ((info or {}).get("fields") or {}).items():
+                storage.set_note(con, table, field, label or "")
+
+    using(_write)
 
 
 def get_table(table: str) -> dict:
     """取一张表的元数据。不存在时返回空壳。"""
-    meta = load()
-    return meta.get("tables", {}).get(table, {"label": "", "fields": {}})
+    return load().get("tables", {}).get(table, {"label": "", "fields": {}})
 
 
 def get_field_label(table: str, field: str) -> str:
-    """取字段的中文含义。未标注时回落到字段名。"""
+    """取字段的中文含义。未标注时回落到字段名。
+
+    回落是**有意的**：给模型看的东西里出现一个空字符串，它不知道
+    那是什么意思；出现字段名，它至少知道这是哪个字段。
+    """
     info = get_table(table)
     return info.get("fields", {}).get(field, "") or field
 
 
 def get_table_schema(table: str) -> dict:
-    """返回一张表的结构化 schema——字段名、类型、必填、中文含义。
+    """一张表的结构化 schema——字段名、类型、必填、中文含义。
 
-    table 是视图名（如 projects）。内部按约定转真实表（projects_all）读结构。
-
-    返回：
-      {
-        "name": "projects",
-        "real_table": "projects_all",
-        "label": "项目表",
-        "fields": [
-          {"name": "project_name", "type": "VARCHAR",
-           "nullable": False, "label": "项目名称"},
-          ...
-        ]
-      }
+    **旧形状**（`real_table` / `fields[].label`），给上层那两个
+    渲染器（agent 的表单、nl2sql 的 render_schema）继续用。
     """
-    real_table = f"{table}_all"
-    cols = db_module.describe(real_table)
+    def _build(con):
+        d = _describe(con, table)
+        return {
+            "name": table,
+            "real_table": table + SOFTDEL_SUFFIX,
+            "label": d["note"],
+            "fields": [
+                {
+                    "name": c["name"],
+                    "type": c["type"],
+                    "nullable": c["nullable"],
+                    "label": c["note"],
+                }
+                for c in d["columns"]
+            ],
+        }
 
-    meta = load()
-    table_meta = meta.get("tables", {}).get(table, {})
-    labels = table_meta.get("fields", {})
-
-    return {
-        "name": table,
-        "real_table": real_table,
-        "label": table_meta.get("label", ""),
-        "fields": [
-            {
-                "name": c["name"],
-                "type": c["type"],
-                "nullable": c.get("nullable", True),
-                "label": labels.get(c["name"], ""),
-            }
-            for c in cols
-        ],
-    }
+    return using(_build)
 
 
 def get_all_tables_schema() -> list:
-    """返回数据字典里所有表的结构化 schema。
-
-    来源是 schema_meta 里的 tables——它反映"用户已认知的表"。
-    库里存在但用户没标注过的表不出现在这里。
-    """
-    meta = load()
-    return [get_table_schema(t) for t in meta.get("tables", {}).keys()]
+    """所有业务表的结构化 schema（旧形状）。"""
+    return [get_table_schema(t) for t in using(_list)]
 
 
 def refresh_from_db() -> dict:
-    """把库里的表/字段同步进字典。
+    """跟库对账。**新设计里它只剩一件事**：把没保护的裸表补上。
 
-    规则：
-      - 库里有、字典里没有的表 → 加入，字段 label 留空
-      - 表已存在 → 补上新字段（label 空）；移除库里已不存在的字段
-      - 表的 label（用户起的名字）保留不动
-      - 视图不进字典（只收 base table）
-
-    返回 {"added_tables": [...], "added_fields": [...], "removed_fields": [...]}
+    返回的 key 保持旧形状（api.py 拿它显示"新增了几张表"）。
+    以前它还会同步字段增删——现在不需要了：结构是实时读的，
+    库里加一列，`describe()` 下一次就看见，字典没有"过期"这回事。
     """
-    meta = load()
-    if "tables" not in meta:
-        meta["tables"] = {}
-
-    # 视图和真实表在业务上是同一个东西，用视图名做 key
-    # （真实表 = 视图名 + "_all"）
-    tables_in_db = db_module.list_tables()
-
-    changes = {"added_tables": [], "added_fields": [], "removed_fields": []}
-
-    for real_table in tables_in_db:
-        # projects_all → projects
-        if real_table.endswith("_all"):
-            key = real_table[:-4]
-        else:
-            key = real_table
-
-        cols = db_module.describe(real_table)
-        col_names = [c["name"] for c in cols]
-
-        if key not in meta["tables"]:
-            meta["tables"][key] = {
-                "label": "",
-                "fields": {name: "" for name in col_names},
-            }
-            changes["added_tables"].append(key)
-        else:
-            existing = meta["tables"][key].setdefault("fields", {})
-            for name in col_names:
-                if name not in existing:
-                    existing[name] = ""
-                    changes["added_fields"].append(f"{key}.{name}")
-            for name in list(existing.keys()):
-                if name not in col_names:
-                    del existing[name]
-                    changes["removed_fields"].append(f"{key}.{name}")
-
-    save(meta)
-    return changes
+    result = using(storage.repair)
+    return {
+        "added_tables": [f.split("（")[0] for f in result["fixed"]],
+        "added_fields": [],
+        "removed_fields": [],
+        "skipped": result["skipped"],
+    }
 
 
 if __name__ == "__main__":
-    # 手动跑一次刷新
+    import sys
+
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+    print("当前字典：")
+    for name, info in load()["tables"].items():
+        label = info["label"] or "（未命名）"
+        print(f"  {name}（{label}）")
+        for field, note in info["fields"].items():
+            print(f"    {field:<16} {note}")
     changes = refresh_from_db()
-    print(f"新增表：{changes['added_tables']}")
-    print(f"新增字段：{changes['added_fields']}")
-    print(f"移除字段：{changes['removed_fields']}")
-    print(f"当前字典：{json.dumps(load(), ensure_ascii=False, indent=2)[:200]}...")
+    print(f"\n刷新：{changes}")

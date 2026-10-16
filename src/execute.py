@@ -1,13 +1,14 @@
 from guard import SecurityError
 from config import setting
-from db import query_df
+from runner import query_df
 
 
-def execute_sql(sql: str, db_path: str):
-    """执行 SQL。只允许 SELECT。带内存保护和超时保护。
+def execute_sql(sql: str):
+    """执行 SQL。只允许 SELECT，带内存保护和超时保护。
 
-    注意：db_path 参数保留，但已经不使用——数据源现在由 db.py 统一管理。
-    留着是为了不破坏调用方签名（agent / tools 还在传它）。
+    从前它收一个 `db_path`——那是"数据源是个要连的东西"时代的遗留，
+    里面的注释自己都写着"保留但已不使用"。现在归 runner 统一管库，
+    这个参数就彻底没了。
     """
     max_rows = setting("safety.max_rows")
     query_timeout = setting("safety.query_timeout")
