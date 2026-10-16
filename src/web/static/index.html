@@ -3,40 +3,50 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DataPilot · 数据处理 Agent</title>
+<title>归墟 · 数据处理 Agent</title>
+<!-- 后端在发这个页面时把「有没有 config.yaml」填进这条注释。
+     开机动画第 1 步要据此决定弹不弹配置表单——所以它必须在这里，
+     早于任何脚本，而不是等前端启动后再异步问一次（那样会闪一下）。 -->
+<!--__DP_CONFIGURED__-->
 <script>
-  /* 主题和开机跳过要在样式和模块加载前就定下来，
-     否则会先闪一下深色再切到浅色。放在这里当内联脚本，
-     是它唯一必须在解析期执行的理由 */
+  /* 开机跳过要在样式和模块加载前就定下来——晚一步就会先闪一下
+     开机动画再跳进工作台。放在这里当内联脚本，是它唯一必须在
+     解析期执行的理由。
+     （主题不再在这儿定：浅色已废弃，只有一套深色） */
   (function () {
-    var t = localStorage.getItem('dp_theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', t);
-    // 冷启动才播开机动画，刷新回来看过的就跳过
-    if (sessionStorage.getItem('dp_booted') === '1') {
+    /* 本标签页已经播过就跳过。键名必须和运行时 js/boot.js 收尾时写的是
+       同一个（dsh-startup-screen:shown）—— 一处定义，两处读。 */
+    if (sessionStorage.getItem('dsh-startup-screen:shown') === '1') {
       document.documentElement.setAttribute('data-boot', 'skip');
     }
   })();
 </script>
-<!-- Vue 和 marked 走 CDN：本项目没有构建步骤，走 import 的话
-     得先打包或改写成 ESM 版本，不值当。它们先于下面的 module 执行，
-     所以 main.js 里能直接用全局的 Vue / marked -->
-<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<!-- Vue 和 marked 放在本地，不走 CDN。
+     它们要先于下面的 module 执行，所以 main.js 里能直接用全局的 Vue / marked。
+     为什么本地化：这是一个要装到别人机器上、双击就用的桌面应用 ——
+     把两个库挂在别人家的 CDN 上，等于要求用户每次启动都能上外网，
+     和"用户什么都不用装"自相矛盾。
+     版本：vue 3.5.44 · marked 15.0.12，两个都是 MIT，文件头里留着许可声明 -->
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/vendor/marked.min.js"></script>
 
-<!-- CSS 按层叠顺序加载，顺序不可重排：
-     settings.css 里的「统一质感」依赖前面卡片的 background 简写已声明，
-     提前加载会被后者的 background 简写重置掉；
-     schema.css 复用 settings.css 的 .set-input / .set-head，且要在
-     同优先级下覆盖它（表名那格换成正文字体），必须排在它后面 -->
-<link rel="stylesheet" href="/css/base.css">
+<!-- 两张表，两件事，不重叠：
+       splash.css  开机动画（选择器一律挂在 #dsh-startup-root 下面）
+       app.css     工作台（整份从 docs/proto/workbench.html 搬来）
+     原来那种「六张表按层叠顺序互相覆盖」的排法是上一版的遗留——
+     它靠加载顺序解决冲突，等于每次改动都要重新推一遍谁的优先级高。
+     现在两边各管各的 DOM，没有一条规则需要覆盖另一条 -->
 <link rel="stylesheet" href="/css/splash.css">
-<link rel="stylesheet" href="/css/layout.css">
-<link rel="stylesheet" href="/css/chat.css">
-<link rel="stylesheet" href="/css/files.css">
-<link rel="stylesheet" href="/css/settings.css">
-<link rel="stylesheet" href="/css/schema.css">
+<link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
+
+<!-- 开机动画的挂载点和入场闸门。
+     必须写死在解析期、不能等 JS 建：晚一帧，黑底就会先漏出下面的应用界面。
+     两个 div 都在 #app【外面】—— 放里面会被 Vue 挂载时连根清掉。
+     闸门为什么非有不可：音频解锁只认用户手势，见 js/boot.config.js 的文件头 -->
+<div id="dsh-startup-root" class="dsu-root dsu-boot"></div>
+<div id="gate"><span>PRESS ANY KEY</span></div>
 
 <!-- 挂载点。页面结构全部在 js/components/ 里，
      这里保持空壳，是让 index.html 只剩入口职责 -->
@@ -45,12 +55,16 @@
        而不是白屏 -->
   <div id="boot-fallback" style="
     position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-    flex-direction:column;gap:16px;color:#8b949e;font-size:14px;
+    flex-direction:column;gap:16px;color:#919a9a;font-size:14px;
     font-family:-apple-system,'Microsoft YaHei',sans-serif;
   ">
     <div>正在启动…</div>
   </div>
 </div>
+
+<!-- 开机动画的宿主半侧：挂配置、开闸门、等手势。必须在应用之前 --
+     它等的那一下手势，正是音频解锁要的那一下，所以顺序不能颠倒 -->
+<script src="/js/boot.config.js"></script>
 
 <script type="module">
   // 动态 import 才能捕获加载失败。uvicorn --reload 重启的瞬间，
@@ -60,7 +74,7 @@
   // 会把这段脚本整个重新执行一遍，变量每次归零，计数器永远到不了上限，
   // 服务真起不来时就变成每 2 秒无限刷新。sessionStorage 刷新还在、
   // 关掉标签页才清，正好是「这个页面还没起来」这个粒度
-  const BOOT_TRIES = 'dp_boot_retries';
+  const BOOT_TRIES = 'gx_boot_retries';
   const MAX_TRIES = 3;
   const tries = Number(sessionStorage.getItem(BOOT_TRIES) || 0);
 
@@ -78,7 +92,7 @@
 
       const btn = document.createElement('button');
       btn.textContent = '重新加载';
-      btn.style.cssText = 'padding:8px 20px;border:1px solid #4d6bfe;background:transparent;color:#4d6bfe;border-radius:8px;cursor:pointer;font-size:14px;font-family:inherit;';
+      btn.style.cssText = 'padding:8px 20px;border:1px solid #3d7dff;background:transparent;color:#3d7dff;border-radius:2px;cursor:pointer;font-size:14px;font-family:inherit;';
       // 手动点是有明确意愿的，把额度还回去，别让上一次的失败拖累这一次
       btn.onclick = () => { sessionStorage.removeItem(BOOT_TRIES); location.reload(); };
 

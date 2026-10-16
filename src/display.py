@@ -12,13 +12,3 @@ def format_table(rows: list[dict]) -> str:
         cells = ["" if row.get(c) is None else str(row.get(c)) for c in columns]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
-
-
-def format_list(items: list[str]) -> str:
-    """列表 → markdown 无序列表。"""
-    return "\n".join(f"- {item}" for item in items)
-
-
-def format_quote(text: str) -> str:
-    """文本 → markdown 引用块。"""
-    return "\n".join(f"> {line}" for line in text.split("\n"))

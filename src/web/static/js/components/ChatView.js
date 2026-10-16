@@ -1,7 +1,17 @@
-/* 中栏：会话头、轨迹页、对话流、输入区。
-   这是最大的一块，承载工具卡片、思考气泡、产物卡片、确认卡片 */
+/* 工作区：会话头、对话流、轨迹页、输入区、产物栏、预览弹窗。
+   这是最大的一块，承载工具行、思考链、产物卡、确认卡。
+
+   DOM 结构和类名一律照 docs/proto/workbench.html —— 那边的样式是
+   整体搬进 css/app.css 的，这边要是自己另起一套名字，两边就对不上了 */
+import { guixuMark } from '../mark.js';
+/* 产物栏现在是工作区【内部】的一列，所以由 ChatView 渲染它。
+   components 是局部注册 —— main.js 里注册过不算数，
+   这个模板里要用就得在这儿再注册一次（不然它会被当成未知标签，渲染成空） */
+import FilesPanel from './FilesPanel.js';
+
 export default {
   name: 'ChatView',
+  components: { FilesPanel },
   setup() {
     // 共享 store 展开后仍是 ref 对象本身，响应性不丢，
     // 模板里的插值和事件绑定一个字都不用改
@@ -10,292 +20,267 @@ export default {
     // 循环内的 t 是 turn 对象，会把 store 里的字典 t 遮住——
     // 循环里那些本该取词的地方就取成了 turn 上不存在的字段，
     // 按钮有框无字（取消、预览、无输出提示都栽在这上面）
-    return { ...store, i18n: store.t };
+    const t = store.t;
+
+    /* 时间基准。用本地日期，不用 toISOString——
+       那个是 UTC，东八区晚上八点后会显示成第二天 */
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-`
+                + String(d.getDate()).padStart(2, '0');
+
+    /* 空态那三条快捷语。
+       它们不是提示文案——点了会【直接发出去】，所以按"一句话"的标准要求：
+
+       ① 自足。第一句前面没有前文，所以「这些表」「那么那张表」这种回指
+          会让 agent 反问"你指哪张"。用户点的是"帮你开口"的按钮，
+          收到的却是一句反问，那这个按钮比不给还差。
+       ② 是真人会说的第一句。所以不能把答案写进问题里
+          （「这 2 张表各有多少行」是在展示数据，不是在给他一个开口的方式）。
+       ③ 三条递进：容器有多大 → 近期有什么动静 → 能出什么活。
+          前两条"看"，第三条"做"——它顺带把摸底也做了，agent 要写日报
+          就得先搞清楚有哪些表、各有哪些字段。
+
+       第二条为什么不是"每张表各有多少条数据"：那是一次性的元信息，
+          用户看完就知道了，不会再问第二遍。而"最近有什么变动"是有时效的，
+          每天打开问一次都成立——快捷语该是后一种
+
+       所以它们不跟着数据源生成。带表名字段名的句子对第二个用户就不成立了，
+       而这三句换个数据源照样自足、照样是真话 */
+    const tries = [
+      '我们有几张表？',
+      '最近有什么数据变动了？',
+      '帮我写一篇今天的日报',
+    ];
+
+    /* 模型切换器（输入框里那个）。展开态原型没画，所以这一小块是补的：
+       贴着按钮上沿浮出来的小面板，用弹窗那套令牌，但不加遮罩——
+       换个模型不该把整个工作区压暗一次。
+
+       点别处收起：靠一个 document 上的监听，而不是遮罩层。
+       遮罩层为了「点外面能关」这一件事，要往页面上盖一张全屏的东西，
+       代价比收益大 */
+    const pickOpen = Vue.ref(false);
+    const pickWrap = Vue.ref(null);
+
+    /* 模型清单是问上游要的，所以懒加载：没展开过就不请求 */
+    const openPick = () => {
+      pickOpen.value = !pickOpen.value;
+      if (pickOpen.value && !store.modelOptions.value.length) store.loadModelOptions();
+    };
+
+    const pickModel = async (name) => {
+      pickOpen.value = false;
+      await store.switchModel(name);
+    };
+
+    const onDocClick = (e) => {
+      if (!pickOpen.value) return;
+      const el = pickWrap.value;
+      if (el && !el.contains(e.target)) pickOpen.value = false;
+    };
+
+    Vue.onMounted(() => document.addEventListener('click', onDocClick));
+    Vue.onUnmounted(() => document.removeEventListener('click', onDocClick));
+
+    return { ...store, i18n: t, today, tries, pickOpen, pickWrap, openPick, pickModel };
   },
   template: `
-  <main class="col glass" style="overflow:hidden">
-    <div class="chat-head">
-      <button v-if="leftShut" class="icon-btn" @click="leftShut = false" title="展开左侧栏">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="9 18 15 12 9 6"></polyline>
+<main class="stage">
+
+  <!-- 工作区头分两层：上面是「这是哪个会话」，一条线，下面是「看它的哪一面」。
+       线是这两层之间唯一的分隔手段 —— 它得在，因为上下说的是两件事。
+
+       空态没有头：不放标题、不放分隔线、不放切换。
+       「新会话」这三个字是废话，用户点进来当然知道这是新会话。
+       而且空态还不到「切哪一面」的时候——两个视图都是空的 -->
+  <div class="stage-head" v-if="turns.length">
+    <div class="stage-bar">
+      <button v-if="leftShut" class="rail-icon" @click="leftShut = false" title="展开左侧栏">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+          <path d="M10 3 5 8l5 5"/>
         </svg>
       </button>
-      <div class="chat-title">
-        {{ leftTab === 'trace' ? '执行轨迹' : currentTitle }}
+      <span class="stage-title">{{ currentTitle }}</span>
+      <div class="stage-meta">
+        <span class="t-meta">第 {{ turns.length }} 轮</span>
+        <span class="t-meta" v-if="lastElapsed != null">上轮 {{ lastElapsed }}ms</span>
       </div>
-      <!-- 只在右栏收起时出现。展开后右栏自己头部就有收起入口，
-           这里再留一个「收起右栏」是两个按钮干同一件事 -->
-      <button v-if="leftTab === 'sessions' && !railOpen" class="btn"
-              @click="toggleRail" title="展开右侧栏（产物）">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-             stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-          <line x1="15" y1="3" x2="15" y2="21"></line>
-        </svg>
-        {{ t.artifacts }}
-      </button>
     </div>
 
-    <!-- ---------- 轨迹页：独立视图，占满中栏 ---------- -->
-    <div v-if="leftTab === 'trace'" class="trace-page">
-      <div class="trace-page-inner">
+    <!-- 对话 / 轨迹：这是【这一个会话】的两个面，所以它在工作区里。
+         放左栏等于把它说成「会话列表的另一个模式」，那是另一回事。
+         见 docs/design-language.md 5.6 -->
+    <div class="vtabs">
+      <button :class="{on: leftTab === 'sessions'}"
+              @click="leftTab = 'sessions'">对话</button>
+      <button :class="{on: leftTab === 'trace'}"
+              @click="leftTab = 'trace'">轨迹</button>
+    </div>
+  </div>
 
-        <div v-if="!allTools.length" class="empty-note" style="padding:60px 0">
-          本次会话还没有工具调用<br>
-          <span style="font-size:11px">{{ t.traceEmpty }}</span>
+  <!-- ---------- 轨迹页 ----------
+       它回答的是「刚才那几分钟，它到底干了什么、卡在哪」。
+       骨架仿 DeepSeek Harness：指标 → 时间轴 → 分组流 → 详情。
+       砍掉了它那套 Payload / Schema / JSON —— 那是给工程师 debug 的，
+       我们的用户是拖 Excel 进来问问题的人 -->
+  <div v-if="leftTab === 'trace'" class="trace">
+
+    <div v-if="!allTools.length" class="empty-note" style="padding:60px 0">
+      本次会话还没有工具调用<br>
+      <span style="font-size:11px">{{ i18n.traceEmpty }}</span>
+    </div>
+
+    <template v-else>
+      <!-- ① 指标条：它回答「这次一共费了多少」 -->
+      <div class="trace-stats">
+        <div class="stat">
+          <span class="stat-k">对话轮次</span>
+          <span class="stat-v">{{ roundsWithTools.length }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-k">工具调用</span>
+          <span class="stat-v">{{ allTools.length }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-k">工具总耗时</span>
+          <span class="stat-v">{{ (totalToolMs / 1000).toFixed(1) }}<span class="stat-u">秒</span></span>
+        </div>
+        <div class="stat">
+          <span class="stat-k">最慢一步</span>
+          <span class="stat-v">{{ maxToolMs }}<span class="stat-u">毫秒</span></span>
+        </div>
+      </div>
+
+      <!-- ② 时间轴：一条 = 一轮，色块长度 = 那一步的耗时。
+           所有轮共用同一个比例尺（maxRoundMs），所以第 1 轮比第 3 轮长
+           是真的长——按各轮自己归一化的话每轮都会被拉满，就白画了 -->
+      <div class="gantt">
+        <div v-for="r in roundsWithTools" :key="r.roundIndex"
+             class="gantt-row" :class="{run: r.running}">
+          <span class="gantt-no">第 {{ r.roundIndex + 1 }} 轮</span>
+          <div class="gantt-track">
+            <i v-for="(t, ti) in r.tools" :key="ti"
+               :style="{ width: Math.max(1.5, (t.ms || 0) / maxRoundMs * 100) + '%' }"
+               :class="t.state"></i>
+          </div>
+          <span class="gantt-ms">{{ (r.totalMs / 1000).toFixed(1) }}s</span>
+        </div>
+      </div>
+
+      <!-- ③ 分组流：一轮一组，一组里是「Agent 做的每一件事」 -->
+      <div v-for="r in roundsWithTools" :key="r.roundIndex"
+           class="round" :id="'round-' + r.roundIndex">
+        <div class="round-head">
+          <span class="round-no">第 {{ r.roundIndex + 1 }} 轮</span>
+          <span class="round-q">{{ r.question }}</span>
+          <span class="round-at">{{ (r.totalMs / 1000).toFixed(1) }}s · {{ r.tools.length }} 步</span>
         </div>
 
-        <template v-else>
-          <dl class="trace-summary">
-            <div><dt>总步数</dt><dd>{{ allTools.length }}</dd></div>
-            <div><dt>工具耗时</dt><dd>{{ (totalToolMs / 1000).toFixed(1) }}s</dd></div>
-            <div><dt>成功</dt><dd style="color:var(--ok)">{{ stateCount.ok }}</dd></div>
-            <div><dt>失败 / 拒绝</dt>
-              <dd :style="{color: (stateCount.err + stateCount.warn) ? 'var(--err)' : null}">
-                {{ stateCount.err + stateCount.warn }}
-              </dd>
-            </div>
-          </dl>
+        <template v-for="(t, ti) in r.tools" :key="ti">
+          <button class="step" :class="[t.state, {open: t.open}]"
+                  @click="t.open = !t.open">
+            <span class="step-nm">{{ t.name }}</span>
+            <span class="step-arg">{{ toolGist(t) }}</span>
+            <span class="step-ms">{{ t.ms != null ? t.ms + 'ms' : '—' }}</span>
+            <span class="step-badge" :class="t.state">{{ stateLabel(t.state) }}</span>
+          </button>
 
-          <div v-for="r in roundsWithTools" :key="r.roundIndex"
-               class="trace-round" :id="'round-' + r.roundIndex">
-            <div class="trace-round-head">
-              <span class="no">第 {{ r.roundIndex + 1 }} 轮</span>
-              <span class="q">{{ r.question }}</span>
-              <span class="m">{{ r.tools.length }} 步 · {{ (r.totalMs / 1000).toFixed(1) }}s</span>
-            </div>
+          <!-- 就地展开，不做侧滑面板 —— 点开的东西就该在点的地方长出来 -->
+          <div class="step-detail" v-if="t.open">
+            <dl class="kv" v-if="t.args && Object.keys(t.args).length">
+              <template v-for="(v, k) in t.args" :key="k">
+                <dt>{{ k }}</dt>
+                <dd>{{ fmtVal(v) }}</dd>
+              </template>
+            </dl>
 
-            <div v-for="(t, ti) in r.tools" :key="ti" class="trace-step" :class="t.state">
-              <div class="step-head" @click="t.open = !t.open">
-                <span class="step-name">{{ t.name }}</span>
-                <span class="step-arg">{{ toolGist(t) }}</span>
-                <span class="step-ms">{{ t.ms != null ? t.ms + 'ms' : '—' }}</span>
-                <span class="step-state" :class="t.state">{{ stateLabel(t.state) }}</span>
-              </div>
+            <template v-if="t.parsed && t.parsed.sql">
+              <div class="detail-k">执行语句</div>
+              <pre v-html="highlightSql(t.parsed.sql)"></pre>
+            </template>
 
-              <div class="step-bar" v-if="t.ms != null">
-                <i :style="{ width: Math.max(2, (t.ms / maxToolMs) * 100) + '%' }"
-                   :class="t.state"></i>
-              </div>
-
-              <div class="step-body" v-if="t.open">
-                <dl class="kv" v-if="t.args && Object.keys(t.args).length">
-                  <template v-for="(v, k) in t.args" :key="k">
-                    <dt>{{ k }}</dt>
-                    <dd>{{ fmtVal(v) }}</dd>
-                  </template>
-                </dl>
-                <div class="sql" v-if="t.parsed && t.parsed.sql"
-                     v-html="highlightSql(t.parsed.sql)"></div>
-                <div class="rawbox" v-if="t.parsed">{{ prettyJson(t.parsed) }}</div>
-                <div class="rawbox" v-else-if="t.raw">{{ t.raw }}</div>
-                <div class="set-hint" v-else>{{ i18n.noToolOutput }}</div>
-              </div>
-            </div>
+            <div class="detail-k" v-if="t.parsed">结果</div>
+            <pre v-if="t.parsed">{{ prettyJson(t.parsed) }}</pre>
+            <pre v-else-if="t.raw">{{ t.raw }}</pre>
+            <div class="detail-rows" v-else>{{ i18n.noToolOutput }}</div>
           </div>
         </template>
+      </div>
+    </template>
+  </div>
 
+  <!-- ---------- 空态 ----------
+       一块待机的暗面：标记、一句话、三个例子，别的都不要。
+       这里没有读数表——「数据源 / 模型 / 时间」那三行是仪表盘的做法，
+       用户点进来是想问一句话，不是想读一份体检报告 -->
+  <div v-else-if="!turns.length && !busy" class="void">
+    <!-- 标记和文字块是【并列】的两块，不是父子：
+         两者都相对 .void 定位，标记钉在正中心、文字从中心往下排。
+         把标记放进 .void-in 里的话，那个绝对定位的块就成了它的包含块，
+         标记会跟着文字跑 -->
+    <div class="void-mark">${guixuMark()}</div>
+
+    <div class="void-in">
+      <div class="void-h">{{ i18n.welcomeTitle }}</div>
+      <div class="void-s">{{ i18n.welcomeSubtitle }}</div>
+
+      <div class="void-try">
+        <div class="void-rule"></div>
+        <button v-for="(q, i) in tries" :key="i" class="try" @click="ask(q)">{{ q }}</button>
       </div>
     </div>
+  </div>
 
-    <!-- ---------- 对话视图 ---------- -->
-    <template v-else>
-    <div class="chat-body">
-    <div class="stream" ref="streamEl">
-      <div class="stream-inner">
+  <!-- ---------- 对话流 ---------- -->
+  <div v-else class="stream" ref="streamEl">
+    <div class="thread">
+      <div v-for="(t, ti) in turns" :key="ti">
 
-        <!-- 欢迎屏 -->
-        <div v-if="!turns.length && !busy" class="hello">
-          <div class="hello-mark">
-            <svg viewBox="0 0 48 48" fill="none">
-              <defs>
-                <linearGradient id="hm-lit" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
-                  <stop offset="0" stop-color="var(--rose-hi)"/>
-                  <stop offset="0.5" stop-color="var(--rose-mid)"/>
-                  <stop offset="1" stop-color="var(--rose-mid)" stop-opacity=".62"/>
-                </linearGradient>
-                <linearGradient id="hm-shade" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
-                  <stop offset="0" stop-color="var(--rose-mid)"/>
-                  <stop offset="0.5" stop-color="var(--rose-lo)"/>
-                  <stop offset="1" stop-color="var(--rose-lo)" stop-opacity=".48"/>
-                </linearGradient>
-                <linearGradient id="hm-tick" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
-                  <stop offset="0" stop-color="var(--mark)" stop-opacity=".72"/>
-                  <stop offset="1" stop-color="var(--mark)" stop-opacity=".3"/>
-                </linearGradient>
-                <linearGradient id="hm-ring" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
-                  <stop offset="0" stop-color="var(--mark)" style="stop-opacity:var(--ring-hi)"/>
-                  <stop offset="0.5" stop-color="var(--mark)" style="stop-opacity:var(--ring-mid)"/>
-                  <stop offset="1" stop-color="var(--mark)" style="stop-opacity:var(--ring-lo)"/>
-                </linearGradient>
-                <!-- 扫掠尾迹：透明起、亮收，头部才是光点 -->
-                <linearGradient id="hm-arc" gradientUnits="userSpaceOnUse"
-                                x1="24" y1="3" x2="38.85" y2="9.15">
-                  <stop offset="0" stop-color="var(--rose-mid)" stop-opacity="0"/>
-                  <stop offset="0.55" stop-color="var(--rose-mid)" stop-opacity=".45"/>
-                  <stop offset="1" stop-color="var(--rose-hi)" stop-opacity=".95"/>
-                </linearGradient>
-                <radialGradient id="hm-core">
-                  <stop offset="0" stop-color="var(--rose-core-hi)"/>
-                  <stop offset="0.45" stop-color="var(--rose-core)"/>
-                  <stop offset="1" stop-color="var(--rose-core)" stop-opacity=".22"/>
-                </radialGradient>
-                <radialGradient id="hm-halo">
-                  <stop offset="0" stop-color="var(--rose-hi)" style="stop-opacity:var(--rose-halo)"/>
-                  <stop offset="0.55" stop-color="var(--rose-hi)" style="stop-opacity:calc(var(--rose-halo) * .38)"/>
-                  <stop offset="1" stop-color="var(--rose-hi)" stop-opacity="0"/>
-                </radialGradient>
-                <filter id="hm-glow" x="-300%" y="-300%" width="700%" height="700%">
-                  <feGaussianBlur stdDeviation="1.4"/>
-                </filter>
-                <filter id="hm-spark" x="-400%" y="-400%" width="900%" height="900%">
-                  <feGaussianBlur stdDeviation="0.45"/>
-                </filter>
-              </defs>
-
-              <circle cx="24" cy="24" r="23.5" fill="url(#hm-halo)"/>
-
-              <!-- 12 个方位各一条径向细线，0/90/180/270 为主刻度 -->
-              <g class="hm-ticks" stroke="url(#hm-tick)">
-                <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.22" transform="rotate(0 24 24)"/>
-                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(30 24 24)"/>
-                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(60 24 24)"/>
-                <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.22" transform="rotate(90 24 24)"/>
-                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(120 24 24)"/>
-                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(150 24 24)"/>
-                <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.22" transform="rotate(180 24 24)"/>
-                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(210 24 24)"/>
-                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(240 24 24)"/>
-                <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.22" transform="rotate(270 24 24)"/>
-                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(300 24 24)"/>
-                <line x1="24" y1="2.8" x2="24" y2="0.8" stroke-width=".74" transform="rotate(330 24 24)"/>
-              </g>
-              <circle class="hm-ring" cx="24" cy="24" r="14"
-                      stroke="url(#hm-ring)" stroke-width=".8"></circle>
-
-              <g class="hm-rose">
-                <path d="M24 5 L24 19.5 L19.5 24 Z"  fill="url(#hm-lit)"/>
-                <path d="M24 5 L28.5 24 L24 19.5 Z"  fill="url(#hm-shade)"/>
-                <path d="M24 43 L24 28.5 L19.5 24 Z" fill="url(#hm-lit)"   opacity=".88"/>
-                <path d="M24 43 L28.5 24 L24 28.5 Z" fill="url(#hm-shade)" opacity=".88"/>
-                <path d="M43 24 L24 19.5 L28.5 24 Z" fill="url(#hm-lit)"   opacity=".94"/>
-                <path d="M43 24 L28.5 24 L24 28.5 Z" fill="url(#hm-shade)" opacity=".94"/>
-                <path d="M5 24 L24 19.5 L19.5 24 Z"  fill="url(#hm-lit)"   opacity=".94"/>
-                <path d="M5 24 L19.5 24 L24 28.5 Z"  fill="url(#hm-shade)" opacity=".94"/>
-
-                <circle cx="24" cy="24" r="3.4" fill="var(--rose-hi)"
-                        style="opacity:var(--rose-core-glow)" filter="url(#hm-glow)"></circle>
-                <circle cx="24" cy="24" r="2.5" fill="url(#hm-core)"></circle>
-                <circle cx="24" cy="6.9" r="1.15" fill="var(--rose-spark)"
-                        opacity=".95" filter="url(#hm-spark)"></circle>
-              </g>
-
-              <!-- 扫描弧：盘面静止，只有这道光在转。罗盘转起来「指向」就没了意义，
-                   扫掠才是「工具正在工作」的表达。
-                   巡航半径从 19 提到 21——19 正好是芒尖尖端的位置，光点会撞上去 -->
-              <g class="hm-sweep">
-                <circle class="hm-sweep-glow" cx="38.85" cy="9.15" r="3.4"
-                        fill="var(--rose-hi)" opacity=".26"></circle>
-                <path class="hm-sweep-arc" d="M24 3 A21 21 0 0 1 38.85 9.15"
-                      stroke="url(#hm-arc)" stroke-width="1.9"
-                      stroke-linecap="round" fill="none"></path>
-                <circle class="hm-sweep-dot" cx="38.85" cy="9.15" r="1.6"
-                        fill="var(--rose-mid)"></circle>
-                <circle class="hm-sweep-dot" cx="38.85" cy="9.15" r=".7"
-                        fill="var(--rose-hi)"></circle>
-              </g>
-            </svg>
+        <!-- 你说的话 -->
+        <div class="turn op" v-if="t.question">
+          <div class="turn-head">
+            <span class="turn-who">你</span>
+            <span class="turn-rule"></span>
+            <span class="turn-at">{{ clockTime(t.askedAt) }}</span>
           </div>
-          <h2>{{ t.welcomeTitle }}</h2>
-          <p>{{ t.welcomeSubtitle }}</p>
-          <div class="hello-chips">
-            <button class="chip" v-for="q in samples" :key="q" @click="ask(q)">{{ q }}</button>
-          </div>
+          <div class="turn-text">{{ t.question }}</div>
         </div>
 
-        <!-- 对话轮次 -->
-        <div v-for="(t, ti) in turns" :key="ti" class="turn">
-          <div class="turn-user" v-if="t.question">
-            <div class="bubble">{{ t.question }}</div>
+        <!-- 归墟那一侧。它有小头像——「谁在说话」一眼可辨，
+             比读一个标签快得多 -->
+        <div class="turn ag has-av">
+          <div class="turn-av">${guixuMark()}</div>
+          <div class="turn-head">
+            <span class="turn-who">归墟</span>
+            <span class="turn-rule"></span>
+            <span class="turn-at">{{ clockTime(t.answeredAt) }}</span>
           </div>
 
-          <div class="turn-bot" style="margin-top:12px">
-            <div class="avatar">
-              <!-- 21px 下刻度环会糊成一团，这里去掉环，只留芒星、航迹弧和落点 -->
-              <svg viewBox="0 0 48 48" fill="none">
-                <defs>
-                  <linearGradient id="av-lit" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
-                    <stop offset="0" stop-color="var(--rose-hi)"/>
-                    <stop offset="0.5" stop-color="var(--rose-mid)"/>
-                    <stop offset="1" stop-color="var(--rose-mid)" stop-opacity=".62"/>
-                  </linearGradient>
-                  <linearGradient id="av-shade" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
-                    <stop offset="0" stop-color="var(--rose-mid)"/>
-                    <stop offset="0.5" stop-color="var(--rose-lo)"/>
-                    <stop offset="1" stop-color="var(--rose-lo)" stop-opacity=".48"/>
-                  </linearGradient>
-                  <linearGradient id="av-arc" gradientUnits="userSpaceOnUse"
-                                  x1="9.28" y1="32.5" x2="35.6" y2="11.6">
-                    <stop offset="0" stop-color="var(--rose-mid)" stop-opacity="0"/>
-                    <stop offset="0.55" stop-color="var(--rose-mid)" stop-opacity=".38"/>
-                    <stop offset="1" stop-color="var(--rose-mid)" stop-opacity=".8"/>
-                  </linearGradient>
-                  <radialGradient id="av-core">
-                    <stop offset="0" stop-color="var(--rose-core-hi)"/>
-                    <stop offset="0.45" stop-color="var(--rose-core)"/>
-                    <stop offset="1" stop-color="var(--rose-core)" stop-opacity=".22"/>
-                  </radialGradient>
-                  <filter id="av-glow" x="-300%" y="-300%" width="700%" height="700%">
-                    <feGaussianBlur stdDeviation="1.4"/>
-                  </filter>
-                </defs>
+          <!-- 阶段提示。「正在理解你的问题…」不是对话内容，是过程读数 -->
+          <div v-if="t.stage" class="turn-stage" :class="{run: busy}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-6.22-8.56"></path>
+            </svg>
+            {{ t.stage }}
+          </div>
 
-                <path d="M24 5 L24 19.5 L19.5 24 Z"  fill="url(#av-lit)"/>
-                <path d="M24 5 L28.5 24 L24 19.5 Z"  fill="url(#av-shade)"/>
-                <path d="M24 43 L24 28.5 L19.5 24 Z" fill="url(#av-lit)"   opacity=".88"/>
-                <path d="M24 43 L28.5 24 L24 28.5 Z" fill="url(#av-shade)" opacity=".88"/>
-                <path d="M43 24 L24 19.5 L28.5 24 Z" fill="url(#av-lit)"   opacity=".94"/>
-                <path d="M43 24 L28.5 24 L24 28.5 Z" fill="url(#av-shade)" opacity=".94"/>
-                <path d="M5 24 L24 19.5 L19.5 24 Z"  fill="url(#av-lit)"   opacity=".94"/>
-                <path d="M5 24 L19.5 24 L24 28.5 Z"  fill="url(#av-shade)" opacity=".94"/>
+          <!-- 思考与工具共用一条时间线。
+               它们本来就是先后发生的，按 SSE 到达顺序排就够了，
+               不必再按轮次重组——重组反而要处理历史会话缺 round 的情况 -->
+          <div class="tools" v-if="t.tools.length">
+            <template v-for="(tool, i) in t.tools" :key="i">
 
-                <!-- 弧比大尺寸粗：2.4 到 21px 上只剩一个像素 -->
-                <path d="M9.28 32.5 A17 17 0 0 1 35.6 11.6" stroke="url(#av-arc)"
-                      stroke-width="2.4" stroke-linecap="round" fill="none"/>
-                <circle cx="35.6" cy="11.6" r="2" fill="var(--rose-mid)"></circle>
-                <circle cx="35.6" cy="11.6" r=".9" fill="var(--rose-hi)"></circle>
-
-                <circle cx="24" cy="24" r="3.2" fill="var(--rose-hi)"
-                        style="opacity:var(--rose-core-glow)" filter="url(#av-glow)"></circle>
-                <circle cx="24" cy="24" r="2.4" fill="url(#av-core)"></circle>
-              </svg>
-            </div>
-            <div class="turn-body">
-
-              <!-- 阶段提示 -->
-              <div v-if="t.stage" class="stage" :class="{run: busy}">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                     stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 12a9 9 0 1 1-6.22-8.56"></path>
-                </svg>
-                {{ t.stage }}
-              </div>
-
-              <!-- 思考与工具共用一条时间线。
-                   它们本来就是先后发生的，按 SSE 到达顺序排就够了，
-                   不必再按轮次重组——重组反而要处理历史会话缺 round 的情况 -->
-              <template v-for="(tool, i) in t.tools" :key="i">
-
-              <!-- 思考气泡（模型的思维链） -->
-              <div v-if="tool.kind === 'think'" class="think"
-                   :class="{open: tool.open}">
+              <!-- 思考链。语气比工具更轻——它是「过程」，不是「动作」 -->
+              <div v-if="tool.kind === 'think'" class="think" :class="{open: tool.open}">
                 <button class="think-head" @click="tool.open = !tool.open">
                   <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                        stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="9 18 15 12 9 6"></polyline>
                   </svg>
-                  <span class="think-label">{{ tool.round ? '思考 · 第 ' + tool.round + ' 轮' : '思考' }}</span>
+                  <span class="think-label">
+                    {{ tool.round ? '思考 · 第 ' + tool.round + ' 轮' : '思考' }}
+                  </span>
                   <span class="think-gist">{{ thinkGist(tool.text) }}</span>
                 </button>
                 <div class="think-body" v-if="tool.open">{{ tool.text }}</div>
@@ -308,37 +293,10 @@ export default {
                        stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="9 18 15 12 9 6"></polyline>
                   </svg>
-                  <span class="tool-name">{{ tool.name }}</span>
-                  <span class="tool-gist">{{ toolGist(tool) }}</span>
-                  <span class="tool-time" v-if="tool.ms != null">{{ tool.ms }}ms</span>
-                  <span class="tool-dot" :class="tool.state">
-                    <svg v-if="tool.state === 'ok'" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="3.4" stroke-linecap="round"
-                         stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    <svg v-else-if="tool.state === 'err'" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="3.4" stroke-linecap="round"
-                         stroke-linejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18"></line>
-                      <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                    <svg v-else-if="tool.state === 'warn'" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="3" stroke-linecap="round"
-                         stroke-linejoin="round">
-                      <line x1="12" y1="8" x2="12" y2="13"></line>
-                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                    </svg>
-                    <svg v-else-if="tool.state === 'wait'" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="3" stroke-linecap="round"
-                         stroke-linejoin="round">
-                      <line x1="9" y1="7" x2="9" y2="17"></line>
-                      <line x1="15" y1="7" x2="15" y2="17"></line>
-                    </svg>
-                    <svg v-else-if="tool.state === 'cancel'" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="3.2" stroke-linecap="round"
-                         stroke-linejoin="round">
-                      <line x1="7" y1="12" x2="17" y2="12"></line>
-                    </svg>
-                  </span>
+                  <span class="nm">{{ tool.name }}</span>
+                  <span class="arg">{{ toolGist(tool) }}</span>
+                  <span class="ms" v-if="tool.ms != null">{{ tool.ms }}ms</span>
+                  <span class="st" :class="tool.state">{{ stateLabel(tool.state) }}</span>
                 </button>
 
                 <div class="tool-body" v-if="tool.open">
@@ -357,229 +315,273 @@ export default {
                 </div>
               </div>
 
-              </template>
+            </template>
+          </div>
 
-              <!-- 确认卡片 -->
-              <div v-if="t.confirm" class="confirm"
-                   :class="{resolved: t.confirm.resolved, cancelled: t.confirm.cancelled}">
-                <div class="confirm-head">
-                  <span class="dot">
-                    <svg v-if="!t.confirm.resolved" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
-                         stroke-linejoin="round">
-                      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-                      <line x1="12" y1="9" x2="12" y2="13"></line>
-                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                    </svg>
-                    <svg v-else-if="t.confirm.cancelled" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="3.2" stroke-linecap="round"
-                         stroke-linejoin="round">
-                      <line x1="7" y1="12" x2="17" y2="12"></line>
-                    </svg>
-                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                         stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                      <polyline points="20 6 9 17 4 12"></polyline>
-                    </svg>
-                  </span>
-                  {{ confirmTitle(t.confirm) }}
-                  <span class="tag">{{ t.confirm.scope }}</span>
-                </div>
+          <!-- 确认卡。改动前停下来问一次——它是全站少数几处
+               允许抢注意力的地方，因为不确认就可能改错数据 -->
+          <div v-if="t.confirm" class="confirm"
+               :class="{resolved: t.confirm.resolved, cancelled: t.confirm.cancelled}">
+            <div class="confirm-head">
+              <span class="dot">
+                <svg v-if="t.confirm.cancelled" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="3.2" stroke-linecap="round"
+                     stroke-linejoin="round">
+                  <line x1="7" y1="12" x2="17" y2="12"></line>
+                </svg>
+                <svg v-else-if="t.confirm.resolved" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="3" stroke-linecap="round"
+                     stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                  <line x1="12" y1="9" x2="12" y2="13"></line>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+              </span>
+              {{ confirmTitle(t.confirm) }}
+              <span class="tag" v-if="t.confirm.scope">{{ t.confirm.scope }}</span>
+            </div>
 
-                <div class="confirm-body">
-                  <!-- 候选清单 -->
-                  <div class="cands" v-if="t.confirm.rows && t.confirm.rows.length">
-                    <table>
-                      <thead>
-                        <tr><th v-for="c in confirmColumns(t.confirm)" :key="c">{{ c }}</th></tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="(r, ri) in t.confirm.rows" :key="ri">
-                          <td v-for="c in confirmColumns(t.confirm)" :key="c">{{ r[c] ?? '—' }}</td>
-                        </tr>
-                      </tbody>
-                    </table>
+            <div class="confirm-body">
+              <!-- 候选清单 -->
+              <div class="cands" v-if="t.confirm.rows && t.confirm.rows.length">
+                <table>
+                  <thead>
+                    <tr><th v-for="c in confirmColumns(t.confirm)" :key="c">{{ c }}</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(r, ri) in t.confirm.rows" :key="ri">
+                      <td v-for="c in confirmColumns(t.confirm)" :key="c">{{ r[c] ?? '—' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- 改写对照 -->
+              <div v-if="t.confirm.diffs && t.confirm.diffs.length">
+                <div class="diff-row" v-for="(d, di) in t.confirm.diffs" :key="di">
+                  <div class="diff-field">{{ d.field }}</div>
+                  <div class="diff-vals">
+                    <span class="diff-from">{{ d.from ?? '空' }}</span>
+                    <span class="diff-arrow">→</span>
+                    <span class="diff-to">{{ d.to }}</span>
                   </div>
-
-                  <!-- 改写对照 -->
-                  <div v-if="t.confirm.diffs && t.confirm.diffs.length" style="margin-top:10px">
-                    <div class="diff-row" v-for="(d, di) in t.confirm.diffs" :key="di">
-                      <div class="diff-field">{{ d.field }}</div>
-                      <div class="diff-vals">
-                        <span class="diff-from">{{ d.from ?? '空' }}</span>
-                        <span class="diff-arrow">→</span>
-                        <span class="diff-to">{{ d.to }}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="confirm-note" v-if="t.confirm.note">{{ t.confirm.note }}</div>
-
-                  <div class="confirm-actions" v-if="!t.confirm.resolved">
-                    <button class="btn" @click="answerConfirm(ti, '取消')"
-                            :disabled="busy">{{ i18n.cancel }}</button>
-
-                    <!-- 大批量：必须手动输入含数量的确认文本 -->
-                    <template v-if="t.confirm.confirm_mode === 'typed'">
-                      <input class="typed-confirm" v-model="t.confirm.typed_input"
-                             :placeholder="'请输入「' + t.confirm.confirm_hint + '」'"
-                             :disabled="busy"
-                             @keydown.enter.prevent="
-                               t.confirm.typed_input.trim()
-                                 && answerConfirm(ti, t.confirm.typed_input)">
-                      <button class="btn" :class="t.confirm.danger ? 'danger' : 'primary'"
-                              @click="answerConfirm(ti, t.confirm.typed_input)"
-                              :disabled="busy || !t.confirm.typed_input.trim()">
-                        执行
-                      </button>
-                    </template>
-
-                    <!-- 小批量：普通确认按钮 -->
-                    <button v-else class="btn" :class="t.confirm.danger ? 'danger' : 'primary'"
-                            @click="answerConfirm(ti, t.confirm.confirm_hint)"
-                            :disabled="busy">
-                      {{ t.confirm.verb }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="confirm-verdict" v-if="t.confirm.resolved">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
-                       stroke-linecap="round" stroke-linejoin="round"
-                       style="width:13px;height:13px">
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                  {{ t.confirm.verdict }}
                 </div>
               </div>
 
-              <!-- 产物卡片 -->
-              <div v-for="(a, ai) in t.artifacts" :key="'a' + ai" class="artifact">
-                <div class="artifact-icon" :class="a.kind">
-                  <svg v-if="a.kind === 'xlsx'" viewBox="0 0 24 24" fill="none"
-                       stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                       stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                    <line x1="9" y1="13" x2="15" y2="13"></line>
-                    <line x1="9" y1="17" x2="15" y2="17"></line>
-                  </svg>
-                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                    <path d="M9 15h6"></path>
-                    <path d="M9 18h3"></path>
-                  </svg>
-                </div>
-                <div class="artifact-meta">
-                  <div class="artifact-name">{{ a.name }}</div>
-                  <div class="artifact-sub">
-                    <span v-if="a.rows != null">{{ a.rows }} 条记录</span>
-                    <span v-if="a.rows != null"> · </span>
-                    <span>{{ a.label }}</span>
-                  </div>
-                </div>
-                <div class="artifact-acts">
-                  <button class="btn" @click="previewFile(a)">{{ i18n.preview }}</button>
-                  <button class="btn" @click="download(a.path, a.name)">下载</button>
-                </div>
-              </div>
+              <div class="confirm-note" v-if="t.confirm.note">{{ t.confirm.note }}</div>
 
-              <!-- 回答（确认卡片的结论已在卡片里，不再重复一遍） -->
-              <div class="prose" v-if="t.answer && !(t.confirm && t.confirm.resolved)"
-                   v-html="md(t.answer)"></div>
+              <div class="confirm-actions" v-if="!t.confirm.resolved">
+                <button class="btn" @click="answerConfirm(ti, '取消')"
+                        :disabled="busy">{{ i18n.cancel }}</button>
 
-              <!-- 等待中 -->
-              <div v-if="ti === turns.length - 1 && busy && !t.answer" class="thinking">
-                <i></i><i></i><i></i>
+                <!-- 大批量：必须手动输入含数量的确认文本。这是最后一道闸门 -->
+                <template v-if="t.confirm.confirm_mode === 'typed'">
+                  <input class="typed-confirm" v-model="t.confirm.typed_input"
+                         :placeholder="'请输入「' + t.confirm.confirm_hint + '」'"
+                         :disabled="busy"
+                         @keydown.enter.prevent="
+                           t.confirm.typed_input.trim()
+                             && answerConfirm(ti, t.confirm.typed_input)">
+                  <button class="btn" :class="t.confirm.danger ? 'danger' : 'solid'"
+                          @click="answerConfirm(ti, t.confirm.typed_input)"
+                          :disabled="busy || !t.confirm.typed_input.trim()">
+                    执行
+                  </button>
+                </template>
+
+                <button v-else class="btn" :class="t.confirm.danger ? 'danger' : 'solid'"
+                        @click="answerConfirm(ti, t.confirm.confirm_hint)"
+                        :disabled="busy">
+                  {{ t.confirm.verb }}
+                </button>
               </div>
             </div>
+
+            <div class="confirm-verdict" v-if="t.confirm.resolved">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              {{ t.confirm.verdict }}
+            </div>
+          </div>
+
+          <!-- 产物卡。和右栏的 .art 是同一件事的两个粒度：
+               那边是清单，这边是「这一轮产出了它」 -->
+          <div v-for="(a, ai) in t.artifacts" :key="'a' + ai" class="artifact">
+            <div class="artifact-icon" :class="a.kind">
+              <svg v-if="a.kind === 'xlsx'" viewBox="0 0 16 16" fill="none"
+                   stroke="currentColor" stroke-width="1.4">
+                <rect x="2.2" y="3" width="11.6" height="10" rx="1.6"/>
+                <path d="M2.2 6.6h11.6M6.6 6.6V13"/>
+              </svg>
+              <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                <rect x="2.2" y="3" width="11.6" height="10" rx="1.6"/>
+                <path d="M4.6 6.5h6.8M4.6 8.6h6.8M4.6 10.7h4"/>
+              </svg>
+            </div>
+            <div class="artifact-meta">
+              <div class="artifact-name">{{ a.name }}</div>
+              <div class="artifact-sub">
+                <span v-if="a.rows != null">{{ a.rows }} 条记录 · </span>{{ a.label }}
+              </div>
+            </div>
+            <div class="artifact-acts">
+              <button class="btn" @click="previewFile(a)">{{ i18n.preview }}</button>
+              <button class="btn" @click="download(a.path, a.name)">下载</button>
+            </div>
+          </div>
+
+          <!-- 回答（确认卡的结论已在卡片里，不再重复一遍） -->
+          <div class="prose" v-if="t.answer && !(t.confirm && t.confirm.resolved)"
+               v-html="md(t.answer)"></div>
+
+          <!-- 等待中 -->
+          <div v-if="ti === turns.length - 1 && busy && !t.answer" class="thinking">
+            <i></i><i></i><i></i>
           </div>
         </div>
 
       </div>
     </div>
+  </div>
 
-    <!-- 预览：在对话区里分屏，不弹浮层。
-         核对表格时往往正需要看着旁边的对话，浮层会把它盖掉 -->
-    <aside class="split-view" v-if="viewer">
-      <div class="split-head">
-        <span class="split-name">{{ viewer.name }}</span>
-        <button class="btn" @click="download(viewer.path, viewer.name)">下载</button>
-        <button class="icon-btn" @click="viewer = null" title="关闭预览">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
-               stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
+  <!-- 产物栏：工作区内部的一列，不是并排的第三栏。
+       它列的是「这次对话产出了什么」，和「有哪些会话」不是同一层级。
+
+       只在【有过对话】的时候出现：空态还没有"这次对话"，
+       摆一个 0 加一句"还没有产出文件"，是在回答一个还没被问的问题。
+       它走了之后，空态那块才是真的待机——一整片暗面，别的什么都没有 -->
+  <files-panel v-if="turns.length"></files-panel>
+
+  <!-- 预览：浮在工作区上的弹窗。遮罩只盖工作区——左栏还亮着、还能点，
+       看一个产出不该把整个应用锁住。见 docs/design-language.md 5.6 -->
+  <div class="modal-mask" v-if="viewer" @click.self="viewer = null">
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-title">{{ viewer.name }}</span>
+        <button class="modal-x" @click="viewer = null" title="关闭预览">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M3 3l6 6M9 3l-6 6"/>
           </svg>
         </button>
       </div>
 
-      <div class="split-body">
-        <template v-if="viewer.kind === 'xlsx'">
-          <table class="split-table">
-            <thead>
-              <tr><th v-for="c in viewer.columns" :key="c">{{ c }}</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="(row, i) in viewer.rows" :key="i">
-                <td v-for="(cell, j) in row" :key="j">{{ cell }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <div class="split-note" v-if="viewer.total > viewer.rows.length">
-            显示前 {{ viewer.rows.length }} 行，共 {{ viewer.total }} 行
-          </div>
-        </template>
+      <div class="modal-body">
+        <table v-if="viewer.kind === 'xlsx'">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th v-for="c in viewer.columns" :key="c">{{ c }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, i) in viewer.rows" :key="i">
+              <td class="num">{{ i + 1 }}</td>
+              <td v-for="(cell, j) in row" :key="j">{{ cell }}</td>
+            </tr>
+          </tbody>
+        </table>
 
-        <iframe v-else-if="viewer.kind === 'pdf'" class="split-frame" :src="viewer.url"></iframe>
+        <iframe v-else-if="viewer.kind === 'pdf'" class="modal-frame" :src="viewer.url"></iframe>
 
-        <div v-else class="split-note" style="margin:auto;text-align:center;line-height:2">
-          这种格式没法在这里预览<br>
-          <button class="btn" style="margin-top:6px"
-                  @click="download(viewer.path, viewer.name)">{{ t.downloadView }}</button>
+        <div v-else class="modal-note">
+          这种格式没法在这里预览，下载后用系统程序打开
         </div>
       </div>
-    </aside>
-    </div>
 
-    <div class="composer">
-      <div class="composer-inner" :class="{drop: dragging}"
+      <div class="modal-note" v-if="viewer.kind === 'xlsx' && viewer.total > viewer.rows.length">
+        显示前 {{ viewer.rows.length }} 行，共 {{ viewer.total }} 行
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn" @click="download(viewer.path, viewer.name)">下载</button>
+        <button class="btn solid" @click="viewer = null">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="composer-in">
+      <!-- 拖进来就传。整块输入框都是落点，不另设一个「拖到这里」的虚线框——
+           那个框本身就是一块多余的图形 -->
+      <div class="field" :class="{drop: dragging}"
            @dragover.prevent="dragging = true"
            @dragleave="dragLeave"
            @drop.prevent="onDrop">
-        <div class="composer-row">
-          <button class="upload-btn" @click="triggerUpload" :disabled="busy"
-                  title="上传 Excel 文件">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                 stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
-            </svg>
-          </button>
-          <input type="file" ref="fileInput" accept=".xlsx,.xls"
-                 style="display:none" @change="handleFileSelect">
+        <button class="upload-btn" @click="triggerUpload" :disabled="busy"
+                title="上传 Excel 文件">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+          </svg>
+        </button>
+        <input type="file" ref="fileInput" accept=".xlsx,.xls"
+               style="display:none" @change="handleFileSelect">
 
-          <textarea ref="inputEl" v-model="input" rows="1"
-                    :disabled="busy"
-                    :placeholder="busy ? '正在处理…' : '问点什么，或把 Excel 拖进来'"
-                    @keydown.enter.exact.prevent="send"
-                    @input="autoGrow"></textarea>
-          <button class="send" @click="send" :disabled="busy || !input.trim()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                 stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 2 11 13"></path>
-              <path d="M22 2 15 22 11 13 2 9z"></path>
+        <textarea ref="inputEl" v-model="input" rows="1"
+                  :disabled="busy"
+                  :placeholder="busy ? '正在处理…' : '问点什么，或把 Excel 拖进来'"
+                  @keydown.enter.exact.prevent="send"
+                  @input="autoGrow"></textarea>
+
+        <!-- 换模型和调思考强度都是「这次对话怎么干活」这个决定了才做的动作，
+             所以它们在输入框里，不在顶栏——顶栏是「这个应用是什么状态」 -->
+        <div class="model-pick-wrap" ref="pickWrap" v-if="configs.length">
+          <button class="model-pick" @click="openPick"
+                  :title="'当前模型：' + (currentModel || '未选')">
+            <span class="mp-name">{{ currentModel || '未选模型' }}</span>
+            <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M2.5 4.5 6 8l3.5-3.5"/>
             </svg>
           </button>
+
+          <div class="pick-menu" v-if="pickOpen">
+            <!-- 模型：问上游要的完整清单，不是配置里存的那一个 -->
+            <div class="pm-label t-kicker-zh">模型</div>
+            <div class="pm-list">
+              <div v-if="modelState.loading" class="pm-note">正在向上游取清单…</div>
+              <div v-else-if="modelState.message" class="pm-note">{{ modelState.message }}</div>
+              <button v-for="m in modelOptions" :key="m"
+                      :class="{on: m === currentModel}"
+                      @click="pickModel(m)">{{ m }}</button>
+            </div>
+
+            <div class="pm-rule"></div>
+
+            <!-- 思考强度：应用级参数，所有配置共享，所以不跟上面那组走 -->
+            <div class="pm-label t-kicker-zh">思考强度</div>
+            <div class="seg pm-seg">
+              <button v-for="o in reasoningOptions" :key="o.value"
+                      :class="{on: o.value === reasoningEffort}"
+                      @click="setReasoningEffort(o.value)">{{ o.label }}</button>
+            </div>
+          </div>
         </div>
-        <div class="composer-foot">
-          <span><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</span>
-          <span class="spacer"></span>
-          <span v-if="lastElapsed != null">上轮 {{ lastElapsed }}ms</span>
-        </div>
+
+        <button class="send" @click="send" :disabled="busy || !input.trim()">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M2.5 8h11M9 3.5 13.5 8 9 12.5"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- 「已就绪」在这儿，不在顶栏：顶栏是「这个应用的状态」，
+           而连得上连不上和「你要不要发这句话」直接相关，属于输入区。
+           它跟强调色走，不跟信号色——本地应用连不上模型就进不了工作台，
+           这个点永远亮着，不承载任何会变的信息。既然不会变，它就是装饰 -->
+      <div class="hint">
+        <span>Enter 发送</span>
+        <span>Shift + Enter 换行</span>
+        <span class="hint-live">● 已就绪</span>
       </div>
     </div>
-    </template>
-  </main>
+  </div>
+
+</main>
 `,
 };

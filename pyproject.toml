@@ -1,7 +1,7 @@
 [project]
-name = "datapilot"
+name = "guixu"
 version = "0.1.0"
-description = "Add your description here"
+description = "归墟 · 数据处理 Agent"
 readme = "README.md"
 authors = [
     { name = "关梓鹤", email = "3401835026@qq.com" }
@@ -25,8 +25,21 @@ dependencies = [
     "uvicorn>=0.53.0",
 ]
 
-[project.scripts]
-datapilot = "datapilot:main"
+[project.optional-dependencies]
+# 桌面外壳（src/desktop.py）。只有"以应用窗口运行"才需要它 ——
+# 跑服务（api.py）不需要，所以不放进主依赖。
+#
+# 内核走【系统自带】的那一个，不打包：
+#   Windows  WebView2（Edge 内核，Win11 预装、Win10 随 Edge 更新分发）
+#   macOS    WKWebView（系统自带）
+#   Linux    WebKitGTK（多数发行版有）
+# 所以这里只需要 pywebview 和它在各平台跟系统内核通话的桥。
+# 原来装的是 PySide6（自带 QtWebEngine），600 多 MB —— 而且实测它显示不了 PDF
+# （PdfViewerEnabled 枚举存在但渲染空白，那份构建没编进 PDFium）。见 docs/design.md 第六节。
+desktop = [
+    "pywebview>=5.0",
+    "pythonnet>=3.0; sys_platform == 'win32'",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.12,<0.13.0"]

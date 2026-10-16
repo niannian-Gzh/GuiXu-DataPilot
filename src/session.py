@@ -20,6 +20,17 @@ GREETING_PREFIXES = (
 _GREETING_EN = re.compile(r"^(?:hi|hello|hey)\b", re.IGNORECASE)
 
 
+def _now() -> str:
+    """本地时间，秒级，不带时区。
+
+    界面要给每一轮标一个时刻（见 workbench 原型的 .turn-at），所以每条
+    消息都得带一个。用本地时间而不是 UTC：用户看的是自己的表，
+    东八区晚上八点后 UTC 会显示成第二天。
+    前端在实时那一轮也按这个格式生成（js/utils.js 的 stamp()），两边必须一致。
+    """
+    return datetime.now().isoformat(timespec="seconds")
+
+
 class Session:
     def __init__(self, session_id: str = None):
         self.session_id = session_id or uuid.uuid4().hex[:12]
@@ -29,22 +40,22 @@ class Session:
         self.prompt_tokens = 0
 
     def add_user(self, text: str):
-        self.messages.append({"role": "user", "content": text})
+        self.messages.append({"role": "user", "content": text, "gx_at": _now()})
 
     def add_assistant(self, text: str, tools: list = None, reasonings: list = None):
         """tools 是这一轮的工具调用记录，reasonings 是这一轮的思考链，
         都只供界面回看，不发给模型。"""
-        msg = {"role": "assistant", "content": text}
+        msg = {"role": "assistant", "content": text, "gx_at": _now()}
         if tools:
-            msg["dp_tools"] = tools
+            msg["gx_tools"] = tools
         if reasonings:
-            msg["dp_reasonings"] = reasonings
+            msg["gx_reasonings"] = reasonings
         self.messages.append(msg)
 
     def get_history(self) -> list:
         """返回带摘要的完整历史（摘要为 system 角色）。
 
-        dp_tools 不能原样塞回去（API 不认这个字段），但也不能直接丢掉——
+        gx_tools 不能原样塞回去（API 不认这个字段），但也不能直接丢掉——
         丢掉的话，模型回看历史时只看到自己说过「已生成 xxx.pdf」，
         却找不到任何工具调用过的凭据。一旦用户追问，它会据此判定
         自己在编造，把真做过的事说成假的。所以折中：转成一行文字补回去。
@@ -57,12 +68,12 @@ class Session:
             })
 
         for m in self.messages:
-            tools = m.get("dp_tools")
-            # dp_reasonings 只给界面回看，必须剥掉：这里原样 append 的话，
-            # 纯对话轮（没有 dp_tools）的思考链会跟着进 prompt——
-            # 动辄上千字，每轮都带上，成本和噪音都不划算
-            if "dp_reasonings" in m:
-                m = {k: v for k, v in m.items() if k != "dp_reasonings"}
+            tools = m.get("gx_tools")
+            # gx_* 一律只给界面回看，不进 prompt：
+            #   gx_reasonings 动辄上千字，每轮都带上，成本和噪音都不划算；
+            #   gx_at 上游根本不认识这个字段，原样发出去会被 400 掉
+            if any(k.startswith("gx_") for k in m):
+                m = {k: v for k, v in m.items() if not k.startswith("gx_")}
             if not tools:
                 result.append(m)
                 continue
@@ -130,7 +141,7 @@ class Session:
         path = ARCHIVE_DIR / f"{self.session_id}.json"
         path.write_text(json.dumps({
             "session_id": self.session_id,
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "updated_at": _now(),
             "title": self.title(),
             "message_count": len(self.messages),
             "summary": self.summary,

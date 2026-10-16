@@ -1,10 +1,10 @@
-# DataPilot · 数据处理 Agent
+# 归墟 · 数据处理 Agent
 
 用自然语言完成数据的查询、新增、修改、删除、导入、导出、检查和报表生成。
 
-打开浏览器就是一张工作台：左栏会话与轨迹，中栏对话流，右栏产物。工具调用、思考过程、确认卡片都摊在对话里，每一步都看得见。
+一个桌面窗口就是一张工作台：左栏会话与轨迹，中栏对话流，右栏产物。工具调用、思考过程、确认卡片都摊在对话里，每一步都看得见。
 
-- 输入「李津伊负责的项目有几个」→ 自动生成 SQL、执行、回答
+- 输入「xx负责的项目有几个」→ 自动生成 SQL、执行、回答
 - 输入「删掉测试项目」→ 搜索候选、确认、软删除（7 天内可恢复）
 - 输入「所有打回次数加 1」→ 按规则重塑、展示改前改后、确认执行
 - 输入「加一列 priority，表示优先级」→ 改表结构
@@ -44,21 +44,18 @@
 - 完整审计：所有写操作记录到 `logs/audit.jsonl`
 - 多层防护：LLM 重试、熔断、行数上限、SQL 超时、Loop 超时
 - 可观测：每次问答的完整链路写入 `logs/traces.jsonl`
-- 评测驱动：底层评测 + Agent 层评测
+- 评测驱动：底层 + Agent 层两套题目
 
-## 评测结果
+## 评测
 
-| 评测 | 用例数 | 结果 |
-|---|---|---|
-| 底层评测 | 34 | **34/34** |
-| Agent 层评测 | 15 | **15/15** |
+底层 34 题、Agent 层 15 题，覆盖布尔筛选、数值筛选、聚合、分组、组合条件、空结果、排序七类。
 
-底层评测覆盖布尔筛选、数值筛选、聚合、分组、组合条件、空结果、排序七类问题。
+> **正在按新架构重写。** 旧题库的期望值是对着当时那份测试数据硬算的——数据一变就全错。留下的是**题目与覆盖面**（见 [docs/eval-questions.md](docs/eval-questions.md)），重写后重新生成期望值。
 
 ## 架构
 
 ```
-[浏览器] Vue 3 + marked（CDN 引入，无构建步骤）
+[桌面窗口] pywebview + 系统 WebView2（前端 Vue 3 + marked，无构建步骤）
    ↓ HTTP / SSE
 [API 层] api.py（FastAPI）
    ├─ /chat                    SSE 流式：start / think / tool_call / tool_result
@@ -111,8 +108,8 @@
 ### 安装
 
 ```bash
-git clone https://github.com/niannian-Gzh/datapilot.git
-cd datapilot
+git clone https://github.com/niannian-Gzh/GuiXu-DataPilot.git
+cd GuiXu-DataPilot
 uv sync
 
 # 下载报告 PDF 渲染用的 Chromium（约 115MB，只需一次）
@@ -156,33 +153,6 @@ uv run uvicorn api:app --app-dir src
 
 打开 http://127.0.0.1:8000
 
-习惯命令行的话，同一套 Agent 也能直接在终端跑：
-
-```bash
-uv run src/main.py
-```
-
-```
-DataPilot · 数据处理 Agent
-输入问题，exit 退出
-
-你问：已下证的项目有几个
-  [工具] query_database({"question": "已下证的项目有几个"})
-[回答] 已下证的项目共有 2 个。
-```
-
-### 跑评测
-
-```bash
-# 底层评测
-uv run python eval/run_eval.py
-
-# Agent 层评测
-uv run python eval/run_agent_eval.py
-```
-
-Windows 控制台如果不是 UTF-8 代码页，脚本打印对勾时会抛 `UnicodeEncodeError`，前面加上 `PYTHONIOENCODING=utf-8` 即可。
-
 ## 技术栈
 
 | 组件 | 选择 | 理由 |
@@ -192,7 +162,7 @@ Windows 控制台如果不是 UTF-8 代码页，脚本打印对勾时会抛 `Uni
 | 数据库 | PostgreSQL | 生产形态；DuckDB 作为本地后端保留 |
 | 数据访问 | 自建 `db.py` | 读路径的后端差异收在这一个文件里 |
 | 接口 | FastAPI + uvicorn | SSE 原生好写，Pydantic 兜住入参 |
-| 前端 | Vue 3 + marked（CDN） | 无构建步骤，改完刷新即可 |
+| 前端 | Vue 3 + marked（本地引入） | 无构建步骤，改完刷新即可 |
 | 模型 | DeepSeek | 性价比高，中文好 |
 | 编排 | 手写 Agent Loop | 拒绝 LangChain，掌控每一步 |
 | PDF 渲染 | Playwright + Chromium | 浏览器版本锁定，不受系统环境摆布 |
@@ -260,12 +230,12 @@ Agent 可以自主组合工具（删除时没找到目标 → 用查询搜索候
 
 ## 项目结构
 
-> 想知道**代码怎么分层**（每层负责什么、文件怎么归位），见 [docs/architecture.md](docs/architecture.md)。
+> 想知道**代码怎么分层**（每层负责什么、文件怎么归位），见 [docs/design.md](docs/design.md)。
 
 ```
 src/
 ├── api.py              FastAPI 入口（SSE、设置、字典、会话、文件）
-├── main.py             命令行入口
+├── desktop.py          桌面窗口入口
 ├── agent.py            Agent Loop
 ├── tools.py            工具定义与分发
 ├── display.py          统一 markdown 展示
@@ -279,10 +249,13 @@ src/
 │
 ├── web/static/         前端（无构建）
 │   ├── index.html
-│   ├── css/            base / layout / chat / schema / settings / files / splash
+│   ├── vendor/         vue · marked（本地引入，不走 CDN）
+│   ├── audio/          开机动画音效
+│   ├── css/            app.css（工作台）· splash.css（开机动画）
 │   └── js/
-│       ├── components/ ChatView · SchemaView · SettingsView · FilesPanel · Splash
-│       └── main.js · api.js · i18n.js · utils.js
+│       ├── components/ ChatView · SchemaView · SettingsView · FilesPanel
+│       ├── boot.js · boot.config.js   开机动画 + 首次引导
+│       └── main.js · api.js · i18n.js · utils.js · mark.js
 │
 ├── services/           业务逻辑
 │   ├── __init__.py     共享：异常、上下文、常量
@@ -304,9 +277,6 @@ src/
 ├── audit.py            审计日志
 ├── cleanup.py          过期数据清理
 └── ingest.py           Excel → 数据库
-
-tests/                  测试脚本
-eval/                   评测
 ```
 
 ## 已知限制
@@ -336,10 +306,13 @@ eval/                   评测
 - [x] 数据字典 + 数据库概览页
 - [x] 参数配置化 + 模型配置卡片
 - [x] 多表地基（工具带 table_name、按表构建上下文）
+- [ ] 数据源迁到 SQLite 单文件（弃 DuckDB 分支与视图约定）
+- [ ] 结构重组（文件按七层归位）
+- [ ] 接口按新设计逐层改造（工具返回格式 · 中断统一 · 执行前闸门 · audit 进库）
 - [ ] 跨表关联查询
-- [ ] RAG（文档检索）
-- [ ] 容器化（Dockerfile）
-- [ ] 权限、成本、限流
+- [ ] 评测重写
+- [ ] RAG（文档检索 + 向量 + FAISS）
+- [ ] 桌面打包（Inno Setup 安装包）
 
 ## 许可证
 

@@ -1,12 +1,12 @@
 import {
   FIELD_LABELS, SQL_WORDS,
   escapeHtml, strongify, md, safeParse, prettyJson, highlightSql,
-  fmtVal, shortTime, toolGist, makeThinkNode, thinkGist,
+  fmtVal, shortTime, stamp, clockTime, toolGist, makeThinkNode, thinkGist,
   confirmColumns, confirmTitle, candidateRows, buildConfirm,
 } from './utils.js';
 import * as api from './api.js';
 import { dict, fmt } from './i18n.js';
-import BootSplash from './components/Splash.js';
+import { guixuMark } from './mark.js';
 import ChatView from './components/ChatView.js';
 import FilesPanel from './components/FilesPanel.js';
 import SettingsView from './components/SettingsView.js';
@@ -22,23 +22,21 @@ import SchemaView from './components/SchemaView.js';
 
 const { createApp, ref, computed, watch, onMounted, nextTick, provide } = Vue;
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 createApp({
-  components: { BootSplash, ChatView, FilesPanel, SettingsView, SchemaView },
+  components: { ChatView, FilesPanel, SettingsView, SchemaView },
   setup() {
     /* ---------------- 状态 ---------------- */
     const turns = ref([]);
     const input = ref('');
     const busy = ref(false);
-    const sessionId = ref(localStorage.getItem('dp_session') || '');
+    const sessionId = ref(localStorage.getItem('gx_session') || '');
     const sessions = ref([]);
     const rail = ref('artifacts');
     // 默认展开，三栏结构一眼可见；用户收起过才记住收起
-    const railOpen = ref(localStorage.getItem('dp_rail') !== '0');
+    const railOpen = ref(localStorage.getItem('gx_rail') !== '0');
     const leftShut = ref(false);
-    const theme = ref(localStorage.getItem('dp_theme') || 'dark');
     const viewer = ref(null);
+    const overview = ref(null);            // 欢迎页读数：数据源 / 规模 / 模型
 
     /* ---------------- 设置 ---------------- */
     const view = ref('chat');              // 'chat' | 'settings' | 'schema'
@@ -46,7 +44,7 @@ createApp({
     const activeGroup = ref('model');
     const leftTab = ref('sessions');        // 'sessions' | 'trace'
     const draft = ref({});                 // 只存改过的项：key -> 新值
-    const advanced = ref(localStorage.getItem('dp_advanced') === '1');
+    const advanced = ref(localStorage.getItem('gx_advanced') === '1');
     const saving = ref(false);
     const saveMsg = ref(null);
 
@@ -55,7 +53,6 @@ createApp({
        硬凑成一套只会让某一方别扭，所以在前端做一次映射 */
     const NAV_GROUPS = [
       { id: 'model',      name: '模型' },
-      { id: 'appearance', name: '外观' },
       { id: 'layout',     name: '布局' },
       { id: 'prefs',      name: '交互偏好' },
       { id: 'advanced',   name: '高级' },
@@ -84,15 +81,6 @@ createApp({
     const lastElapsed = ref(null);
     const streamEl = ref(null);
 
-    // 领域无关的引导语，从查 → 改 → 导出 → 检查 → 报告，由简到繁
-    const samples = [
-      '这张表里有多少条记录',
-      '把某条记录的状态改一下',
-      '把所有数据导出成 Excel',
-      '看看数据有没有问题',
-      '给我一份本周报告',
-    ];
-
     /* ---------------- 派生 ---------------- */
     const currentTitle = computed(() => turns.value[0]?.question || '新会话');
     const allArtifacts = computed(() => turns.value.flatMap((t) => t.artifacts || []));
@@ -112,9 +100,22 @@ createApp({
             question: t.question,
             tools,
             totalMs: tools.reduce((s, x) => s + (x.ms || 0), 0),
+            // 还在跑的那一轮。时间轴上给它实心色块、耗时转强调色
+            // （见 css 的 .gantt-row.run / .gantt-track i.run）
+            running: tools.some((x) => x.state === 'run'),
           };
         })
         .filter((r) => r.tools.length));
+
+    /* 时间轴的统一比例尺：满宽 = 最慢那一轮的总耗时。
+       必须所有轮共用同一个基准 —— 如果按各轮自己的耗时归一化，
+       每一轮都会被拉满，轮与轮之间就没法比，那块图也就白画了。 */
+    const maxRoundMs = computed(() =>
+      Math.max(1, ...roundsWithTools.value.map((r) => r.totalMs)));
+
+    /* 左栏「资产」用的规模读数。取不到就给空对象，
+       模板那边用 src.tables != null 判断，不显示假的 0 */
+    const src = computed(() => (overview.value && overview.value.source) || {});
 
     const stateCount = computed(() => {
       const c = { ok: 0, err: 0, warn: 0, wait: 0, cancel: 0, run: 0 };
@@ -149,7 +150,7 @@ createApp({
 
     // 这几组的内容模板直接写，不来自后端参数表
     const isLocalGroup = computed(() =>
-      ['appearance', 'layout', 'data', 'about'].includes(activeGroup.value));
+      ['layout', 'data', 'about'].includes(activeGroup.value));
 
     /** 某个分组该显示哪些参数 */
     const paramsOfGroup = (gid) => {
@@ -195,7 +196,7 @@ createApp({
 
     const discardDraft = () => { draft.value = {}; saveMsg.value = null; };
 
-    watch(advanced, (v) => localStorage.setItem('dp_advanced', v ? '1' : '0'));
+    watch(advanced, (v) => localStorage.setItem('gx_advanced', v ? '1' : '0'));
 
     const flash = (text, ok = true) => {
       saveMsg.value = { text, ok };
@@ -218,7 +219,34 @@ createApp({
       if (data) settings.value = data;
     };
 
-    const goSettings = async () => {
+    /* ── 离开拦截 ──────────────────────────────────────────────
+       数据字典页编到一半时切走，那份草稿就没了。可触发离开的入口全在
+       左栏（点会话、点新建、点设置、点资产），而左栏属于 shell、不属于
+       任何一个视图——所以钩子挂在 store 上，由当前页自己注册：
+       它知道有没有未保存的改动，这边只管在离开前问一声 */
+    const leaveGuard = ref(null);
+
+    /** 把一个「离开当前页」的动作包一层：有页面注册了拦截就先问它。
+        被拦下时不返回 Promise——动作还没发生，等它没有意义；
+        用户在弹窗上确认之后，那个闭包才会真正执行。 */
+    const guarded = (fn) => (...args) => {
+      const g = leaveGuard.value;
+      if (g) { g(() => fn(...args)); return; }
+      return fn(...args);
+    };
+
+    // 内部自己调自己的地方（删除会话后要新建）用 raw，别让拦截绕回来
+    const newSessionRaw = () => {
+      if (busy.value) return;
+      sessionId.value = '';
+      localStorage.removeItem('gx_session');
+      turns.value = [];
+      viewer.value = null;
+      // 在设置页或数据字典页点「新建会话」，意图显然是回对话去写点什么
+      view.value = 'chat';
+    };
+
+    const goSettingsRaw = async () => {
       draft.value = {};
       saveMsg.value = null;
       confirmKind.value = null;
@@ -227,16 +255,23 @@ createApp({
       await Promise.all([loadSettings(), loadCounts(), loadProviders(), loadConfigs()]);
     };
 
-    const goChat = () => {
+    const goChatRaw = () => {
       draft.value = {};
       view.value = 'chat';
     };
 
     /* 数据字典页。加载由 SchemaView 自己 onMounted 做——这里的
        状态（草稿、改动）属于那个页面，离开即销毁，不该挂在 store 上 */
-    const goSchema = () => {
-      view.value = 'schema';
-    };
+    const goSchemaRaw = () => { view.value = 'schema'; };
+
+    const goSettings = guarded(goSettingsRaw);
+    const goChat = guarded(goChatRaw);
+    const goSchema = guarded(goSchemaRaw);
+    const newSession = guarded(newSessionRaw);
+
+    /* 从设置 / 数据字典退回对话。顶栏那个按钮和左栏点会话都走它
+       （前者直接调，后者在 openSession 内部顺手把 view 摆回来） */
+    const leaveView = () => { if (view.value !== 'chat') goChat(); };
 
     const saveSettings = async () => {
       if (!dirtyCount.value || saving.value) return;
@@ -266,11 +301,19 @@ createApp({
     // 关于页的常量。前端是纯静态文件，读不到 pyproject.toml，
     // 所以版本号在这儿手写一份——改版本时记得两边一起改
     const APP_VERSION = 'v0.1.0';
-    const REPO_URL = 'https://github.com/niannian-Gzh/datapilot';
+    const REPO_URL = 'https://github.com/niannian-Gzh/GuiXu-DataPilot';
 
     const providers = ref([]);        // 供应商预设，新建配置时的模板
     const configs = ref([]);          // 已保存的配置卡片
     const activeId = ref(null);       // 生效中的那张
+
+    /* 输入框里那个切换器显示什么：模型名。
+       不显示配置名——配置名是「这条记录叫什么」，用户在那儿真正要切的
+       是模型 */
+    const currentModel = computed(() => {
+      const c = configs.value.find((x) => x.id === activeId.value);
+      return (c && c.model) || '';
+    });
     const editor = ref(null);         // null = 停在列表页；否则是编辑中的表单
     const formModels = ref([]);       // 编辑页下拉里的候选模型
     const formState = ref({ fetching: false, fetch: null });
@@ -398,6 +441,59 @@ createApp({
       notify('已切换生效');
     };
 
+    /* ---------------- 输入框里的模型切换 ----------------
+       它是「同一套 key 下换一个模型」，不是「换一条配置」。
+       所以清单来自上游（问它到底有哪些模型），写入落在配置的 model 上。
+
+       懒加载：没人展开就不问上游。这个请求每次几百毫秒，
+       为了一个可能不点的菜单在启动时挂一次不划算 */
+    const modelOptions = ref([]);
+    const modelState = ref({ loading: false, message: '' });
+
+    const loadModelOptions = async () => {
+      const id = activeId.value;
+      if (!id || modelState.value.loading) return;
+      modelState.value = { loading: true, message: '' };
+      const r = await api.getConfigModels(id);
+      modelState.value = {
+        loading: false,
+        // 不是所有家都实现了 /models，拉不到是正常情况，把原因说出来
+        message: r.ok ? '' : (r.message || '拉不到模型列表'),
+      };
+      if (r.ok) modelOptions.value = r.models;
+    };
+
+    /* 换模型 = 改这条配置的 model，不是只对本次会话生效。
+       用户换它多半是要一直用下去；每次重启都忘了重选才是坑。
+       改完后端会重建 LLM，立即生效 */
+    const switchModel = async (name) => {
+      if (!name || name === currentModel.value) return;
+      const r = await api.updateConfig(activeId.value, { model: name });
+      if (!r.ok) { notify(r.message, false); return; }
+      await loadConfigs();
+      notify('已切换到 ' + name);
+    };
+
+    /* 思考强度。它是应用级参数（所有配置共享），所以走 settings 那套，
+       不跟着配置走。这里只给一个顺手的入口——完整的说明和风险提示在设置页 */
+    const reasoningParam = computed(() =>
+      (settings.value.params || []).find((p) => p.key === 'llm.reasoning_effort'));
+
+    const reasoningEffort = computed(() =>
+      (reasoningParam.value && reasoningParam.value.value) || '');
+
+    const reasoningOptions = computed(() =>
+      (reasoningParam.value && reasoningParam.value.options) || []);
+
+    const setReasoningEffort = async (v) => {
+      if (!v || v === reasoningEffort.value) return;
+      const r = await api.saveSettings({ 'llm.reasoning_effort': v });
+      if (!r.ok) { notify(r.message, false); return; }
+      await loadSettings();
+      notify('思考强度已调为「' +
+        (reasoningOptions.value.find((o) => o.value === v) || {}).label + '」');
+    };
+
     // 消散的两个计时器接力，共用 testTimers[id] 这一个槽：外层到点后把槽
     // 让给内层，于是「重新测试」时只清一次，就能清掉当下还在跑的那一个
     const testTimers = {};
@@ -430,6 +526,12 @@ createApp({
       sessions.value = await api.getSessions();
     };
 
+    /* 欢迎页那几格读数。取不到就保持 null，那几行直接不渲染——
+       它是锦上添花，不该在开屏第一眼给人一个错误提示 */
+    const loadOverview = async () => {
+      overview.value = await api.getOverview();
+    };
+
 
     /* ---------------- 滚动 ---------------- */
     const scrollDown = async () => {
@@ -458,7 +560,10 @@ createApp({
       switch (ev.type) {
         case 'start':
           sessionId.value = ev.session_id;
-          localStorage.setItem('dp_session', ev.session_id);
+          localStorage.setItem('gx_session', ev.session_id);
+          // 时刻以后端记的为准。前端在 send() 里先填了一个（不然后端回话前
+          // 那几秒这行是空的），这里用真值覆盖掉，免得刷新后变成另一个数
+          if (ev.at) turn.askedAt = ev.at;
           break;
 
         case 'think':
@@ -517,6 +622,9 @@ createApp({
 
         case 'done':
           lastElapsed.value = ev.elapsed_ms;
+          // 这一轮答完的时刻，同样以后端记的为准。
+          // 后端没给（理论上不该发生）时退回本地时间，总比空着强
+          turn.answeredAt = ev.at || stamp();
           break;
       }
     };
@@ -551,7 +659,10 @@ createApp({
       const q = input.value.trim();
       if (!q || busy.value) return;
 
-      turns.value.push({ question: q, tools: [], artifacts: [], answer: '', stage: '' });
+      turns.value.push({
+        question: q, askedAt: stamp(),
+        tools: [], artifacts: [], answer: '', stage: '',
+      });
 
       /* 必须从 turns.value 取回代理再往下传。
          Vue 3 的 ref 只在「通过 proxy 访问」时返回响应式代理，
@@ -610,36 +721,34 @@ createApp({
       });
     };
 
-    const setTheme = (t) => {
-      theme.value = t;
-      localStorage.setItem('dp_theme', t);
-      document.documentElement.setAttribute('data-theme', t);
-    };
-
     const toggleRail = () => {
       railOpen.value = !railOpen.value;
-      localStorage.setItem('dp_rail', railOpen.value ? '1' : '0');
+      localStorage.setItem('gx_rail', railOpen.value ? '1' : '0');
     };
 
     /* ---------------- 会话 ---------------- */
     /* 回看历史会话时，把当时走过的工具一并还原。
        否则「导出了 Excel」这类会话打开后，右栏产物是空的——
-       数据一直在 dp_tools 里，只是以前没收 */
+       数据一直在 gx_tools 里，只是以前没收 */
     const messagesToTurns = (messages) => {
       const out = [];
       let cur = null;
       for (const m of messages) {
         if (m.role === 'user') {
-          cur = { question: m.content, tools: [], artifacts: [], answer: '', stage: '' };
+          cur = {
+            question: m.content, askedAt: m.gx_at || '',
+            tools: [], artifacts: [], answer: '', stage: '',
+          };
           out.push(cur);
         } else if (m.role === 'assistant' && cur) {
           cur.answer = m.content;
+          cur.answeredAt = m.gx_at || '';
 
           // 思考链和工具是两条独立记录，各自带轮次，合起来按轮次排。
           // 直接全堆在前面的话，回放出来的顺序会和实时看到的不一样
           const timeline = [
-            ...(m.dp_reasonings || []).map((r) => ({ kind: 'think', round: r.round, src: r })),
-            ...(m.dp_tools || []).map((t) => ({ kind: 'tool', round: t.round, src: t })),
+            ...(m.gx_reasonings || []).map((r) => ({ kind: 'think', round: r.round, src: r })),
+            ...(m.gx_tools || []).map((t) => ({ kind: 'tool', round: t.round, src: t })),
           ];
           // sort 在现代 JS 里是稳定的，同轮次内 think 排在 tool 之前
           timeline.sort((a, b) => (a.round ?? 0) - (b.round ?? 0));
@@ -668,7 +777,7 @@ createApp({
       return out;
     };
 
-    const openSession = async (id, silent) => {
+    const openSessionRaw = async (id, silent) => {
       if (busy.value) return;
       try {
         const data = await api.loadSession(id);
@@ -677,7 +786,10 @@ createApp({
           return;
         }
         sessionId.value = id;
-        localStorage.setItem('dp_session', id);
+        localStorage.setItem('gx_session', id);
+        // 左栏是常驻的，所以在数据字典 / 设置页里点会话也得能回到对话。
+        // 加载失败时不切——那时留在原地才看得出"这个会话已经没了"
+        view.value = 'chat';
         turns.value = messagesToTurns(data.messages || []);
 
         // 服务端可能还挂着 pending_action，但 messages 里没有它——
@@ -695,13 +807,7 @@ createApp({
       }
     };
 
-    const newSession = () => {
-      if (busy.value) return;
-      sessionId.value = '';
-      localStorage.removeItem('dp_session');
-      turns.value = [];
-      viewer.value = null;
-    };
+    const openSession = guarded(openSessionRaw);
 
     /* 删除单个会话用二次点击，不用浏览器弹窗。
        左栏窄，塞不下内联确认条；而原生弹窗突兀，
@@ -720,7 +826,8 @@ createApp({
       clearTimeout(pendingTimer);
       pendingDelete.value = null;
       await api.deleteSession(id);
-      if (id === sessionId.value) newSession();
+      // raw：删掉当前会话之后新建一个，不是「用户主动离开」，不该被拦
+      if (id === sessionId.value) newSessionRaw();
       loadSessions();
     };
 
@@ -756,8 +863,11 @@ createApp({
       try {
         const data = await api.upload(file);
 
+        // 上传是同步完成的，所以两头同一个时刻
+        const at = stamp();
         turns.value.push({
           question: '上传文件：' + file.name,
+          askedAt: at, answeredAt: at,
           tools: [], artifacts: [], stage: '',
           answer: '已上传到 `' + data.path + '`\n\n现在可以说「从 ' + data.path + ' 导入数据」。',
         });
@@ -814,83 +924,22 @@ createApp({
       notify('已删除全部会话');
     };
 
-    /* ---------------- 开机动画 ---------------- */
-    const countUp = (el, target, duration, pad) => {
-      const start = performance.now();
-      const step = (now) => {
-        const p = Math.min((now - start) / duration, 1);
-        const eased = 1 - Math.pow(1 - p, 3);
-        const v = Math.round(target * eased);
-        el.textContent = pad ? String(v).padStart(pad, '0') : String(v);
-        if (p < 1) requestAnimationFrame(step);
-      };
-      requestAnimationFrame(step);
-    };
-
-    /* 开机动画的三格改报日期。
-       这不是随手换的填充物：DataPilot 要处理「上周」「本月」这类相对时间，
-       agent 的 SYSTEM_PROMPT 里也带着当前日期。开机时把时间基准亮出来，
-       是在告诉用户这台机器按哪一天算 */
-    const renderBootStats = () => {
-      const host = document.getElementById('bootStats');
-      if (!host) return;
-
-      const now = new Date();
-      const cells = [
-        { n: now.getFullYear(), label: '年', pad: 0 },
-        { n: now.getMonth() + 1, label: '月', pad: 2 },
-        { n: now.getDate(),       label: '日', pad: 2 },
-      ];
-
-      /* 三格依次滚入。窗口跟航迹弧旋转、北方亮起严格同起同止：
-         900ms 起，最后一格收在 2400ms（900 + 2×280 + 940）。
-         改这三个数必须同步改 tip-stay 和 sleep 的下限 */
-      const START = 900, STEP = 280, DURATION = 940;
-
-      host.innerHTML = cells.map((c, i) =>
-        '<div class="boot-stat" style="animation-delay:' +
-        ((START + i * STEP) / 1000) + 's">' +
-        '<b>' + (c.pad ? '00' : '0') + '</b><span>' + c.label + '</span></div>'
-      ).join('');
-
-      const nums = host.querySelectorAll('.boot-stat b');
-      cells.forEach((c, i) => {
-        setTimeout(() => countUp(nums[i], c.n, DURATION, c.pad), START + i * STEP);
-      });
-    };
-
-    const boot = async () => {
-      const skip = document.documentElement.getAttribute('data-boot') === 'skip';
-      const bar = document.getElementById('bootBar');
-      const started = Date.now();
-
-      // 动画期间做真实初始化，不是白等
-      if (!skip && bar) bar.style.width = '34%';
-      renderBootStats();
-
-      await loadSessions();
-
-      if (!skip && bar) bar.style.width = '100%';
-
-      if (skip) return;
-
-      // 最短展示时长。2.40s 是三方共同收尾的那一刻——
-      // 航迹弧转完一圈半停下、日期末格滚完、北方指针亮起。
-      // 多留 100ms 让「锁定」这个瞬间被看到，再开始淡出
-      await sleep(Math.max(0, 2500 - (Date.now() - started)));
-
-      // 用隐藏而不是 remove()：DOM 留着，调试动画时好复现
-      const el = document.getElementById('boot');
-      if (el) {
-        el.classList.add('done');
-        setTimeout(() => { el.style.display = 'none'; }, 820);
-      }
-      sessionStorage.setItem('dp_booted', '1');
-    };
-
     /* ---------------- 挂载 ---------------- */
+    /* 开机动画不在这里驱动。它是 js/boot.js 那套独立运行时 ——
+       自己建 DOM、自己盖在应用上面演，演完写 sessionStorage 再退场，
+       全程不经过 Vue（见 docs/splash.md）。
+       所以这里只做真实的启动初始化，【不等动画】：界面在黑幕底下照样
+       把会话和读数备好，揭幕那一刻就是可用的，而不是"刚亮起来还要再等"。
+       以前那套 sleep(2500) 估时长已经删掉了 —— 用秒表猜动画什么时候演完
+       本来就是错的，动画改一次就得跟着改一次。 */
     onMounted(async () => {
-      await boot();
+      await loadSessions();
+      // 不 await：这三样慢一点没关系，别挡着界面出来。
+      // 配置列表和参数表在对话页也要用——输入框里那个切换器显示模型名，
+      // 下面挂着思考强度，两个都得先备好
+      loadOverview();
+      loadConfigs();
+      loadSettings();
       if (sessionId.value) await openSession(sessionId.value, true);
     });
 
@@ -903,22 +952,25 @@ createApp({
 
     const store = {
       turns, input, busy, sessionId, sessions,
-      rail, railOpen, leftShut, theme, viewer, dragging,
+      rail, railOpen, leftShut, viewer, dragging, overview,
       view, settings, activeGroup, draft, advanced, saving, saveMsg,
+      leaveGuard,
       allGroups, isLocalGroup, activeGroupParams, activeGroupDesc,
       dirty, groupDirty, dirtyCount, editValue, onEdit, resetField,
-      discardDraft, loadSettings, goSettings, goChat, goSchema, saveSettings,
+      discardDraft, loadSettings, goSettings, goChat, goSchema, saveSettings, leaveView,
 
       // 模型配置
-      providers, configs, activeId, editor, formModels, formState,
+      providers, configs, activeId, currentModel, editor, formModels, formState,
       testState, pendingCfgDelete, fadingIds,
       loadConfigs, openNewConfig, openEditConfig, closeEditor, applyPreset,
       fetchFormModels, saveConfig, removeConfig, activateConfig, testConfig,
+      modelOptions, modelState, loadModelOptions, switchModel,
+      reasoningEffort, reasoningOptions, setReasoningEffort,
 
       // 关于
       appVersion: APP_VERSION, REPO_URL,
-      lastElapsed, streamEl, samples, currentTitle, allArtifacts, allTools,
-      totalToolMs, maxToolMs, leftTab, roundsWithTools, stateCount,
+      lastElapsed, streamEl, currentTitle, allArtifacts, allTools,
+      totalToolMs, maxToolMs, maxRoundMs, leftTab, roundsWithTools, stateCount, src,
       stateLabel, scrollToRound,
 
       send, ask, answerConfirm,
@@ -927,11 +979,11 @@ createApp({
       fileInput, triggerUpload, handleFileSelect,
       confirmKind, fileCount, doClearFiles, doClearSessions,
       toast, notify,
-      autoGrow, setTheme, toggleRail,
+      autoGrow, toggleRail,
 
       // 从 utils 来，模板直接在用（v-html="md(...)" 等）
       md, escapeHtml, prettyJson, highlightSql, fmtVal, shortTime,
-      toolGist, thinkGist, confirmColumns, confirmTitle,
+      clockTime, toolGist, thinkGist, confirmColumns, confirmTitle,
 
       // 文案。t 取词，fmt 填占位符
       t, fmt,
@@ -940,196 +992,130 @@ createApp({
     return store;
   },
   template: `
-<boot-splash></boot-splash>
+<div class="app">
 
-<div class="shell" v-if="view === 'chat'"
-     :class="{'right-open': railOpen, 'left-shut': leftShut}">
-
-  <aside class="col glass side-col" :class="{hidden: leftShut}">
-    <div class="brand">
-      <div class="brand-mark">
-        <svg viewBox="0 0 48 48" fill="none">
-          <defs>
-            <linearGradient id="bm-lit" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
-              <stop offset="0" stop-color="var(--rose-hi)"/>
-              <stop offset="0.5" stop-color="var(--rose-mid)"/>
-              <stop offset="1" stop-color="var(--rose-mid)" stop-opacity=".62"/>
-            </linearGradient>
-            <linearGradient id="bm-shade" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
-              <stop offset="0" stop-color="var(--rose-mid)"/>
-              <stop offset="0.5" stop-color="var(--rose-lo)"/>
-              <stop offset="1" stop-color="var(--rose-lo)" stop-opacity=".48"/>
-            </linearGradient>
-            <linearGradient id="bm-tick" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
-              <stop offset="0" stop-color="var(--mark)" stop-opacity=".72"/>
-              <stop offset="1" stop-color="var(--mark)" stop-opacity=".3"/>
-            </linearGradient>
-            <linearGradient id="bm-ring" gradientUnits="userSpaceOnUse" x1="24" y1="4" x2="24" y2="44">
-              <stop offset="0" stop-color="var(--mark)" style="stop-opacity:var(--ring-hi)"/>
-              <stop offset="0.5" stop-color="var(--mark)" style="stop-opacity:var(--ring-mid)"/>
-              <stop offset="1" stop-color="var(--mark)" style="stop-opacity:var(--ring-lo)"/>
-            </linearGradient>
-            <linearGradient id="bm-arc" gradientUnits="userSpaceOnUse" x1="9.28" y1="32.5" x2="35.6" y2="11.6">
-              <stop offset="0" stop-color="var(--rose-mid)" stop-opacity="0"/>
-              <stop offset="0.55" stop-color="var(--rose-mid)" stop-opacity=".38"/>
-              <stop offset="1" stop-color="var(--rose-mid)" stop-opacity=".8"/>
-            </linearGradient>
-            <radialGradient id="bm-core">
-              <stop offset="0" stop-color="var(--rose-core-hi)"/>
-              <stop offset="0.45" stop-color="var(--rose-core)"/>
-              <stop offset="1" stop-color="var(--rose-core)" stop-opacity=".22"/>
-            </radialGradient>
-            <filter id="bm-glow" x="-300%" y="-300%" width="700%" height="700%">
-              <feGaussianBlur stdDeviation="1.4"/>
-            </filter>
-            <filter id="bm-spark" x="-400%" y="-400%" width="900%" height="900%">
-              <feGaussianBlur stdDeviation="0.45"/>
-            </filter>
-          </defs>
-
-          <!-- 34px 下只留四条主刻度：12 条挤到这个尺寸每条不到一个像素，
-               加粗只会糊成齿圈。外端对齐 23.2，主刻度向内伸到 19.9 -->
-          <g stroke="url(#bm-tick)">
-            <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.8" transform="rotate(0 24 24)"/>
-            <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.8" transform="rotate(90 24 24)"/>
-            <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.8" transform="rotate(180 24 24)"/>
-            <line x1="24" y1="4.1" x2="24" y2="0.8" stroke-width="1.8" transform="rotate(270 24 24)"/>
-          </g>
-          <circle cx="24" cy="24" r="14" stroke="url(#bm-ring)" stroke-width=".8"/>
-
-          <!-- 四个芒尖各拆成受光面 / 背光面，光源在左上 -->
-          <path d="M24 5 L24 19.5 L19.5 24 Z"  fill="url(#bm-lit)"/>
-          <path d="M24 5 L28.5 24 L24 19.5 Z"  fill="url(#bm-shade)"/>
-          <path d="M24 43 L24 28.5 L19.5 24 Z" fill="url(#bm-lit)"   opacity=".88"/>
-          <path d="M24 43 L28.5 24 L24 28.5 Z" fill="url(#bm-shade)" opacity=".88"/>
-          <path d="M43 24 L24 19.5 L28.5 24 Z" fill="url(#bm-lit)"   opacity=".94"/>
-          <path d="M43 24 L28.5 24 L24 28.5 Z" fill="url(#bm-shade)" opacity=".94"/>
-          <path d="M5 24 L24 19.5 L19.5 24 Z"  fill="url(#bm-lit)"   opacity=".94"/>
-          <path d="M5 24 L19.5 24 L24 28.5 Z"  fill="url(#bm-shade)" opacity=".94"/>
-
-          <path d="M9.28 32.5 A17 17 0 0 1 35.6 11.6" stroke="url(#bm-arc)"
-                stroke-width="2" stroke-linecap="round" fill="none"/>
-          <circle cx="35.6" cy="11.6" r="2.6" fill="var(--rose-hi)" opacity=".2" filter="url(#bm-glow)"/>
-          <circle cx="35.6" cy="11.6" r="1.5" fill="var(--rose-mid)"/>
-          <circle cx="35.6" cy="11.6" r=".7" fill="var(--rose-hi)"/>
-
-          <circle cx="24" cy="24" r="3.4" fill="var(--rose-hi)"
-                  style="opacity:var(--rose-core-glow)" filter="url(#bm-glow)"/>
-          <circle cx="24" cy="24" r="2.5" fill="url(#bm-core)"/>
-          <circle cx="24" cy="6.9" r="1.15" fill="var(--rose-spark)" opacity=".95" filter="url(#bm-spark)"/>
-        </svg>
-      </div>
-      <div style="flex:1;min-width:0">
-        <div class="brand-name">DataPilot</div>
-        <div class="brand-tag">数据处理 Agent</div>
-      </div>
-    </div>
-
-    <!-- 主视图切换：会话 / 轨迹 -->
-    <div class="side-tabs">
-      <button class="fx" :class="{on: leftTab === 'sessions'}"
-              @click="leftTab = 'sessions'">会话</button>
-      <button class="fx" :class="{on: leftTab === 'trace'}"
-              @click="leftTab = 'trace'">
-        轨迹{{ allTools.length ? ' · ' + allTools.length : '' }}
-      </button>
-    </div>
-
-    <button class="new-chat fx" @click="newSession">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-           stroke-linecap="round" stroke-linejoin="round">
-        <line x1="12" y1="5" x2="12" y2="19"></line>
-        <line x1="5" y1="12" x2="19" y2="12"></line>
+  <!-- 顶栏：应用级的那条带子。品牌 + 功能按钮，
+       不管你打开哪个会话、切到哪一屏，上面都一样。
+       「已就绪」不在这儿——它是「你要不要发这句话」的读数，
+       归输入区（见 ChatView 的 .hint） -->
+  <header class="rail">
+    <div class="mark">${guixuMark()}</div>
+    <div class="brand">归墟</div>
+    <div class="brand-sub">数据处理 Agent</div>
+    <div class="rail-sp"></div>
+    <!-- 这个位置常驻，但按当前是哪一屏换身份：
+         对话页它是产物栏的开关（产物栏只在对话页存在）；
+         设置 / 数据字典页它是退出——那两屏没有产物栏可收，
+         在同一个位置留一个按不动的开关，不如换成一扇能走的门 -->
+    <button v-if="view === 'chat'" class="rail-icon"
+            @click="toggleRail" title="显示或隐藏产物栏">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+        <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+        <path d="M8.5 1.5v4h4"/>
       </svg>
-      新对话
     </button>
-
-    <!-- 数据字典。与"新对话"同构的整行入口，放它下面独立成块：
-         底部那行只有 254px，塞不下"设置 + 数据库概览 + 收起"三样 -->
-    <button class="db-nav fx" @click="goSchema">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-           stroke-linecap="round" stroke-linejoin="round">
-        <ellipse cx="12" cy="5.5" rx="8.5" ry="3"></ellipse>
-        <path d="M3.5 5.5v13c0 1.66 3.8 3 8.5 3s8.5-1.34 8.5-3v-13"></path>
-        <path d="M3.5 12c0 1.66 3.8 3 8.5 3s8.5-1.34 8.5-3"></path>
+    <button v-else class="rail-icon" @click="leaveView" title="返回对话">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/>
       </svg>
-      {{ t.schemaTitle }}
     </button>
+  </header>
 
-    <div class="side-scroll">
-      <!-- 轨迹模式：按轮次导航 -->
-      <template v-if="leftTab === 'trace'">
-        <div class="side-label">
-          <span>本会话轮次</span>
-          <span style="font-family:var(--mono)">{{ roundsWithTools.length }}</span>
-        </div>
-        <div v-if="!roundsWithTools.length" class="empty-note">
-          还没有工具调用<br>
-          <span style="font-size:10.5px">执行过程只属于当前这次对话</span>
-        </div>
-        <button v-for="(r, i) in roundsWithTools" :key="i" class="round-nav fx"
-                @click="scrollToRound(r.roundIndex)">
-          <div class="q">{{ r.question }}</div>
-          <div class="m">{{ r.tools.length }} 步 · {{ (r.totalMs / 1000).toFixed(1) }}s</div>
-        </button>
-      </template>
+  <!-- 三栏。线在栏上，不在栏之间——所以左栏收起时线也跟着走。
+       左栏和顶栏是常驻的：切到设置或数据字典时它们不走，
+       因为那两屏是「工作区里换了内容」，不是「退出了工作台」 -->
+  <div class="body">
 
-      <!-- 会话模式：会话列表 -->
-      <template v-else>
-      <div class="side-label">
-        <span>会话</span>
-        <span style="font-family:var(--mono)">{{ sessions.length }}</span>
-      </div>
-      <div v-if="!sessions.length" class="empty-note">还没有历史会话</div>
-      <button v-for="s in sessions" :key="s.session_id"
-              class="sess fx" :class="{on: s.session_id === sessionId}"
-              @click="openSession(s.session_id)">
-        <div class="sess-title">{{ s.title }}</div>
-        <div class="sess-meta">
-          <span>{{ s.message_count }} 条</span>
-          <span>{{ shortTime(s.updated_at) }}</span>
-        </div>
-        <span class="sess-del" :class="{confirming: pendingDelete === s.session_id}"
-              @click.stop="removeSession(s.session_id)"
-              :title="pendingDelete === s.session_id ? '再点一次即删除' : '删除会话'">
-          <template v-if="pendingDelete === s.session_id">确认？</template>
-          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
-               stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
+    <aside class="side" :class="{hidden: leftShut}">
+      <!-- 品牌搬到顶栏去了。左栏从「动作」开始 ——
+           它管的是「有哪些会话」，不该再重复一遍「这是什么应用」 -->
+      <div class="side-pad">
+        <button class="btn solid" @click="newSession">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 3v10M3 8h10"/>
           </svg>
-        </span>
-      </button>
-      </template>
-    </div>
+          新建会话
+        </button>
+      </div>
 
-    <div style="padding:9px 12px;border-top:1px solid var(--edge-soft);display:flex;gap:6px">
-      <button class="btn ghost fx" @click="goSettings" style="flex:1;justify-content:center">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-             stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-        </svg>
-        设置
-      </button>
-      <button class="icon-btn fx" @click="leftShut = true" title="收起侧栏">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 18 9 12 15 6"></polyline>
-        </svg>
-      </button>
-    </div>
-  </aside>
+      <!-- 资产：Agent 能读到的东西。数据源是表，文档库是语料。
+           两者同构：图标 + 名字 + 等宽计数，计数是最该被扫到的部分 -->
+      <div class="assets">
+        <div class="list-label"><span class="t-kicker-zh">资产</span></div>
+        <button class="asset" :class="{on: view === 'schema'}" @click="goSchema">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <ellipse cx="8" cy="4" rx="4.8" ry="1.9"/>
+            <path d="M3.2 4v8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9V4"/>
+            <path d="M3.2 8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9"/>
+          </svg>
+          <span class="asset-n">数据源概览</span>
+          <span class="asset-m">
+            {{ src.tables != null ? src.tables + ' 表 · ' + (src.rows || 0).toLocaleString() + ' 行' : '—' }}
+          </span>
+        </button>
+        <!-- 文档库还没做（阶段④·RAG）。这里不编一个读数出来——
+             一个恒为「—」的计数是装饰，不是信息，而空态本该是待机 -->
+        <button class="asset" disabled>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+            <path d="M8.5 1.5v4h4"/>
+          </svg>
+          <span class="asset-n">文档库概览</span>
+          <span class="asset-m">—</span>
+        </button>
+      </div>
 
-  <!-- 中栏：会话头 + 轨迹页 + 对话流 + 输入区 -->
-  <chat-view></chat-view>
+      <div class="list">
+        <!-- 左栏永远是会话列表。轨迹不在这儿切 ——
+             它属于会话内部，跟「列表里有哪些会话」是两回事。
+             注意别用裸 <template> 包一层：Vue 只把【带指令】的 template 当片段，
+             没有指令的会当原生元素保留，而原生 template 是 display:none ——
+             内容会整块消失，而且不报错 -->
+        <div class="list-label">
+          <span class="t-kicker-zh">会话</span>
+          <span class="t-meta">{{ sessions.length }}</span>
+        </div>
+        <div v-if="!sessions.length" class="empty-note">还没有历史会话</div>
+        <button v-for="s in sessions" :key="s.session_id"
+                class="row" :class="{on: s.session_id === sessionId}"
+                @click="openSession(s.session_id)">
+          <div class="row-t">{{ s.title }}</div>
+          <div class="row-m">
+            <span>{{ s.message_count }} 条</span>
+            <span>{{ shortTime(s.updated_at) }}</span>
+          </div>
+          <span class="sess-del" :class="{confirming: pendingDelete === s.session_id}"
+                @click.stop="removeSession(s.session_id)"
+                :title="pendingDelete === s.session_id ? '再点一次即删除' : '删除会话'">
+            <template v-if="pendingDelete === s.session_id">确认？</template>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </span>
+        </button>
+      </div>
 
-  <!-- 右栏：本次会话的产物 -->
-  <files-panel></files-panel>
+      <div class="side-foot">
+        <button class="foot-btn" :class="{on: view === 'settings'}" @click="goSettings">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/>
+            <path d="M3 6.5V4a1 1 0 0 1 1-1h2.5M13 6.5V4a1 1 0 0 0-1-1h-2.5M3 9.5V12a1 1 0 0 0 1 1h2.5M13 9.5V12a1 1 0 0 1-1 1h-2.5"/>
+          </svg>
+          数据源与设置
+        </button>
+      </div>
+    </aside>
+
+    <!-- 设置和数据字典【共用这个工作区】——它们换的是中栏，
+         顶栏和左栏留在原地。原型的 v6 / v7 就是这么搭的：
+         把「看数据字典」做成退出工作台，等于让用户看个表就得先丢开会话 -->
+    <chat-view v-if="view === 'chat'"></chat-view>
+    <settings-view v-else-if="view === 'settings'"></settings-view>
+    <schema-view v-else-if="view === 'schema'"></schema-view>
+  </div>
 </div>
-
-<settings-view v-else-if="view === 'settings'"></settings-view>
-<schema-view v-else-if="view === 'schema'"></schema-view>
 
 <div v-if="toast" class="toast" :class="toast.ok ? 'ok' : 'err'">
   <svg v-if="toast.ok" viewBox="0 0 24 24" fill="none" stroke="currentColor"

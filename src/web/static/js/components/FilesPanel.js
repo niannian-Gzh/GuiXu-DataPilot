@@ -7,13 +7,15 @@ export default {
     return { ...Vue.inject('store') };
   },
   template: `
-  <aside class="col glass" :class="{hidden: !railOpen}">
-    <div class="rail-head">
-      <button class="tab" :class="{on: rail === 'artifacts'}" @click="rail = 'artifacts'">
-        {{ t.artifacts }} <b>{{ allArtifacts.length }}</b>
-      </button>
-      <span style="flex:1"></span>
-      <button class="icon-btn" @click="toggleRail" title="收起右侧栏">
+  <aside class="dock" :class="{hidden: !railOpen}">
+    <!-- 头部是「计数」，不是「标题 + 按钮」。
+         产物就那么几个，用户想知道的是「有几个」——
+         所以数字给到 22px，标题给到刻字大小 -->
+    <div class="dock-head">
+      <div class="t-kicker-zh">产物</div>
+      <div class="dock-count">{{ allArtifacts.length }}</div>
+      <div class="dock-sub t-meta">本次会话</div>
+      <button class="dock-fold" @click="toggleRail" title="收起产物栏">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
              stroke-linecap="round" stroke-linejoin="round">
           <polyline points="9 18 15 12 9 6"></polyline>
@@ -21,36 +23,30 @@ export default {
       </button>
     </div>
 
-    <div class="rail-body">
+    <div class="dock-body">
       <!-- 产物 —— 本次对话产出的文件。不进全局列表：
            产物和「哪一轮对话、基于什么条件导出的」绑在一起才有意义 -->
-      <template v-if="rail === 'artifacts'">
-        <div v-if="!allArtifacts.length" class="empty-note">
-          本次会话还没有产出文件<br>
-          <span style="font-size:10.5px">试试「把已下证的项目导成 Excel」</span>
-        </div>
-        <div v-for="(a, i) in allArtifacts" :key="i" class="rail-item">
-          <div class="rail-item-top">
-            <span class="artifact-icon" :class="a.kind"
-                  style="width:24px;height:24px;border-radius:7px">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                   stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-              </svg>
-            </span>
-            <span class="name">{{ a.name }}</span>
-          </div>
-          <div class="rail-item-sub">
-            <span>{{ a.label }}</span>
-            <span v-if="a.rows != null">{{ a.rows }} 条</span>
-          </div>
-          <div class="rail-acts">
-            <button class="btn" @click="previewFile(a)">{{ t.preview }}</button>
-            <button class="btn" @click="download(a.path, a.name)">下载</button>
-          </div>
-        </div>
-      </template>
+      <div v-if="!allArtifacts.length" class="empty-note">
+        本次会话还没有产出文件<br>
+        <span style="font-size:10.5px">试试「把已下证的项目导成 Excel」</span>
+      </div>
+      <!-- 整项可点 = 预览。原来下面挂着「预览 / 下载」两个按钮，
+           但下载在预览里也有——一个动作留一个入口就够 -->
+      <button v-for="(a, i) in allArtifacts" :key="i" class="art" @click="previewFile(a)">
+        <span class="art-ic" :class="a.kind">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+          </svg>
+        </span>
+        <span class="art-b">
+          <span class="art-n">{{ a.name }}</span>
+          <span class="art-m">
+            {{ a.label }}<template v-if="a.rows != null"> · {{ a.rows }} 行</template>
+          </span>
+        </span>
+      </button>
     </div>
   </aside>
 `,

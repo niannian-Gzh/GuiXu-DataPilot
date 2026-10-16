@@ -95,6 +95,21 @@ async function _req(url, method, body) {
   }
 }
 
+/* ---------------- 概览 ---------------- */
+
+/* 欢迎页那几格读数：数据源 / 规模 / 模型。
+   取不回来就返回 null——欢迎页宁可少几行，也不要显示"加载失败"，
+   因为那几行只是锦上添花，不该在开屏第一眼就报错 */
+export async function getOverview() {
+  try {
+    const res = await fetch(API + '/overview');
+    if (!res.ok) return null;
+    return res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
 /* ---------------- 数据字典 ---------------- */
 
 /* 表结构一次拿全，不分页——一个数据源就那几张表，分了只会让
@@ -124,6 +139,10 @@ export const deleteConfig = (id) => _req('/configs/' + id, 'DELETE');
 export const activateConfig = (id) => _req('/configs/' + id + '/activate', 'POST');
 export const setConfigKey = (id, key) => _req('/configs/' + id + '/key', 'POST', { key });
 export const testConfig = (id) => _req('/configs/' + id + '/test', 'POST');
+/* 按【已保存的】配置拉模型。和 fetchModels 的区别在 key 从哪来：
+   那个是编辑页用的，key 在表单里；这个给对话页的切换器用，它手上没有
+   key（key 从不外传），所以只能让服务端按 id 现读 */
+export const getConfigModels = (id) => _req('/configs/' + id + '/models');
 
 
 /* ---------------- 会话 ---------------- */

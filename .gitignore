@@ -6,27 +6,17 @@ configs.json
 schema_meta.json
 
 # ============ 本地数据与运行产物 ============
+data/*.db
 data/*.duckdb
+data/*.xlsx
 data/exports/
 data/reports/
 data/uploads/
-data/软著项目申报管理系统.xlsx
 logs/*.jsonl
 logs/sessions/
 
-# ============ 设计与过程产物（不进库）============
-# docs/  设计文档（架构 / 设计 / 决策 / 家底）
-# legacy/ 归档的旧实现
-# tests/ 过程性测试脚本
-docs/
-legacy/
-tests/
+# ============ 工具产物 ============
 .playwright-mcp/
-
-# ============ 评测的私有数据（题库 / 生成器）============
-eval/golden_set.json
-eval/golden_set_agent.json
-eval/gen_expected.py
 
 # ============ Python ============
 __pycache__/

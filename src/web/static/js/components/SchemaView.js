@@ -7,6 +7,29 @@
    两者一比就知道改了哪几处，也就能在离开前拦住用户。 */
 import * as api from '../api.js';
 
+/* 生 SQL 类型名对用户没有意义。`character varying` 只有一个意思：文本。
+   带长度的（varchar(50) / numeric(10,2)）先剥掉括号再查，
+   剥掉的精度不补回来——用户要判断的是「这列是数还是字」，不是它留了几位 */
+const TYPE_CN = {
+  'character varying': '文本', 'varchar': '文本', 'character': '文本',
+  'char': '文本', 'text': '文本',
+  'integer': '整数', 'int': '整数', 'int2': '整数', 'int4': '整数', 'int8': '整数',
+  'smallint': '整数', 'bigint': '整数', 'serial': '整数', 'bigserial': '整数',
+  'numeric': '小数', 'decimal': '小数', 'real': '小数', 'double precision': '小数',
+  'float': '小数', 'float4': '小数', 'float8': '小数',
+  'boolean': '布尔', 'bool': '布尔',
+  'date': '日期',
+  'timestamp': '时间', 'timestamp without time zone': '时间',
+  'timestamp with time zone': '时间', 'timestamptz': '时间', 'time': '时间',
+  'json': 'JSON', 'jsonb': 'JSON', 'uuid': 'ID', 'blob': '二进制', 'bytea': '二进制',
+};
+
+function typeCn(t) {
+  const raw = String(t || '').trim();
+  const k = raw.toLowerCase();
+  return TYPE_CN[k] || TYPE_CN[k.replace(/\(.*\)$/, '').trim()] || raw || '—';
+}
+
 export default {
   name: 'SchemaView',
   setup() {
@@ -156,149 +179,188 @@ export default {
       }
     }
 
-    // 未保存时不给刷新：刷新会整份重载，把编辑中的草稿冲掉
-    function tryLeave() {
-      if (dirtyCount.value) { leaving.value = true; return; }
-      store.goChat();
+    /* ── 未保存就离开 ──────────────────────────────────────────
+       左栏和顶栏是常驻的，所以「离开这一页」的入口在 shell 那边，
+       不在这个组件里。由它注册一个拦截器（见 main.js 的 leaveGuard），
+       shell 上每个会切走视图的动作都先过一遍这里。
+       proceed 是那个动作本身，问过之后再执行它 */
+    let pendingLeave = null;
+
+    function tryLeave(proceed) {
+      if (dirtyCount.value) { pendingLeave = proceed; leaving.value = true; }
+      else proceed();
     }
 
-    Vue.onMounted(load);
+    function leaveNow() {
+      const p = pendingLeave;
+      pendingLeave = null;
+      leaving.value = false;
+      // 先撤掉拦截，否则这次离开会被自己再拦一道
+      store.leaveGuard.value = null;
+      if (p) p();
+    }
+
+    // 未保存时不给刷新：刷新会整份重载，把编辑中的草稿冲掉
+    Vue.onMounted(() => {
+      load();
+      store.leaveGuard.value = tryLeave;
+    });
+    Vue.onUnmounted(() => {
+      store.leaveGuard.value = null;
+      pendingLeave = null;
+    });
 
     return {
-      ...store, t, fmt,
+      ...store, t, fmt, typeCn,
       original, draft, openMap, loadError, saving, refreshing,
       editing, confirming, leaving, textareaEl,
       changes, dirtyCount,
       openEditor, confirmEditor, closeEditor,
-      doSave, doRefresh, tryLeave, load,
+      doSave, doRefresh, leaveNow, load,
     };
   },
   template: `
-<div class="settings-page">
-  <div class="glass" style="flex:1;min-height:0;display:flex;flex-direction:column">
-
-    <div class="set-head">
-      <button class="icon-btn" @click="tryLeave" title="返回对话">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 18 9 12 15 6"></polyline>
-        </svg>
-      </button>
-      <h2>{{ t.schemaTitle }}</h2>
-      <span class="count" v-if="dirtyCount">{{ fmt(t.unsavedCount, { n: dirtyCount }) }}</span>
-      <span class="spacer"></span>
+<main class="stage">
+  <div class="stage-head">
+    <div class="stage-bar">
+      <span class="stage-title">{{ t.schemaTitle }}</span>
+      <div class="stage-meta">
+        <span class="t-meta">{{ draft.length }} 张表</span>
+        <span class="t-meta" v-if="dirtyCount">{{ fmt(t.unsavedCount, { n: dirtyCount }) }}</span>
+      </div>
       <button class="btn" @click="doRefresh"
               :disabled="refreshing || dirtyCount"
               :title="dirtyCount ? '有未保存的修改，先保存或返回再刷新' : '扫库同步新表新字段'">
         {{ refreshing ? t.refreshing : t.refresh }}
       </button>
-      <button class="btn primary" @click="confirming = true"
+      <button class="btn solid" @click="confirming = true"
               :disabled="!dirtyCount || saving">
         {{ saving ? t.saving : t.save }}
       </button>
     </div>
+  </div>
 
-    <div class="sch-body">
-      <div class="sch-inner">
+  <!-- 一张表 = 一个块。块头是「这张表是什么」，下面是它的全部字段。
+       不做左右分栏：工作区本来就窄，而「数据字典」这个词的意思就是
+       「把所有表的所有字段摊开」，摊开就够了 -->
+  <div class="schema">
+    <div v-if="loadError" class="empty-note">{{ loadError }}</div>
 
-        <div class="set-hint sch-desc">{{ t.schemaDesc }}</div>
+    <div v-for="tb in draft" :key="tb.name" class="tbl">
+      <div class="tbl-head">
+        <button class="tbl-fold" :class="{closed: !openMap[tb.name]}"
+                @click="openMap[tb.name] = !openMap[tb.name]"
+                :title="openMap[tb.name] ? '收起' : '展开'">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+               stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
 
-        <div v-if="loadError" class="sch-error">{{ loadError }}</div>
+        <span class="tbl-nm">{{ tb.real_table }}</span>
 
-        <div v-for="tb in draft" :key="tb.name" class="sch-card">
+        <!-- 表的中文名就地改。它短，为它开一个面板太重 -->
+        <input class="tbl-cn" v-model="tb.label"
+               :size="Math.max(4, (tb.label || '').length * 2)"
+               :placeholder="t.unnamedTable">
 
-          <div class="sch-card-head">
-            <button class="sch-fold" :class="{closed: !openMap[tb.name]}"
-                    @click="openMap[tb.name] = !openMap[tb.name]"
-                    :title="openMap[tb.name] ? '收起' : '展开'">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
-                   stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6 9 12 15 18 9"></polyline>
-              </svg>
-            </button>
+        <span class="tbl-meta">
+          {{ fmt(t.fieldsCount, { n: tb.fields.length }) }}
+        </span>
+      </div>
 
-            <input class="set-input sch-table-label" v-model="tb.label"
-                   :placeholder="t.unnamedTable">
-
-            <span class="sch-table-meta">
-              {{ tb.real_table }} {{ fmt(t.fieldsCount, { n: tb.fields.length }) }}
-            </span>
-          </div>
-
-          <div class="sch-fields" v-show="openMap[tb.name]">
-            <div class="sch-row sch-row-head">
-              <span>{{ t.fieldName }}</span>
-              <span>{{ t.fieldType }}</span>
-              <span>{{ t.fieldConstraint }}</span>
-              <span>{{ t.fieldLabel }}</span>
-            </div>
-
-            <div v-for="f in tb.fields" :key="f.name" class="sch-row">
-              <span class="sch-fname">{{ f.name }}</span>
-              <span class="sch-ftype">{{ f.type }}</span>
-              <span>
-                <em v-if="!f.nullable" class="sch-tag req">{{ t.required }}</em>
-                <em v-else class="sch-tag opt">{{ t.nullable }}</em>
+      <table v-show="openMap[tb.name]">
+        <thead>
+          <tr>
+            <th>{{ t.fieldName }}</th>
+            <th>{{ t.fieldType }}</th>
+            <th>{{ t.fieldConstraint }}</th>
+            <th>{{ t.fieldLabel }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="f in tb.fields" :key="f.name">
+            <td>{{ f.name }}</td>
+            <td class="num" :title="f.type">{{ typeCn(f.type) }}</td>
+            <td>
+              <span class="tag" :class="f.nullable ? 'opt' : 'req'">
+                {{ f.nullable ? t.nullable : t.required }}
               </span>
-              <!-- 不在这里放输入框：真实的"中文含义"是上百字的提示语
-                   （比如 status_raw 那条取值说明），一行 input 只看得到开头，
-                   还会把表格撑得高低不齐。点开面板写 -->
-              <button class="sch-fvalue" :class="{empty: !f.label}"
-                      :title="f.label || t.unlabeled"
+            </td>
+            <!-- 不就地放输入框：真实的「中文含义」是上百字的提示语
+                 （比如 status_raw 那条取值说明），一行 input 只看得到开头，
+                 还会把表格撑得高低不齐。点开面板写 -->
+            <td class="cnm" :class="{empty: !f.label}">
+              <button class="cnm-btn" :title="f.label || t.unlabeled"
                       @click="openEditor(tb, f)">
                 {{ f.label || t.unlabeled }}
               </button>
-            </div>
-          </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
-        </div>
-
-        <div v-if="!draft.length && !loadError" class="empty-note">
-          这个数据源里还没有表
-        </div>
-
-      </div>
+    <div v-if="!draft.length && !loadError" class="empty-note">
+      这个数据源里还没有表
     </div>
   </div>
 
   <!-- 字段中文含义的编辑面板 -->
-  <div v-if="editing" class="sch-mask" @click.self="closeEditor">
-    <div class="sch-modal glass">
-      <div class="sch-modal-head">
-        <span class="sch-modal-name">{{ editing.fieldName }}</span>
-        <span class="sch-modal-meta">
+  <div v-if="editing" class="modal-mask" @click.self="closeEditor">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-head">
+        <span class="modal-title">{{ editing.fieldName }}</span>
+        <span class="t-meta">
           {{ editing.tableLabel || editing.tableName }} · {{ editing.type }} ·
           {{ editing.nullable ? t.nullable : t.required }}
         </span>
+        <button class="modal-x" @click="closeEditor" title="关闭">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M3 3l6 6M9 3l-6 6"/>
+          </svg>
+        </button>
       </div>
-      <textarea ref="textareaEl" class="sch-textarea" v-model="editing.text"
-                :placeholder="t.unlabeled"></textarea>
-      <div class="set-hint sch-modal-hint">{{ t.labelHint }}</div>
-      <div class="sch-modal-foot">
+      <div class="modal-body" style="padding:14px 16px">
+        <textarea ref="textareaEl" class="cnm-area" v-model="editing.text"
+                  :placeholder="t.unlabeled"></textarea>
+        <div class="set-hint" style="margin-top:8px">{{ t.labelHint }}</div>
+      </div>
+      <div class="modal-foot">
         <button class="btn" @click="closeEditor">{{ t.cancel }}</button>
-        <button class="btn primary" @click="confirmEditor">{{ t.ok }}</button>
+        <button class="btn solid" @click="confirmEditor">{{ t.ok }}</button>
       </div>
     </div>
   </div>
 
-  <!-- 保存前把改动逐条摆出来 -->
-  <div v-if="confirming" class="sch-mask" @click.self="confirming = false">
-    <div class="sch-modal glass">
-      <div class="sch-modal-title">{{ t.confirmSaveTitle }}</div>
-      <div class="sch-changes">
-        <div v-for="c in changes" :key="c.name" class="sch-change-group">
-          <div class="sch-change-table">{{ c.label || t.unnamedTable }}</div>
-          <div v-for="(i, k) in c.items" :key="k" class="sch-change-row">
-            <span class="sch-change-key">{{ i.kind === 'table' ? t.tableNameChange : i.name }}</span>
-            <span class="sch-change-from" :title="i.from">{{ i.from || '（空）' }}</span>
-            <span class="sch-change-arrow">→</span>
-            <span class="sch-change-to" :title="i.to">{{ i.to || '（空）' }}</span>
+  <!-- 保存前把改动逐条摆出来。用的是确认卡那套 .diff-row，
+       因为它说的就是同一件事：哪一项从什么变成了什么 -->
+  <div v-if="confirming" class="modal-mask" @click.self="confirming = false">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-head">
+        <span class="modal-title">{{ t.confirmSaveTitle }}</span>
+        <button class="modal-x" @click="confirming = false" title="关闭">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M3 3l6 6M9 3l-6 6"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body" style="padding:14px 16px">
+        <div v-for="c in changes" :key="c.name" style="margin-bottom:16px">
+          <div class="set-h">{{ c.label || t.unnamedTable }}</div>
+          <div v-for="(i, k) in c.items" :key="k" class="diff-row">
+            <span class="diff-field">{{ i.kind === 'table' ? t.tableNameChange : i.name }}</span>
+            <span class="diff-vals">
+              <span class="diff-from">{{ i.from || '（空）' }}</span>
+              <span class="diff-arrow">→</span>
+              <span class="diff-to">{{ i.to || '（空）' }}</span>
+            </span>
           </div>
         </div>
       </div>
-      <div class="sch-modal-foot">
+      <div class="modal-foot">
         <button class="btn" @click="confirming = false">{{ t.cancel }}</button>
-        <button class="btn primary" @click="doSave" :disabled="saving">
+        <button class="btn solid" @click="doSave" :disabled="saving">
           {{ saving ? t.saving : t.confirmSave }}
         </button>
       </div>
@@ -306,16 +368,20 @@ export default {
   </div>
 
   <!-- 带着未保存的改动走 -->
-  <div v-if="leaving" class="sch-mask" @click.self="leaving = false">
-    <div class="sch-modal glass sch-modal-sm">
-      <div class="sch-modal-title">{{ t.confirmLeaveTitle }}</div>
-      <div class="set-hint">{{ fmt(t.unsavedCount, { n: dirtyCount }) }}会丢掉</div>
-      <div class="sch-modal-foot">
+  <div v-if="leaving" class="modal-mask" @click.self="leaving = false">
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head">
+        <span class="modal-title">{{ t.confirmLeaveTitle }}</span>
+      </div>
+      <div class="modal-body" style="padding:14px 16px">
+        <div class="set-hint">{{ fmt(t.unsavedCount, { n: dirtyCount }) }}会丢掉</div>
+      </div>
+      <div class="modal-foot">
         <button class="btn" @click="leaving = false">{{ t.cancel }}</button>
-        <button class="btn danger" @click="goChat">{{ t.confirmLeave }}</button>
+        <button class="btn danger" @click="leaveNow">{{ t.confirmLeave }}</button>
       </div>
     </div>
   </div>
-</div>
+</main>
 `,
 };

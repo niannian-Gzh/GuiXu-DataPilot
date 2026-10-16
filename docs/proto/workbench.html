@@ -1,0 +1,2686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>归墟 · 工作台原型</title>
+<!-- ============================================================
+     设计语言 v1 的实物验证稿。
+     依据：docs/design-language.md（从 splash.css + boot.js 反推）
+     不是生产代码——静态假数据，只为讨论"这套语言铺到工作界面
+     之后还成不成立"。
+
+     三屏：空态 / 对话中 / 首次引导。右下角切换，或按 1 2 3。
+
+     与现有应用的主要差异（拿来对照）：
+       ① 灰阶：冷蓝 #0a0c10/#dde3ee → 中性暖 #0b0b0c/#f2f1ee
+       ② 线：  rgba(166,181,188,α) → rgba(255,255,255,α)
+       ③ 圆角：14 种 → 只有 0 和 50%
+       ④ 布局：三块圆角卡片 + 12px 缝 → 一整块黑场 + 1px 线分区
+       ⑤ 字距：中文 0.05em 均一 → 按字号反比，小字拉开
+       ⑥ 字号：最大 20px，跨度 2× → 到 27px，跨度 4.6×
+     ============================================================ -->
+<style>
+/* ===================== 令牌 ===================== */
+:root{
+  /* 灰阶：中性偏暖。文字 R ≥ G ≥ B，底 B ≤ 1.5R。
+     四档明度 = 「黑曜石分层」的全部家当。
+     原先只有一档底(#0b0b0c) + 一档面(#131315)，工作台其实是【平的】，
+     层次全靠 1px 线硬分——线一细，画面就只剩碎 */
+  /* 关键：深色 ≠ 近黑。四档之间每档要拉开 8~10 个色阶才看得见。
+     原来挤在 #0b0b0c 附近，0→20 只有 20 阶，分三层每层 7 阶，等于没分。
+     基准抬到 #17171a —— 往下有 void/side，往上有 raise，才分得开 */
+  --void:      #060605;   /* 工作台【之外】：只有一圈 8px */
+  --side:      #1a1917;   /* 两侧栏与顶栏：比工作台沉一档 */
+  --bg:        #0f0f0e;   /* 工作台面：中栏 */
+  --raise:     #171614;   /* 抬起的块：对话轮、结果框 */
+  --sunken:    #0a0908;   /* 沉下去的：输入框 */
+
+  --ink:       #f2f1ee;   /* 242 241 238 */
+  --ink-soft:  #cfcecb;   /* 207 206 203 */
+  --muted:     #85847f;   /* 133 132 127 */
+  --faint:     #6a6965;   /* 106 105 101 */
+
+  /* 刻度线单独一档，比 hair-soft 还低。
+     它是面积最大的装饰物，按「不许抢信息」的判据，必须比任何
+     承载信息的元素更弱 */
+  --tick:      rgba(255,255,255,.042);
+
+  /* 线 = 白色的透明度，不带色相 */
+  --hair-soft:   rgba(255,250,244,.10);
+  --hair:        rgba(255,250,244,.20);
+  --hair-strong: rgba(255,250,244,.36);
+
+  /* 强调色：蓝。开机的原值是橙(#ff7500)，两边都试过之后定的蓝——
+     橙更暖、和暖灰底是一路的，但在深色工作台上偏「警示」；
+     蓝在这个底色上更安静，也更像「工具」而不是「仪表灯」 */
+  --acc:       #3d7dff;
+  --acc-lift:  #6b9dff;
+  --err:       #f87272;
+  --warn:      #d99b3c;
+  --ok:        #3ddc97;
+  --acc-dim:   color-mix(in srgb, var(--acc) 12%, transparent);
+  --acc-line:  color-mix(in srgb, var(--acc) 34%, transparent);
+  --err-dim:   color-mix(in srgb, var(--err) 12%, transparent);
+  --err-line:  color-mix(in srgb, var(--err) 34%, transparent);
+  --ok-dim:    color-mix(in srgb, var(--ok) 12%, transparent);
+  --warn-dim:  color-mix(in srgb, var(--warn) 12%, transparent);
+
+  /* 品牌标记：全站唯一允许带色相的非信号物 */
+  --mark-lo:   #33528f;
+  --mark-mid:  #9dbcff;
+  --mark-core: #cfe0ff;
+  --mark-hi:   #ffffff;
+
+  --mono: 'Cascadia Mono','JetBrains Mono',Consolas,monospace;
+  --din:  'Bahnschrift','DIN Alternate','Segoe UI Variable Display',sans-serif;
+  --sans: -apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif;
+
+  --ease: cubic-bezier(.32,.72,0,1);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{
+  font-family:var(--sans);font-size:13.5px;line-height:1.6;
+  color:var(--ink);background:var(--void);
+  -webkit-font-smoothing:antialiased;
+}
+::selection{background:var(--acc-line)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--hair);background-clip:content-box;border:2px solid transparent}
+::-webkit-scrollbar-thumb:hover{background:var(--hair-strong);background-clip:content-box}
+
+/* ===================== 排版原子 =====================
+   字距与字号反比。小字拉开，大字收回。见 design-language 三章 */
+.t-kicker{                       /* 刻字：10px，最拉开的档 */
+  font-size:11px;letter-spacing:.08em;
+  color:var(--muted);font-weight:500;
+}
+.t-kicker-zh{                    /* 中文刻字：中文没有大小写，靠字距和字重 */
+  font-size:11px;letter-spacing:.08em;color:var(--muted);font-weight:500;
+}
+.t-meta{                         /* 等宽 meta：编号、耗时、状态码 */
+  font-family:var(--sans);font-size:11px;letter-spacing:.06em;
+  color:var(--muted);
+}
+.t-label{font-size:11.5px;letter-spacing:.06em;color:var(--ink-soft)}
+.t-body{font-size:13.5px;line-height:1.75;color:var(--ink-soft)}
+.t-read{                         /* 读数大字 */
+  font-family:var(--din);font-size:27px;letter-spacing:.14em;
+  font-weight:400;color:var(--ink);
+}
+
+/* ===================== 应用骨架 =====================
+   一整块黑场 + 1px 线分区。没有卡片，没有缝，没有投影 */
+/* 工作台是一块【浮在暗底上的面板】。这一圈 8px 和那个圆角，
+   是让"面"成立的最低代价——没有它，四档明度差再准也读不出来 */
+.app{
+  display:flex;flex-direction:column;
+  height:calc(100vh - 16px);margin:8px;
+  background:var(--side);
+  border:1px solid var(--hair-soft);
+  border-radius:14px;
+  box-shadow:0 14px 44px rgba(0,0,0,.42);
+  overflow:hidden;
+}
+
+/* 顶部状态带：品牌 + 全局读数 */
+.rail{
+  display:flex;align-items:center;gap:14px;flex:none;
+  height:46px;padding:0 18px;
+  background:var(--side);
+}
+/* 归墟标记。照 boot.js 的 svgMark()：fill 一律 currentColor，
+   八片与中心光点【同一种】暖白——开机动画里它就是纯色的。
+   两个动作都做在填充上，没有一处模糊半径（见 design-language 二章） */
+.mark,.void-mark,.init-mark{color:var(--ink)}
+.mark{width:26px;height:26px;flex:none;display:grid;place-items:center}
+.mark svg,.void-mark svg,.init-mark svg{width:100%;height:100%}
+
+/* 八重对称 ⇒ 视觉周期只有 45°，走满 45° 就是一整圈，
+   而且首尾像素级吻合，所以这个循环没有接缝 */
+.gx-petals{transform-origin:25px 25px;
+  animation:gx-spin 6s linear infinite}
+@keyframes gx-spin{to{transform:rotate(45deg)}}
+
+/* 光点脉冲：scale + opacity，都是填充。不是 box-shadow 那种辉光 */
+.gx-core{transform-box:fill-box;transform-origin:center;
+  animation:gx-core 2.6s ease-in-out infinite}
+@keyframes gx-core{
+  0%,100%{transform:scale(1);opacity:.62}
+  50%    {transform:scale(1.8);opacity:1}
+}
+/* 顶栏那枚只有 22px，光点折算下来才 1px，动起来既看不见又白耗 GPU */
+.mark .gx-petals,.mark .gx-core{animation:none}
+@media (prefers-reduced-motion:reduce){
+  .gx-petals,.gx-core,.init-rule{animation:none}
+}
+/* 「归墟」两字做渐变上色：暖白起手，末字落一点橙。
+   橙色只占最后一小段，不是整体染色——它给的是「有一点温度」，
+   不是「这是个橙色品牌」 */
+.brand{
+  font-size:20px;font-weight:700;line-height:1;
+  letter-spacing:.14em;padding-right:.14em;   /* 字距会让末字贴边 */
+  /* 倾斜。中文黑体没有真斜体，font-style:italic 只会得到浏览器伪斜——
+     伪斜的角度不由你定，而且不同浏览器还不一样。
+     skewX 是几何变换，角度可控、跨浏览器一致。
+     负角度是因为 CSS 的 y 轴朝下，要把上边往右推得用负值 */
+  transform:skewX(-10deg);
+  /* 蓝渐变：浅蓝起手，落到强调色同一个蓝 */
+  background:linear-gradient(102deg,
+    #dbe7ff 0%, #a8c4ff 46%, #4d8dff 100%);
+  -webkit-background-clip:text;background-clip:text;
+  color:transparent;
+}
+/* 字体备选。都是系统自带的，不引外部资源。
+   宋体最贴「归墟」这个词的来历（《列子·汤问》），但它没有真粗体，
+   700 会被伪粗，所以落到宋体时把字重降回 500、字距放开一点 */
+.brand.serif{font-family:'Source Han Serif SC','Noto Serif SC','SimSun',serif;
+  font-weight:500;letter-spacing:.2em;padding-right:.2em}
+.brand.kai{font-family:'KaiTi','STKaiti','Kaiti SC',serif;
+  font-weight:400;letter-spacing:.18em;padding-right:.18em}
+
+/* 强调色备选：橙。留着一个开关，是想再比的时候不用翻代码 */
+:root.acc-orange{
+  --acc:#ff7500;
+  --acc-lift:#ff9a45;
+}
+.brand-sub{font-size:11px;letter-spacing:.08em;color:var(--muted);
+  padding-left:12px;border-left:1px solid var(--hair-soft);margin-left:2px}
+.rail-sp{flex:1}
+.rail-meta{display:flex;align-items:center;gap:0}
+.rail-meta span{
+  font-family:var(--sans);font-size:11px;letter-spacing:.08em;
+  color:var(--muted);padding:0 13px;line-height:1;
+  border-right:1px solid var(--hair-soft);
+}
+.rail-meta span:last-child{border-right:none;padding-right:0}
+.rail-meta .live{color:var(--acc-lift)}
+/* 产物栏的开关常驻顶栏。它不能放在产物栏自己身上——
+   栏收起来之后，那个按钮就跟着一起没了 */
+.rail-icon{
+  width:28px;height:28px;flex:none;display:grid;place-items:center;
+  background:none;border:none;cursor:pointer;border-radius:7px;
+  color:var(--faint);margin-left:4px;
+  transition:color .16s var(--ease),background .16s var(--ease);
+}
+.rail-icon:hover{color:var(--ink);background:rgba(255,255,255,.08)}
+.rail-icon svg{width:15px;height:15px}
+
+/* 三栏。线在栏上，不在栏之间——这样左栏收起时线也跟着走 */
+.body{flex:1;min-height:0;display:flex}
+.side{width:240px;flex:none;display:flex;flex-direction:column;
+  background:var(--side)}
+/* 工作区改成 grid。产物栏现在是【工作区内部】的一列，
+   不再是页面的第三栏——三行两列：head 和 composer 横跨，
+   中间那行左边是对话流、右边是产物栏 */
+.stage{
+  flex:1;min-width:0;position:relative;
+  background:var(--bg);border-radius:12px;margin:8px;overflow:hidden;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  grid-template-rows:auto minmax(0,1fr) auto;
+}
+.stage-head{grid-column:1/-1;grid-row:1}
+.stream,.void,.trace,.schema,.settings{grid-column:1/-1;grid-row:2;min-height:0}
+.stream,.void,.trace{grid-column:1}
+.dock{grid-column:2;grid-row:2}
+.composer{grid-column:1/-1;grid-row:3}
+/* 产物栏：工作区内部的一块。背景比工作区亮一档，靠明度差站住，
+   不用线。它现在被工作区的圆角裁着——这本身就是「它属于工作区」的证据 */
+.dock{width:220px;display:flex;flex-direction:column;
+  background:var(--raise);overflow:hidden;
+  border-radius:12px 0 0 12px;
+  transition:width .28s var(--ease),opacity .2s var(--ease)}
+.dock.shut{width:0;opacity:0}
+
+/* 底栏已删。它原来是「上下两条细带夹住工作区」的仪表盘做法，
+   但内容大半是重复的：快捷键和输入框下的 .hint 重复、
+   ROUND 和 stage-head 重复。TOKENS / ELAPSED 挪进顶栏，
+   顺带少一条横贯全屏的线，工作区多出 26px */
+
+/* ===================== 左栏 ===================== */
+.side-head{display:flex;align-items:center;padding:16px 16px 12px}
+/* 刻度标签：选中落在底部一道线，与列表的竖刻度同源 */
+.tabs{display:flex;gap:20px;border-bottom:1px solid var(--hair-soft);
+  margin:0 16px;flex:none}
+.tabs button{
+  position:relative;background:none;border:none;cursor:pointer;
+  padding:0 0 9px;font-family:inherit;
+  font-size:11.5px;letter-spacing:.08em;color:var(--muted);
+  transition:color .16s var(--ease);
+}
+.tabs button:hover{color:var(--ink-soft)}
+.tabs button.on{color:var(--ink)}
+.tabs button.on::after{
+  content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;
+  background:linear-gradient(90deg,transparent,var(--acc-lift),transparent);
+}
+.side-pad{padding:14px 16px 10px;flex:none}
+
+/* 资产：Agent 能读到的东西——数据源是表，文档库是语料。
+   两者同构：一行图标 + 名字 + 等宽计数，计数是最该被扫到的部分 */
+.assets{flex:none;padding-bottom:10px}
+.asset{
+  display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+  padding:7px 16px;background:none;border:none;cursor:pointer;
+  font-family:inherit;transition:background .16s var(--ease);
+}
+.asset:hover{background:rgba(255,255,255,.03)}
+.asset svg{width:14px;height:14px;flex:none;color:var(--muted);
+  transition:color .16s var(--ease)}
+.asset:hover svg{color:var(--acc)}
+.asset-n{font-size:12px;letter-spacing:.1em;color:var(--ink-soft);flex:none}
+.asset-m{margin-left:auto;font-family:var(--sans);font-size:11px;
+  letter-spacing:.12em;color:var(--faint);flex:none}
+
+/* 按钮：1.5px 的一圈。比分隔线重，这是故意的 */
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:7px;
+  width:100%;padding:9px 0;cursor:pointer;
+  background:transparent;border:1.5px solid var(--hair);
+  border-radius:8px;
+  color:var(--ink-soft);font-family:inherit;
+  font-size:11px;letter-spacing:.08em;
+  transition:all .18s var(--ease);
+}
+.btn:hover{border-color:var(--acc-line);color:var(--ink);background:var(--acc-dim)}
+.btn:active{transform:scale(.985)}
+.btn.solid{border-color:var(--acc);color:var(--acc-lift)}
+.btn.solid:hover{background:var(--acc-dim);color:var(--acc-lift)}
+.btn svg{width:12px;height:12px;flex:none}
+
+.list{flex:1;min-height:0;overflow-y:auto;padding:8px 0 14px}
+.list-label{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:6px 16px 9px;
+}
+.row{
+  position:relative;display:block;width:100%;text-align:left;
+  padding:9px 16px;cursor:pointer;background:none;border:none;
+  font-family:inherit;transition:background .16s var(--ease);
+}
+.row:hover{background:rgba(255,255,255,.03)}
+.row.on{background:rgba(255,255,255,.045)}
+/* 选中 = 一道两端渐隐的竖刻度，不是框 */
+.row.on::before{
+  content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:2px;height:52%;
+  background:linear-gradient(180deg,transparent,var(--acc-lift),transparent);
+}
+.row-t{font-size:12.5px;letter-spacing:.06em;color:var(--ink-soft);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row.on .row-t{color:var(--ink)}
+.row-m{display:flex;gap:9px;margin-top:3px;font-family:var(--sans);
+  font-size:11px;letter-spacing:.14em;color:var(--faint)}
+
+.side-foot{flex:none;padding:9px 16px}
+.foot-btn{display:flex;align-items:center;gap:9px;width:100%;padding:5px 0;
+  background:none;border:none;cursor:pointer;font-family:inherit;
+  font-size:11px;letter-spacing:.08em;color:var(--muted);
+  transition:color .16s var(--ease)}
+.foot-btn:hover{color:var(--ink)}
+.foot-btn svg{width:13px;height:13px;flex:none}
+
+/* ===================== 中栏 ===================== */
+/* 工作区头分两层：上面是「这是哪个会话」，一条线，下面是「看它的哪一面」。
+   线是这两层之间唯一的分隔手段——它得在，因为上下说的是两件事 */
+.stage-head{display:flex;flex-direction:column;flex:none}
+.stage-bar{
+  display:flex;align-items:center;gap:12px;
+  padding:13px 20px 11px;
+  border-bottom:1px solid var(--hair-soft);
+}
+.stage-title{font-size:12.5px;letter-spacing:.08em;color:var(--ink-soft)}
+/* 工作区内的视图切换。做成一排小胶囊，不用下划线刻度——
+   刻度的语气太「仪表」，而这是个很轻的切换 */
+.vtabs{display:flex;gap:2px;flex:none;padding:7px 14px 9px}
+.vtabs button{
+  background:none;border:none;cursor:pointer;font-family:inherit;
+  font-size:12px;letter-spacing:.06em;color:var(--muted);
+  padding:5px 11px;border-radius:7px;
+  transition:color .16s var(--ease),background .16s var(--ease);
+}
+.vtabs button:hover{color:var(--ink-soft);background:rgba(255,255,255,.05)}
+.vtabs button.on{color:var(--ink);background:rgba(255,255,255,.09)}
+.stage-meta{margin-left:auto;display:flex;gap:16px}
+
+.stream{min-width:0;min-height:0;overflow-y:auto;padding:32px 26px 14px;
+  scroll-behavior:smooth}
+.thread{max-width:min(760px,86%);margin:0 auto}
+
+/* 对话轮。骨架仍是日志块（左标签 + 右时间 + 时序），
+   但归墟有了自己的小头像——「谁在说话」一眼可辨，
+   比读一个标签快得多 */
+.turn{margin-bottom:30px}
+.turn.has-av{padding-left:46px;position:relative}
+.turn-av{position:absolute;left:0;top:2px;width:28px;height:28px;
+  color:var(--ink-soft)}
+.turn-av svg{width:100%;height:100%}
+.turn-av .gx-petals,.turn-av .gx-core{animation:none}
+/* 你说的话靠右，并且给一个气泡。中文不右对齐（读着别扭），
+   靠的是整块右移 + 气泡——不用读标签就知道这句是自己说的。
+   Agent 那侧不加气泡：它的内容是长文 + 工具 + 表格，装不进泡泡里 */
+.turn.op .turn-head{justify-content:flex-end;gap:12px}
+.turn.op .turn-rule{display:none}
+/* 气泡要贴合内容再靠右。拉满 74% 但只装一行字，中间会空一大片——
+   气泡的宽度本身就是信息：短句就该是短的 */
+.turn.op .turn-text{
+  width:fit-content;margin-left:auto;max-width:74%;
+  background:var(--raise);
+  border-radius:14px;border-top-right-radius:5px;
+  padding:11px 15px;
+}
+.turn-head{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+/* 标签是脚注，不是标题。原来 Agent 的标签是【橙色 + 0.28em 字距】，
+   比它下面那句正文还跳——那是仪器的排法（状态优先）。
+   对话要反过来：内容才是主角，标签退到几乎不发声 */
+.turn-who{font-size:11.5px;letter-spacing:.08em;flex:none;font-weight:500}
+.turn.op .turn-who{color:var(--faint)}
+.turn.ag .turn-who{color:var(--muted)}
+.turn-rule{flex:1;height:1px;background:var(--hair-soft)}
+.turn-at{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  color:var(--faint);flex:none}
+/* 正文提一档、加行高。两侧都是 --ink —— 谁说的靠标签分，
+   不靠把人说话的字调暗（那等于说"你说的不重要"）*/
+.turn-text{font-size:14.5px;line-height:1.88;color:var(--ink);
+  letter-spacing:.015em}
+.turn.ag .turn-text{color:var(--ink)}
+
+/* 工具调用行：等宽 + 状态点，前后用 1px 竖线串起来 */
+.tools{margin:13px 0 13px 3px;padding-left:15px}
+.tool{display:flex;align-items:center;gap:11px;padding:3.5px 0;position:relative}
+.tool .nm{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;
+  color:var(--ink-soft);flex:none;min-width:118px}
+.tool .arg{font-family:var(--mono);font-size:11px;letter-spacing:.04em;
+  color:var(--faint);flex:1;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.tool .ms{font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+  color:var(--muted);flex:none}
+.tool .st{font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+  flex:none;padding:1px 6px;border:1px solid transparent;border-radius:3px}
+.tool .st.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 34%,transparent)}
+.tool .st.err{color:var(--err);border-color:var(--err-line)}
+.tool .st.run{color:var(--acc-lift);border-color:var(--acc-line)}
+
+/* 结果框：直角，1px 线，表头是刻字 */
+.frame{background:var(--raise);margin:15px 0 0;
+  border-radius:10px;overflow:hidden}
+.frame-head{display:flex;align-items:center;gap:12px;
+  padding:11px 13px 8px}
+.frame-head .n{margin-left:auto;font-family:var(--sans);font-size:11px;
+  letter-spacing:.06em;color:var(--muted)}
+table{width:100%;border-collapse:collapse}
+th{font-family:var(--mono);font-size:11px;font-weight:500;
+  letter-spacing:.08em;color:var(--muted);
+  text-align:left;padding:8px 13px;border-bottom:1px solid var(--hair-soft);
+  white-space:nowrap}
+td{font-size:12px;letter-spacing:.03em;color:var(--ink-soft);
+  padding:8px 13px;border-bottom:1px solid var(--hair-soft);
+  white-space:nowrap}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:rgba(255,255,255,.025)}
+td.num{font-family:var(--mono);letter-spacing:.06em;color:var(--muted)}
+td .tag{font-family:var(--mono);font-size:11px;letter-spacing:.06em;
+  padding:1px 6px;border:1px solid;border-radius:3px}
+.tag.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 34%,transparent)}
+.tag.wait{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 34%,transparent)}
+
+/* 输入区 */
+.composer{flex:none;padding:10px 20px 16px}
+.composer-in{max-width:min(760px,86%);margin:0 auto}
+.field{
+  display:flex;align-items:center;gap:12px;
+  border:1.5px solid var(--hair);background:var(--sunken);
+  border-radius:10px;
+  padding:11px 14px;transition:border-color .2s var(--ease);
+}
+.field:focus-within{border-color:var(--acc-line)}
+.field input{flex:1;min-width:0;background:none;border:none;outline:none;
+  font-family:inherit;font-size:13px;letter-spacing:.04em;color:var(--ink)}
+.field input::placeholder{color:var(--faint)}
+.model-pick{
+  display:flex;align-items:center;gap:5px;flex:none;
+  background:none;border:none;cursor:pointer;font-family:inherit;
+  font-size:11.5px;letter-spacing:.04em;color:var(--muted);
+  padding:4px 9px;border-radius:7px;
+  transition:color .16s var(--ease),background .16s var(--ease);
+}
+.model-pick:hover{color:var(--ink-soft);background:rgba(255,255,255,.06)}
+.model-pick .chev{width:10px;height:10px;opacity:.75}
+.send{display:grid;place-items:center;width:30px;height:30px;flex:none;
+  border:1.5px solid var(--acc-line);color:var(--acc-lift);cursor:pointer;
+  background:transparent;transition:all .18s var(--ease)}
+.send:hover{background:var(--acc-dim);border-color:var(--acc)}
+.send svg{width:13px;height:13px}
+/* 「已就绪」跟强调色走。它不是状态——本地应用连不上模型就进不了工作台，
+   这个点永远亮着，不承载任何会变的信息。既然不会变，它就是装饰 */
+.hint .hint-live{margin-left:auto;color:var(--acc-lift)}
+.hint{display:flex;gap:16px;margin-top:9px;
+  font-family:var(--sans);font-size:11px;letter-spacing:.06em;
+  color:var(--faint);}
+
+/* ===================== 空态 ===================== */
+.void{display:flex;flex-direction:column;align-items:center;
+  justify-content:center;position:relative;overflow:hidden;min-height:0}
+/* 刻度线只铺非数据区。网格是「这里有空间」，不是「这里有内容」 */
+/* 柔光全撤，一处不留。
+   原因不是「该不该发光」，是【色带】：底已经压到 RGB 15 了，
+   叠一层 .05 的白，从 0 到最亮只有 12 个色阶，摊在几百像素上
+   必然跳阶——看到的那个「分层边」其实是渐变跳了一阶。
+   近黑的底上，大面积低透明度渐变是不成立的做法。 */
+.void::before{ content:none }
+/* 横线：照开机动画的 .dsu-rule —— 宽度从 0 长出来。
+   它现在是示例区的定界，所以和示例【同宽同起点】，
+   不再自己居中飘着 */
+.void-rule{
+  width:100%;height:1px;background:var(--hair);
+  margin-bottom:9px;transform-origin:left;
+  animation:grow-x .9s var(--ease) both .25s;
+}
+@keyframes grow-x{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.void-in{position:relative;display:flex;flex-direction:column;
+  align-items:center;text-align:center}
+.void-mark{width:72px;height:72px;margin-bottom:26px}
+.void-mark svg{width:72px;height:72px}
+.void-h{font-size:27px;font-weight:400;letter-spacing:.06em;
+  color:var(--ink);line-height:1.3}
+.void-s{margin-top:9px;font-size:11.5px;letter-spacing:.08em;color:var(--muted)}
+/* 读数表：编号 + 键 + 值。键用中文刻字，值用等宽 */
+/* 空态的可问示例。它替用户回答「我能问什么」，所以不是装饰。
+   内容必须【运行时生成】——拿用户自己的表名字段名去拼；
+   写死的文案等于只服务第一个用户。
+   行首那 7px 短横是刻度线的正确用法：附在线上做标记，不是铺成底纹 */
+.void-try{margin-top:34px;width:min(300px,42vw);display:flex;
+  flex-direction:column;align-items:flex-start}
+.try{
+  position:relative;background:none;border:none;cursor:pointer;
+  font-family:inherit;text-align:left;padding:5px 0 5px 15px;
+  font-size:12px;letter-spacing:.1em;color:var(--muted);
+  transition:color .16s var(--ease);
+}
+.try::before{
+  content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:7px;height:1px;background:var(--hair);transition:background .16s var(--ease);
+}
+.try:hover{color:var(--acc)}
+.try:hover::before{background:var(--acc)}
+
+/* 附件卡片。它整个就是那条消息的内容——用户说的那句话就是「给你这个文件」 */
+.file-card{display:flex;align-items:center;gap:11px}
+.file-b{min-width:0}
+.file-n{font-size:12.5px;letter-spacing:.02em;color:var(--ink)}
+.file-m{margin-top:2px;font-size:11px;color:var(--faint)}
+
+/* 动作栏。推断是机器给的，所以默认是「待确认」不是「已完成」——
+   少了这一步，用户会以为表已经建好了 */
+.confirm-bar{display:flex;align-items:center;gap:10px;margin-top:16px}
+.confirm-note{flex:1;min-width:0;font-size:11.5px;color:var(--faint)}
+.confirm-bar .btn{width:auto;padding:9px 18px}
+
+/* ===================== 轨迹页 =====================
+   骨架仿 dsh：指标 → 时间轴 → 分组流 → 详情。
+   它回答的是「刚才那几分钟，它到底干了什么、卡在哪」 */
+.trace{min-width:0;min-height:0;overflow-y:auto;padding:22px 26px 26px}
+
+/* 指标条 */
+.trace-stats{display:flex;gap:8px;margin-bottom:20px}
+.stat{flex:1;min-width:0;padding:13px 15px;
+  background:var(--raise);border-radius:10px}
+.stat-k{display:block;font-size:11.5px;letter-spacing:.06em;color:var(--muted)}
+.stat-v{display:block;margin-top:6px;line-height:1;
+  font-size:22px;font-weight:600;letter-spacing:.02em;color:var(--ink)}
+.stat-u{font-size:12px;font-weight:400;color:var(--muted);margin-left:3px}
+
+/* 时间轴：一条 = 一轮，色块长度 = 那一步的耗时。
+   【所有轮共用同一个比例尺】—— 满宽 = 最慢那一轮的总耗时。
+   如果用 flex 让每轮各自平分，每轮都会被拉满，轮与轮之间就没法比了，
+   那这块就等于白画。 */
+.gantt{background:var(--raise);border-radius:10px;
+  padding:15px 16px;margin-bottom:20px}
+.gantt-row{display:flex;align-items:center;gap:12px;padding:5px 0}
+.gantt-no{flex:none;width:52px;font-size:11.5px;letter-spacing:.06em;
+  color:var(--muted)}
+.gantt-track{flex:1;min-width:0;display:flex;gap:3px;height:14px}
+/* flex:none —— 宽度由 inline 的百分比决定，不许被压缩 */
+.gantt-track i{flex:none;min-width:3px;border-radius:3px;
+  background:color-mix(in srgb,var(--acc) 58%,transparent)}
+.gantt-track i.run{background:var(--acc)}
+.gantt-ms{flex:none;width:54px;text-align:right;
+  font-size:11px;letter-spacing:.02em;color:var(--faint)}
+.gantt-row.run .gantt-ms{color:var(--acc-lift)}
+
+/* 分组流：一轮一组，一组里是「Agent 做的每一件事」 */
+.round{margin-bottom:20px}
+.round-head{display:flex;align-items:baseline;gap:12px;
+  padding:0 4px 9px}
+.round-no{flex:none;font-size:11.5px;letter-spacing:.06em;
+  color:var(--acc-lift);font-weight:500}
+.round-q{flex:1;min-width:0;font-size:13px;color:var(--ink-soft);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.round-at{flex:none;font-size:11px;color:var(--faint)}
+
+.step{display:flex;align-items:center;gap:12px;width:100%;
+  padding:8px 13px;margin-bottom:3px;text-align:left;cursor:pointer;
+  background:none;border:none;font-family:inherit;border-radius:8px;
+  transition:background .16s var(--ease)}
+.step:hover{background:rgba(255,255,255,.05)}
+.step.open{background:var(--raise)}
+/* 工具名和参数用等宽：它们要和上下的对齐着比 */
+.step-nm{flex:none;width:84px;font-family:var(--mono);
+  font-size:11.5px;color:var(--ink-soft)}
+.step-arg{flex:1;min-width:0;font-family:var(--mono);font-size:11px;
+  color:var(--faint);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.step-ms{flex:none;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.step-badge{flex:none;font-size:10.5px;letter-spacing:.06em;
+  padding:1px 7px;border-radius:5px;border:1px solid}
+.step-badge.ok{color:var(--ok);
+  border-color:color-mix(in srgb,var(--ok) 34%,transparent)}
+.step-badge.run{color:var(--acc-lift);border-color:var(--acc-line)}
+
+/* 就地展开，不做侧滑面板——那是 dsh 的做法，适合屏幕大的调试场景；
+   在这儿，点开的东西就该在点的地方长出来 */
+.step-detail{margin:2px 0 10px 13px;padding:13px 15px;
+  background:var(--raise);border-radius:10px}
+.detail-k{font-size:11px;letter-spacing:.08em;color:var(--muted);
+  margin-bottom:7px}
+.step-detail pre{font-family:var(--mono);font-size:11.5px;line-height:1.75;
+  color:var(--ink-soft);white-space:pre-wrap;
+  background:var(--sunken);border-radius:8px;
+  padding:11px 13px;margin-bottom:14px}
+.detail-rows{font-size:12px;color:var(--faint)}
+.detail-rows:last-child{margin-bottom:0}
+
+/* ===================== 产物预览 · 弹窗 =====================
+   它浮在工作区上、遮罩压暗底下——「看一个产出」不该把用户顶出会话。
+   早先把它做成「接替工作区」是错的：那等于看个文件就丢了对话现场 */
+.modal-mask{position:absolute;inset:0;z-index:20;
+  display:flex;align-items:center;justify-content:center;padding:34px;
+  background:rgba(0,0,0,.45)}
+.modal{display:flex;flex-direction:column;
+  width:100%;max-width:840px;max-height:100%;
+  background:var(--raise);border-radius:14px;overflow:hidden;
+  box-shadow:0 24px 70px rgba(0,0,0,.5)}
+.modal-head{display:flex;align-items:center;gap:12px;flex:none;
+  padding:14px 16px 13px;border-bottom:1px solid var(--hair-soft)}
+.modal-title{font-size:13px;color:var(--ink);letter-spacing:.02em}
+.modal-x{margin-left:auto;width:26px;height:26px;flex:none;
+  display:grid;place-items:center;background:none;border:none;
+  cursor:pointer;border-radius:7px;color:var(--muted);
+  transition:color .16s var(--ease),background .16s var(--ease)}
+.modal-x:hover{color:var(--ink);background:rgba(255,255,255,.08)}
+.modal-x svg{width:12px;height:12px}
+.modal-body{flex:1;min-height:0;overflow:auto;padding:0 0 8px}
+.modal-body table{margin:0}
+.modal-body th:first-child,.modal-body td:first-child{
+  width:52px;color:var(--faint)}
+.modal-foot{display:flex;justify-content:flex-end;gap:10px;flex:none;
+  padding:13px 16px;border-top:1px solid var(--hair-soft)}
+.modal-foot .btn{width:auto;padding:9px 18px}
+
+/* ===================== 设置 =====================
+   每条设置都配一句说明。设置页最怕的不是选错，是不知道它是干什么的 */
+.settings{overflow-y:auto;padding:22px 26px 30px}
+.set-group{margin-bottom:30px}
+.set-h{font-size:13px;font-weight:500;letter-spacing:.08em;
+  color:var(--ink);margin-bottom:4px}
+.set-row{display:flex;align-items:center;gap:24px;
+  padding:13px 0;border-bottom:1px solid var(--hair-soft)}
+.set-group .set-row:last-child{border-bottom:none}
+.set-l{flex:1;min-width:0}
+.set-label{font-size:12.5px;color:var(--ink-soft)}
+.set-hint{margin-top:3px;font-size:11.5px;color:var(--faint);line-height:1.6}
+.set-f{flex:none;width:270px;display:flex;justify-content:flex-end}
+.set-f .btn{width:auto;padding:9px 18px}
+
+/* 和引导页的输入框同一套：1.5px 边 + 圆角 */
+.set-input{display:flex;align-items:center;gap:10px;width:100%;
+  padding:10px 13px;border:1.5px solid var(--hair);
+  background:var(--sunken);border-radius:10px;
+  transition:border-color .2s var(--ease)}
+.set-input:focus-within{border-color:var(--acc-line)}
+.set-input.narrow{width:120px}
+/* 范围写在框里而不是说明里——它是这个框的约束，属于框本身 */
+.set-range{flex:none;font-size:11px;color:var(--faint);
+  font-family:var(--sans);white-space:nowrap}
+/* 只读的路径不该长得像个能填的框——它不长那样，就不该长那样 */
+.set-input.readonly{border-color:transparent;background:transparent;padding:0}
+.set-input input,.set-input select{
+  flex:1;min-width:0;background:none;border:none;outline:none;
+  font-family:var(--mono);font-size:12px;letter-spacing:.02em;
+  color:var(--ink);appearance:none;cursor:text}
+.set-input select{cursor:pointer}
+.set-input select option{background:var(--raise);color:var(--ink)}
+.set-input.readonly input{font-size:11.5px;color:var(--muted);
+  text-align:right;cursor:default}
+.set-input .chev{width:10px;height:10px;flex:none;color:var(--muted)}
+
+/* 高级：折叠入口。调优项不该和「API Key」并排 */
+.set-fold{display:flex;align-items:center;gap:10px;width:100%;
+  padding:13px 0;background:none;border:none;cursor:pointer;
+  font-family:inherit;text-align:left;
+  transition:color .16s var(--ease)}
+.set-fold span:first-child{font-size:13px;font-weight:500;
+  letter-spacing:.08em;color:var(--muted);transition:color .16s var(--ease)}
+.set-fold-hint{flex:1;font-size:11.5px;color:var(--faint)}
+.set-fold .chev{width:10px;height:10px;color:var(--faint)}
+.set-fold:hover span:first-child{color:var(--ink-soft)}
+.foot-btn.on{color:var(--ink)}
+
+/* ===================== 数据字典 ===================== */
+.schema{min-width:0;overflow-y:auto;padding:22px 26px 26px}
+.tbl{background:var(--raise);border-radius:10px;margin-bottom:16px;
+  overflow:hidden}
+.tbl-head{display:flex;align-items:baseline;gap:10px;padding:14px 16px 12px}
+.tbl-nm{font-family:var(--mono);font-size:13.5px;letter-spacing:.02em;
+  color:var(--ink)}
+.tbl-cn{font-size:12px;color:var(--muted)}
+.tbl-meta{margin-left:auto;font-size:11.5px;color:var(--faint)}
+/* 「样例」那一列是整张表最有用的：类型名（文本/整数）用户看不出所以然，
+   一行真数据一眼就懂 */
+.tbl table{margin:0}
+.tbl tr.more td{color:var(--faint);font-size:11.5px;text-align:center;
+  padding:9px 13px}
+.tag.req{color:var(--ink-soft);border-color:var(--hair)}
+.tag.opt{color:var(--faint);border-color:var(--hair-soft)}
+/* 中文名：这一列才是数据字典的正题——给字段起一个人能读的名字。
+   它能就地改：点一下变输入框，不用跳到另一个页面。
+   空着的那几行不是「没有」，是「还没起」——所以写提示语，不写占位符 */
+.cnm{font-size:12px;color:var(--ink-soft)}
+.cnm.empty{color:var(--faint)}
+.cnm input{
+  width:100%;background:none;outline:none;
+  font-family:inherit;font-size:12px;letter-spacing:.02em;
+  color:var(--ink);padding:5px 8px;
+  border:1.5px solid var(--acc-line);border-radius:6px;
+}
+
+/* 左栏资产区的选中态 */
+.asset.on{background:rgba(255,255,255,.06)}
+.asset.on .asset-n{color:var(--ink)}
+.asset.on svg{color:var(--acc)}
+
+/* ===================== 右栏 ===================== */
+.dock-head{flex:none;padding:16px 16px 14px}
+.dock-count{font-family:var(--sans);font-size:22px;letter-spacing:.1em;
+  color:var(--ink);line-height:1}
+.dock-sub{margin-top:5px}
+.art{display:flex;align-items:center;gap:11px;padding:11px 16px;
+  cursor:pointer;transition:background .16s var(--ease)}
+.art:hover{background:rgba(255,255,255,.05)}
+/* 正在预览的那个，得看得出来是它 */
+.art.on{background:rgba(255,255,255,.07)}
+/* 34px 的圆角方块做底。原来那枚 16px 细线文档图标不是丑，
+   是【太薄】——一根线画在 12px 的字旁边立不住，看着像掉了个零件。
+   给它一个面，它才和左边那两行字有同样的分量 */
+.art-ic{
+  width:34px;height:34px;flex:none;border-radius:9px;
+  display:grid;place-items:center;
+  background:rgba(255,255,255,.06);color:var(--ink-soft);
+}
+.art-ic svg{width:16px;height:16px}
+/* 类型色：表格类给绿，纯文本类给蓝。色相只出现在这里和信号色上，
+   而且饱和度压过——它们是「标签」不是「灯」 */
+.art-ic.xlsx{color:#4fd18b}
+.art-ic.csv{color:#6aa9ff}
+.art-b{flex:1;min-width:0}
+/* 产物名允许折到两行。文件名常常很长（「2026年第三季度华东区销售明细汇总」），
+   截断成「2026年第三季度华东区…」等于什么都没说——用户认的就是后半截 */
+.art-n{font-family:var(--sans);font-size:12.5px;letter-spacing:.02em;
+  color:var(--ink);line-height:1.45;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;word-break:break-all}
+.art-m{margin-top:2px;font-family:var(--sans);font-size:11px;
+  letter-spacing:.14em;color:var(--faint)}
+
+/* ===================== 引导屏 ===================== */
+.init{flex:1;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;position:relative;overflow-y:auto;padding:40px 20px}
+/* 柔光同工作区，全撤（色带）。暗角保留：它压的是边角，
+   梯度短、跨度小，跳阶看不出来 */
+.init::before{ content:none }
+/* 暗角：引导页保留、工作界面删掉。见 design-language 五章的音量分级 */
+.init::after{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(124% 106% at 50% 46%,
+    transparent 54%, rgba(0,0,0,.46));
+}
+/* 面板：不是卡片，是「一块被框起来的操作区」。
+   四角角标是唯一的结构装饰，用 1px —— 结构件不做 1.5px */
+.init-in{position:relative;z-index:1;
+  width:min(640px,92%);display:flex;flex-direction:column;
+  border:1px solid var(--hair-strong);background:var(--raise);
+  padding:34px 42px 30px;
+}
+.br{position:absolute;width:13px;height:13px;pointer-events:none;
+  border-color:rgba(255,255,255,.55)}
+.br-tl{top:-2px;left:-2px;border-top:1px solid;border-left:1px solid}
+.br-tr{top:-2px;right:-2px;border-top:1px solid;border-right:1px solid}
+.br-bl{bottom:-2px;left:-2px;border-bottom:1px solid;border-left:1px solid}
+.br-br{bottom:-2px;right:-2px;border-bottom:1px solid;border-right:1px solid}
+.init-mark{width:44px;height:44px;margin:0 auto 24px}
+.init-mark svg{width:44px;height:44px}
+.init-kicker{text-align:center}
+.init-h{margin-top:11px;text-align:center;font-size:22px;font-weight:400;
+  letter-spacing:.08em;color:var(--ink)}
+.init-rule{height:1px;background:var(--hair);margin:26px 0 22px;
+  transform-origin:left;animation:grow .9s var(--ease) both}
+@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+
+.step-bar{display:flex;align-items:center;gap:14px;margin-bottom:26px}
+.step-dot{display:flex;align-items:center;gap:9px;flex:none}
+.step-dot i{display:block;width:7px;height:7px;border:1px solid var(--hair);
+  background:transparent}
+.step-dot.on i{border-color:var(--acc);background:var(--acc)}
+.step-dot.done i{border-color:var(--muted);background:var(--muted)}
+.step-dot span{font-family:var(--sans);font-size:11px;letter-spacing:.08em;
+  color:var(--faint);}
+.step-dot.on span{color:var(--ink-soft)}
+.step-line{flex:1;height:1px;background:var(--hair-soft)}
+
+.f-label{margin-bottom:8px;display:flex;justify-content:space-between}
+.f-hint{font-family:var(--sans);font-size:11px;letter-spacing:.14em;
+  color:var(--faint)}
+.f-input{
+  display:flex;align-items:center;gap:11px;padding:12px 14px;
+  border:1.5px solid var(--hair);background:var(--sunken);
+  transition:border-color .2s var(--ease);margin-bottom:20px;
+}
+.f-input:focus-within{border-color:var(--acc-line)}
+.f-input input,.f-input select{
+  flex:1;min-width:0;background:none;border:none;outline:none;
+  font-family:var(--sans);font-size:12.5px;letter-spacing:.08em;
+  color:var(--ink);appearance:none;cursor:text;
+}
+.f-input select{cursor:pointer}
+.f-input select option{background:var(--raise);color:var(--ink)}
+.f-input .chev{width:11px;height:11px;color:var(--muted);flex:none}
+.f-input.bad{border-color:var(--err)}
+.f-err{display:flex;align-items:center;gap:9px;margin:-12px 0 18px;
+  padding:9px 13px;border:1px solid var(--err-line);
+  background:var(--err-dim);font-size:11.5px;letter-spacing:.06em;
+  color:var(--err)}
+.f-err svg{width:13px;height:13px;flex:none}
+.f-note{display:flex;gap:8px;font-size:11px;letter-spacing:.08em;
+  color:var(--faint);line-height:1.7;margin-bottom:24px}
+.f-note svg{width:12px;height:12px;flex:none;margin-top:3px;color:var(--muted)}
+.f-go{display:flex;justify-content:space-between;align-items:center;
+  gap:14px}
+.f-go .btn{width:auto;padding:10px 26px}
+.f-skip{background:none;border:none;cursor:pointer;font-family:inherit;
+  font-size:11px;letter-spacing:.08em;color:var(--faint);
+  transition:color .16s var(--ease)}
+.f-skip:hover{color:var(--muted)}
+
+/* ===================== 评审开关（不属于原型）=====================
+   「说不出问题」的解药不是想，是【制造变化】。
+   人对「变化」的感知远强于对「状态」的感知——盯着一个静止的画面，
+   永远说不清哪儿不对；来回切一下，感觉自己就跳出来了。
+   按 L 把线加回去，用来单独掂量「分层」和「线」各自值多少。 */
+.app.wires .rail{border-bottom:1px solid var(--hair-soft)}
+.app.wires .side{border-right:1px solid var(--hair-soft)}
+.app.wires .dock{border-left:1px solid var(--hair-soft)}
+.app.wires .stage-head{border-bottom:1px solid var(--hair-soft)}
+.app.wires .assets{border-bottom:1px solid var(--hair-soft)}
+.app.wires .side-foot{border-top:1px solid var(--hair-soft)}
+.app.wires .dock-head{border-bottom:1px solid var(--hair-soft)}
+.app.wires .art{border-bottom:1px solid var(--hair-soft)}
+.app.wires .tools{border-left:1px solid var(--hair-soft)}
+.app.wires .frame{border:1px solid var(--hair)}
+
+/* ===================== 切换器（不属于原型）===================== */
+.sw{
+  position:fixed;right:18px;bottom:18px;z-index:99;
+  display:flex;gap:0;border:1px solid var(--hair);background:#131315;
+  box-shadow:0 8px 24px rgba(0,0,0,.6);
+}
+.sw button{
+  padding:8px 15px;background:none;border:none;cursor:pointer;
+  font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+  color:var(--muted);border-right:1px solid var(--hair-soft);
+  transition:all .16s var(--ease);white-space:nowrap;
+}
+.sw button:last-child{border-right:none}
+.sw button:hover{color:var(--ink)}
+.sw button.on{color:var(--acc-lift);background:var(--acc-dim)}
+.sw-gap{width:1px;background:var(--hair-soft)}
+
+.view{display:none;height:100%}
+.view.on{display:block}
+</style>
+</head>
+<body>
+
+<!-- ===================== 1 · 工作台 · 空态 ===================== -->
+<section class="view on" id="v1">
+<div class="app">
+  <header class="rail">
+    <div class="mark">
+    </div>
+    <div class="brand">归墟</div>
+    <div class="brand-sub">数据处理 Agent</div>
+    <div class="rail-sp"></div>
+    <button class="rail-icon dock-toggle" aria-label="显示或隐藏产物栏">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+        <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+        <path d="M8.5 1.5v4h4"/>
+      </svg>
+    </button>
+  </header>
+
+  <div class="body">
+    <!-- 左栏 -->
+    <aside class="side">
+      <div class="side-pad" style="padding-top:18px">
+        <button class="btn solid">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+          新建会话
+        </button>
+      </div>
+      <div class="assets">
+        <div class="list-label"><span class="t-kicker-zh">资产</span></div>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <ellipse cx="8" cy="4" rx="4.8" ry="1.9"/>
+            <path d="M3.2 4v8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9V4"/>
+            <path d="M3.2 8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9"/>
+          </svg>
+          <span class="asset-n">数据源概览</span>
+          <span class="asset-m">2 表 · 3,929 行</span>
+        </button>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+            <path d="M8.5 1.5v4h4"/>
+          </svg>
+          <span class="asset-n">文档库概览</span>
+          <span class="asset-m">48 篇 · 312 切片</span>
+        </button>
+      </div>
+      <div class="list">
+        <div class="list-label">
+          <span class="t-kicker-zh">会话</span>
+          <span class="t-meta">12</span>
+        </div>
+        <button class="row">
+          <div class="row-t">软著已下证项目导出</div>
+          <div class="row-m"><span>3 轮</span><span>10:42</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">本月打回明细统计</div>
+          <div class="row-m"><span>5 轮</span><span>09:18</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">reject_logs 表结构确认</div>
+          <div class="row-m"><span>2 轮</span><span>昨天</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">按申请主体分组计数</div>
+          <div class="row-m"><span>4 轮</span><span>10/13</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">导入 10 月新增申报表</div>
+          <div class="row-m"><span>6 轮</span><span>10/12</span></div>
+        </button>
+      </div>
+      <div class="side-foot">
+        <button class="foot-btn">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/>
+            <path d="M3 6.5V4a1 1 0 0 1 1-1h2.5M13 6.5V4a1 1 0 0 0-1-1h-2.5M3 9.5V12a1 1 0 0 0 1 1h2.5M13 9.5V12a1 1 0 0 1-1 1h-2.5"/>
+          </svg>
+          数据源与设置
+        </button>
+      </div>
+    </aside>
+
+    <!-- 中栏 · 空态 -->
+    <main class="stage">
+      <!-- 空态没有头。不放标题、不放分隔线、不放切换——
+           「新会话」这三个字是废话，用户点进来当然知道这是新会话。
+           这里要的是一块待机的暗面：标记、一句话、三个例子，别的都不要 -->
+      <div class="void">
+        <div class="void-in">
+          <div class="void-mark">
+          </div>
+          <div class="void-h">今天想问点什么</div>
+          <div class="void-s">用一句话，处理你的数据</div>
+          <!-- 可问示例。真实实现里这三行【必须运行时生成】——
+               用用户数据源里真实的表名和字段名去拼，不是固定文案。
+               写死的句子对第二个用户就不成立了。
+               原型这几条只保证「不绑定业务」，但仍属占位。
+               另：用户还没有数据源时，这里不该显示示例，该显示导入引导 -->
+          <div class="void-try">
+            <div class="void-rule"></div>
+            <button class="try">按 status 分组，看各有多少条</button>
+            <button class="try">找出重复的行</button>
+            <button class="try">导出成 Excel</button>
+          </div>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="composer-in">
+          <div class="field">
+            <input placeholder="问点什么，或把 Excel 拖进来">
+            <!-- 模型选择搬到输入框里。它不该挂在顶栏——
+                 顶栏是「这个应用的状态」，而换模型是「这次对话怎么干活」
+                 这个决定了才做的动作，属于输入框 -->
+            <button class="model-pick">
+              DeepSeek · 通用
+              <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2.5 4.5 6 8l3.5-3.5"/>
+              </svg>
+            </button>
+            <button class="send">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2.5 8h11M9 3.5 13.5 8 9 12.5"/>
+              </svg>
+            </button>
+          </div>
+          <!-- 「已就绪」从顶栏挪到这儿。顶栏只留「品牌 + 功能」，
+               而连接状态和「你要不要发这句话」直接相关，属于输入区 -->
+          <div class="hint">
+            <span>Enter 发送</span>
+            <span>Shift + Enter 换行</span>
+            <span class="hint-live">● 已就绪</span>
+          </div>
+        </div>
+      </div>
+
+</main>
+
+  </div>
+</div>
+</section>
+
+<!-- ===================== 2 · 工作台 · 对话中 ===================== -->
+<section class="view" id="v2">
+<div class="app">
+  <header class="rail">
+    <div class="mark">
+    </div>
+    <div class="brand">归墟</div>
+    <div class="brand-sub">数据处理 Agent</div>
+    <div class="rail-sp"></div>
+    <button class="rail-icon dock-toggle" aria-label="显示或隐藏产物栏">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+        <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+        <path d="M8.5 1.5v4h4"/>
+      </svg>
+    </button>
+  </header>
+
+  <div class="body">
+    <aside class="side">
+      <div class="side-pad" style="padding-top:18px">
+        <button class="btn solid">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+          新建会话
+        </button>
+      </div>
+      <div class="assets">
+        <div class="list-label"><span class="t-kicker-zh">资产</span></div>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <ellipse cx="8" cy="4" rx="4.8" ry="1.9"/>
+            <path d="M3.2 4v8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9V4"/>
+            <path d="M3.2 8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9"/>
+          </svg>
+          <span class="asset-n">数据源概览</span>
+          <span class="asset-m">2 表 · 3,929 行</span>
+        </button>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+            <path d="M8.5 1.5v4h4"/>
+          </svg>
+          <span class="asset-n">文档库概览</span>
+          <span class="asset-m">48 篇 · 312 切片</span>
+        </button>
+      </div>
+      <div class="list">
+        <div class="list-label">
+          <span class="t-kicker-zh">会话</span>
+          <span class="t-meta">12</span>
+        </div>
+        <button class="row on">
+          <div class="row-t">软著已下证项目导出</div>
+          <div class="row-m"><span>3 轮</span><span>10:42</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">本月打回明细统计</div>
+          <div class="row-m"><span>5 轮</span><span>09:18</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">reject_logs 表结构确认</div>
+          <div class="row-m"><span>2 轮</span><span>昨天</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">按申请主体分组计数</div>
+          <div class="row-m"><span>4 轮</span><span>10/13</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">导入 10 月新增申报表</div>
+          <div class="row-m"><span>6 轮</span><span>10/12</span></div>
+        </button>
+      </div>
+      <div class="side-foot">
+        <button class="foot-btn">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/>
+            <path d="M3 6.5V4a1 1 0 0 1 1-1h2.5M13 6.5V4a1 1 0 0 0-1-1h-2.5M3 9.5V12a1 1 0 0 0 1 1h2.5M13 9.5V12a1 1 0 0 1-1 1h-2.5"/>
+          </svg>
+          数据源与设置
+        </button>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <div class="stage-head">
+        <div class="stage-bar">
+          <span class="stage-title">软著已下证项目导出</span>
+          <div class="stage-meta">
+            <span class="t-meta">第 3 轮</span>
+            <span class="t-meta">4,912 tokens</span>
+            <span class="t-meta">用时 2 分 14 秒</span>
+          </div>
+        </div>
+        <!-- 「对话 / 轨迹」是【这一个会话】的两个视图，所以它在工作区里，
+             不在左栏——左栏那个位置该是「会话列表」自己的事 -->
+        <div class="vtabs">
+          <button class="on">对话</button>
+          <button>轨迹</button>
+        </div>
+      </div>
+
+      <div class="stream">
+        <div class="thread">
+          <!-- 第 1 轮 -->
+          <div class="turn op">
+            <div class="turn-head">
+              <span class="turn-who">你</span>
+              <span class="turn-rule"></span>
+              <span class="turn-at">10:40:12</span>
+            </div>
+            <div class="turn-text">已下证的项目导成 Excel</div>
+          </div>
+
+          <div class="turn ag">
+            <div class="turn-head">
+              <span class="turn-who">归墟</span>
+              <span class="turn-rule"></span>
+              <span class="turn-at">10:40:13</span>
+            </div>
+            <div class="turn-text">
+              在 <span style="font-family:var(--mono);color:var(--ink)">projects</span> 里筛出
+              <span style="font-family:var(--mono);color:var(--ink)">status = '已下证'</span>，
+              命中 37 条，已导出。
+            </div>
+            <div class="tools">
+              <div class="tool">
+                <span class="nm">describe_table</span>
+                <span class="arg">projects</span>
+                <span class="st ok">OK</span>
+                <span class="ms">38ms</span>
+              </div>
+              <div class="tool">
+                <span class="nm">query_rows</span>
+                <span class="arg">WHERE status = '已下证' LIMIT 200</span>
+                <span class="st ok">OK</span>
+                <span class="ms">124ms</span>
+              </div>
+              <div class="tool">
+                <span class="nm">export_excel</span>
+                <span class="arg">exports/软著已下证.xlsx</span>
+                <span class="st ok">OK</span>
+                <span class="ms">361ms</span>
+              </div>
+            </div>
+            <div class="frame">
+              <div class="frame-head">
+                <span class="t-kicker-zh">结果预览</span>
+                <span class="n">37 行 · 前 5 行</span>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>项目名称</th><th>申请主体</th><th>状态</th>
+                    <th>下证日期</th><th>登记号</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>智能仓储调度管理系统</td><td>杭州临平科技</td>
+                    <td><span class="tag ok">已下证</span></td>
+                    <td class="num">2026-08-12</td><td class="num">2026SR0412887</td>
+                  </tr>
+                  <tr>
+                    <td>工业设备故障预测平台</td><td>宁波北仑智造</td>
+                    <td><span class="tag ok">已下证</span></td>
+                    <td class="num">2026-08-09</td><td class="num">2026SR0411902</td>
+                  </tr>
+                  <tr>
+                    <td>多源遥感影像拼接工具</td><td>湖州地理信息院</td>
+                    <td><span class="tag ok">已下证</span></td>
+                    <td class="num">2026-07-28</td><td class="num">2026SR0407731</td>
+                  </tr>
+                  <tr>
+                    <td>医疗耗材追溯系统</td><td>嘉兴南湖医疗</td>
+                    <td><span class="tag ok">已下证</span></td>
+                    <td class="num">2026-07-25</td><td class="num">2026SR0406615</td>
+                  </tr>
+                  <tr>
+                    <td>校园能耗监测平台</td><td>绍兴越城教育</td>
+                    <td><span class="tag ok">已下证</span></td>
+                    <td class="num">2026-07-21</td><td class="num">2026SR0405524</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 第 2 轮 -->
+          <div class="turn op">
+            <div class="turn-head">
+              <span class="turn-who">你</span>
+              <span class="turn-rule"></span>
+              <span class="turn-at">10:41:40</span>
+            </div>
+            <div class="turn-text">这里面有几条是被打回过又重新提交的？</div>
+          </div>
+
+          <div class="turn ag">
+            <div class="turn-head">
+              <span class="turn-who">归墟</span>
+              <span class="turn-rule"></span>
+              <span class="turn-at">10:41:41</span>
+            </div>
+            <div class="turn-text">37 条里有 6 条在导出前被记录过打回。</div>
+            <div class="tools">
+              <div class="tool">
+                <span class="nm">join_query</span>
+                <span class="arg">projects × reject_logs ON project_id</span>
+                <span class="st ok">OK</span>
+                <span class="ms">208ms</span>
+              </div>
+              <div class="tool">
+                <span class="nm">export_excel</span>
+                <span class="arg">exports/打回明细.csv</span>
+                <span class="st ok">OK</span>
+                <span class="ms">77ms</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 进行中 -->
+          <div class="turn op">
+            <div class="turn-head">
+              <span class="turn-who">你</span>
+              <span class="turn-rule"></span>
+              <span class="turn-at">10:42:06</span>
+            </div>
+            <div class="turn-text">按打回原因分个组</div>
+          </div>
+
+          <div class="turn ag">
+            <div class="turn-head">
+              <span class="turn-who">归墟</span>
+              <span class="turn-rule"></span>
+              <span class="turn-at">10:42:07</span>
+            </div>
+            <div class="tools" style="margin-top:4px;margin-bottom:0">
+              <div class="tool">
+                <span class="nm">describe_table</span>
+                <span class="arg">reject_logs</span>
+                <span class="st ok">OK</span>
+                <span class="ms">22ms</span>
+              </div>
+              <div class="tool">
+                <span class="nm">group_by</span>
+                <span class="arg">COUNT(*) GROUP BY reject_reason</span>
+                <span class="st run">RUN</span>
+                <span class="ms">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-in">
+          <div class="field">
+            <input placeholder="继续追问…">
+            <!-- 模型选择搬到输入框里。它不该挂在顶栏——
+                 顶栏是「这个应用的状态」，而换模型是「这次对话怎么干活」
+                 这个决定了才做的动作，属于输入框 -->
+            <button class="model-pick">
+              DeepSeek · 通用
+              <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2.5 4.5 6 8l3.5-3.5"/>
+              </svg>
+            </button>
+            <button class="send">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2.5 8h11M9 3.5 13.5 8 9 12.5"/>
+              </svg>
+            </button>
+          </div>
+          <!-- 「已就绪」从顶栏挪到这儿。顶栏只留「品牌 + 功能」，
+               而连接状态和「你要不要发这句话」直接相关，属于输入区 -->
+          <div class="hint">
+            <span>Enter 发送</span>
+            <span>Shift + Enter 换行</span>
+            <span class="hint-live">● 已就绪</span>
+          </div>
+        </div>
+      </div>
+        <aside class="dock">
+      <div class="dock-head">
+        <div class="t-kicker-zh">产物</div>
+        <div class="dock-count">02</div>
+        <div class="dock-sub t-meta">本次会话</div>
+      </div>
+      <div class="art">
+        <div class="art-ic xlsx">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <rect x="2.2" y="3" width="11.6" height="10" rx="1.6"/>
+            <path d="M2.2 6.6h11.6M6.6 6.6V13"/>
+          </svg>
+        </div>
+        <div class="art-b">
+          <div class="art-n">软著已下证.xlsx</div>
+          <div class="art-m">37 行 · 10:41</div>
+        </div>
+      </div>
+      <div class="art">
+        <div class="art-ic csv">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <rect x="2.2" y="3" width="11.6" height="10" rx="1.6"/>
+            <path d="M4.6 6.5h6.8M4.6 8.6h6.8M4.6 10.7h4"/>
+          </svg>
+        </div>
+        <div class="art-b">
+          <div class="art-n">打回明细.csv</div>
+          <div class="art-m">6 行 · 10:41</div>
+        </div>
+      </div>
+    </aside>
+</main>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 3 · 首次引导 ===================== -->
+<section class="view" id="v3">
+<div class="app">
+  <header class="rail">
+    <div class="mark">
+    </div>
+    <div class="brand">归墟</div>
+    <div class="brand-sub">数据处理 Agent</div>
+    <div class="rail-sp"></div>
+    <div class="rail-meta">
+      <span>未配置</span>
+    </div>
+  </header>
+
+  <div class="init">
+    <div class="init-in">
+      <span class="br br-tl"></span>
+      <span class="br br-tr"></span>
+      <span class="br br-bl"></span>
+      <span class="br br-br"></span>
+      <div class="init-mark">
+      </div>
+      <div class="init-kicker t-kicker">Initialize</div>
+      <div class="init-h">初始化配置</div>
+
+      <div class="init-rule"></div>
+
+      <div class="step-bar">
+        <div class="step-dot on"><i></i><span>01 模型</span></div>
+        <div class="step-line"></div>
+        <div class="step-dot"><i></i><span>02 数据源</span></div>
+      </div>
+
+      <div class="f-label">
+        <span class="t-kicker-zh">供应商</span>
+        <span class="f-hint">PRESET</span>
+      </div>
+      <div class="f-input">
+        <select>
+          <option>DeepSeek</option>
+          <option>通义千问</option>
+          <option>智谱 GLM</option>
+          <option>月之暗面 Kimi</option>
+          <option>自定义 OpenAI 兼容接口</option>
+        </select>
+        <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M2.5 4.5 6 8l3.5-3.5"/>
+        </svg>
+      </div>
+
+      <div class="f-label">
+        <span class="t-kicker-zh">API 密钥</span>
+        <span class="f-hint">API KEY</span>
+      </div>
+      <div class="f-input bad">
+        <input type="password" value="sk-8f2a1c9e4b7d0f3a6e5c2b8d1a4f7e0c">
+      </div>
+      <div class="f-err">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+          <circle cx="8" cy="8" r="6.2"/>
+          <path d="M8 4.8v3.8M8 11.2h.01"/>
+        </svg>
+        密钥无效或额度不足 · 上游返回 401
+      </div>
+
+      <div class="f-note">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+          <circle cx="8" cy="8" r="6.2"/>
+          <path d="M8 7.4v4M8 4.8h.01"/>
+        </svg>
+        <span>密钥只写入本机 <b style="font-family:var(--mono);font-weight:400;color:var(--muted)">config.yaml</b>，不随任何请求外传。
+              这里也是本项目唯一的网络依赖——数据源在本地。</span>
+      </div>
+
+      <div class="f-go">
+        <button class="f-skip">稍后配置</button>
+        <button class="btn solid">验证并继续
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M2.5 8h11M9 3.5 13.5 8 9 12.5"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 4 · 轨迹 =====================
+     骨架仿 DeepSeek Harness 的轨迹页：指标条 → 时间轴 → 分组流 → 详情。
+     但砍掉了它那套 Payload / Schema / JSON —— 那是给工程师 debug 的，
+     我们的用户是拖 Excel 进来问问题的人。
+     「每一步花了多久、卡在哪」才是他要的。 -->
+<section class="view" id="v4">
+<div class="app">
+  <header class="rail">
+    <div class="mark"></div>
+    <div class="brand">归墟</div>
+    <div class="brand-sub">数据处理 Agent</div>
+    <div class="rail-sp"></div>
+    <button class="rail-icon dock-toggle" aria-label="显示或隐藏产物栏">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+        <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+        <path d="M8.5 1.5v4h4"/>
+      </svg>
+    </button>
+  </header>
+
+  <div class="body">
+    <aside class="side">
+      <div class="side-pad">
+        <button class="btn solid">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+          新建会话
+        </button>
+      </div>
+      <div class="assets">
+        <div class="list-label"><span class="t-kicker-zh">资产</span></div>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <ellipse cx="8" cy="4" rx="4.8" ry="1.9"/>
+            <path d="M3.2 4v8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9V4"/>
+            <path d="M3.2 8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9"/>
+          </svg>
+          <span class="asset-n">数据源概览</span>
+          <span class="asset-m">2 表 · 3,929 行</span>
+        </button>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+            <path d="M8.5 1.5v4h4"/>
+          </svg>
+          <span class="asset-n">文档库概览</span>
+          <span class="asset-m">48 篇 · 312 切片</span>
+        </button>
+      </div>
+      <div class="list">
+        <div class="list-label">
+          <span class="t-kicker-zh">会话</span>
+          <span class="t-meta">12</span>
+        </div>
+        <button class="row on">
+          <div class="row-t">软著已下证项目导出</div>
+          <div class="row-m"><span>3 轮</span><span>10:42</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">本月打回明细统计</div>
+          <div class="row-m"><span>5 轮</span><span>09:18</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">reject_logs 表结构确认</div>
+          <div class="row-m"><span>2 轮</span><span>昨天</span></div>
+        </button>
+      </div>
+      <div class="side-foot">
+        <button class="foot-btn">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/>
+            <path d="M3 6.5V4a1 1 0 0 1 1-1h2.5M13 6.5V4a1 1 0 0 0-1-1h-2.5M3 9.5V12a1 1 0 0 0 1 1h2.5M13 9.5V12a1 1 0 0 1-1 1h-2.5"/>
+          </svg>
+          数据源与设置
+        </button>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <div class="stage-head">
+        <div class="stage-bar">
+          <span class="stage-title">软著已下证项目导出</span>
+          <div class="stage-meta">
+            <span class="t-meta">第 3 轮</span>
+            <span class="t-meta">4,912 tokens</span>
+            <span class="t-meta">用时 2 分 14 秒</span>
+          </div>
+        </div>
+        <div class="vtabs">
+          <button>对话</button>
+          <button class="on">轨迹</button>
+        </div>
+      </div>
+
+      <div class="trace">
+        <!-- ① 指标条：它回答「这次一共费了多少」 -->
+        <div class="trace-stats">
+          <div class="stat">
+            <span class="stat-k">对话轮次</span>
+            <span class="stat-v">3</span>
+          </div>
+          <div class="stat">
+            <span class="stat-k">工具调用</span>
+            <span class="stat-v">9</span>
+          </div>
+          <div class="stat">
+            <span class="stat-k">工具总耗时</span>
+            <span class="stat-v">1.4<span class="stat-u">秒</span></span>
+          </div>
+          <div class="stat">
+            <span class="stat-k">最慢一步</span>
+            <span class="stat-v">361<span class="stat-u">毫秒</span></span>
+          </div>
+        </div>
+
+        <!-- ② 时间轴：每一轮一条，色块的长度就是那一步的耗时。
+             它把「卡在哪」变成一眼可见——比一串 38ms/124ms/361ms 有用 -->
+        <div class="gantt">
+          <div class="gantt-row">
+            <span class="gantt-no">第 1 轮</span>
+            <div class="gantt-track">
+              <i style="width:7%"></i><i style="width:23%"></i><i style="width:66%"></i>
+            </div>
+            <span class="gantt-ms">523ms</span>
+          </div>
+          <div class="gantt-row">
+            <span class="gantt-no">第 2 轮</span>
+            <div class="gantt-track">
+              <i style="width:39%"></i><i style="width:15%"></i>
+            </div>
+            <span class="gantt-ms">285ms</span>
+          </div>
+          <div class="gantt-row run">
+            <span class="gantt-no">第 3 轮</span>
+            <div class="gantt-track">
+              <i style="width:4%"></i><i class="run" style="width:34%"></i>
+            </div>
+            <span class="gantt-ms">进行中</span>
+          </div>
+        </div>
+
+        <!-- ③ 分组流：按轮分组，每条是「Agent 做的一件事」 -->
+        <div class="round">
+          <div class="round-head">
+            <span class="round-no">第 1 轮</span>
+            <span class="round-q">已下证的项目导成 Excel</span>
+            <span class="round-at">10:40:12</span>
+          </div>
+          <button class="step">
+            <span class="step-nm">查看表结构</span>
+            <span class="step-arg">projects</span>
+            <span class="step-ms">38ms</span>
+            <span class="step-badge ok">完成</span>
+          </button>
+          <button class="step">
+            <span class="step-nm">查询</span>
+            <span class="step-arg">WHERE status = '已下证' LIMIT 200</span>
+            <span class="step-ms">124ms</span>
+            <span class="step-badge ok">完成</span>
+          </button>
+          <button class="step">
+            <span class="step-nm">导出</span>
+            <span class="step-arg">exports/软著已下证.xlsx</span>
+            <span class="step-ms">361ms</span>
+            <span class="step-badge ok">完成</span>
+          </button>
+        </div>
+
+        <div class="round">
+          <div class="round-head">
+            <span class="round-no">第 2 轮</span>
+            <span class="round-q">这里面有几条是被打回过又重新提交的？</span>
+            <span class="round-at">10:41:40</span>
+          </div>
+          <button class="step">
+            <span class="step-nm">关联查询</span>
+            <span class="step-arg">projects × reject_logs ON project_id</span>
+            <span class="step-ms">208ms</span>
+            <span class="step-badge ok">完成</span>
+          </button>
+          <button class="step">
+            <span class="step-nm">导出</span>
+            <span class="step-arg">exports/打回明细.csv</span>
+            <span class="step-ms">77ms</span>
+            <span class="step-badge ok">完成</span>
+          </button>
+        </div>
+
+        <!-- 展开态：点某一步就地展开，看它到底干了什么。
+             不做侧滑面板——那是 dsh 的做法，适合屏幕大的调试场景 -->
+        <div class="round">
+          <div class="round-head">
+            <span class="round-no">第 3 轮</span>
+            <span class="round-q">按打回原因分个组</span>
+            <span class="round-at">10:42:06</span>
+          </div>
+          <button class="step">
+            <span class="step-nm">查看表结构</span>
+            <span class="step-arg">reject_logs</span>
+            <span class="step-ms">22ms</span>
+            <span class="step-badge ok">完成</span>
+          </button>
+          <button class="step open">
+            <span class="step-nm">分组统计</span>
+            <span class="step-arg">COUNT(*) GROUP BY reject_reason</span>
+            <span class="step-ms">180ms</span>
+            <span class="step-badge run">进行中</span>
+          </button>
+          <div class="step-detail">
+            <div class="detail-k">执行语句</div>
+            <pre>SELECT reject_reason, COUNT(*) AS n
+FROM reject_logs
+GROUP BY reject_reason
+ORDER BY n DESC</pre>
+            <div class="detail-k">结果</div>
+            <div class="detail-rows">正在执行…</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-in">
+          <div class="field">
+            <input placeholder="继续追问…">
+            <button class="model-pick">
+              DeepSeek · 通用
+              <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2.5 4.5 6 8l3.5-3.5"/>
+              </svg>
+            </button>
+            <button class="send">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2.5 8h11M9 3.5 13.5 8 9 12.5"/>
+              </svg>
+            </button>
+          </div>
+          <div class="hint">
+            <span>Enter 发送</span>
+            <span>Shift + Enter 换行</span>
+            <span class="hint-live">● 已就绪</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 5 · 导入 =====================
+     新用户拖进来的第一个文件。
+     它没有做成「分步向导」——拖文件本来就是一次提问，
+     Agent 的回答就该出现在对话流里，和别的回答一样。
+     推断、预览、确认，是这一轮的三段。 -->
+<section class="view" id="v5">
+<div class="app">
+  <header class="rail">
+    <div class="mark"></div>
+    <div class="brand">归墟</div>
+    <div class="brand-sub">数据处理 Agent</div>
+    <div class="rail-sp"></div>
+    <button class="rail-icon dock-toggle" aria-label="显示或隐藏产物栏">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+        <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+        <path d="M8.5 1.5v4h4"/>
+      </svg>
+    </button>
+  </header>
+
+  <div class="body">
+    <aside class="side">
+      <div class="side-pad" style="padding-top:18px">
+        <button class="btn solid">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+          新建会话
+        </button>
+      </div>
+      <div class="assets">
+        <div class="list-label"><span class="t-kicker-zh">资产</span></div>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <ellipse cx="8" cy="4" rx="4.8" ry="1.9"/>
+            <path d="M3.2 4v8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9V4"/>
+            <path d="M3.2 8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9"/>
+          </svg>
+          <!-- 还没点「建表」，所以这里就是 0 —— 概览的口径是【已入库】，
+               不是「正在处理」。中间态不该被算进资产 -->
+          <span class="asset-n">数据源概览</span>
+          <span class="asset-m">0 表</span>
+        </button>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+            <path d="M8.5 1.5v4h4"/>
+          </svg>
+          <span class="asset-n">文档库概览</span>
+          <span class="asset-m">0 篇</span>
+        </button>
+      </div>
+      <div class="list">
+        <div class="list-label">
+          <span class="t-kicker-zh">会话</span>
+          <span class="t-meta">1</span>
+        </div>
+        <button class="row on">
+          <div class="row-t">导入 软著项目申报管理系统</div>
+          <div class="row-m"><span>1 轮</span><span>10:38</span></div>
+        </button>
+      </div>
+      <div class="side-foot">
+        <button class="foot-btn">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/>
+            <path d="M3 6.5V4a1 1 0 0 1 1-1h2.5M13 6.5V4a1 1 0 0 0-1-1h-2.5M3 9.5V12a1 1 0 0 0 1 1h2.5M13 9.5V12a1 1 0 0 1-1 1h-2.5"/>
+          </svg>
+          数据源与设置
+        </button>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <div class="stage-head">
+        <div class="stage-bar">
+          <span class="stage-title">导入 软著项目申报管理系统</span>
+          <div class="stage-meta">
+            <span class="t-meta">第 1 轮</span>
+          </div>
+        </div>
+        <div class="vtabs">
+          <button class="on">对话</button>
+          <button>轨迹</button>
+        </div>
+      </div>
+
+      <div class="stream">
+        <div class="thread">
+          <!-- 你说的话：一个文件。消息内容就是这张卡片本身 -->
+          <div class="turn op">
+            <div class="turn-head">
+              <span class="turn-who">你</span>
+              <span class="turn-rule"></span>
+              <span class="turn-at">10:38:02</span>
+            </div>
+            <div class="turn-text">
+              <div class="file-card">
+                <div class="art-ic xlsx">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                    <rect x="2.2" y="3" width="11.6" height="10" rx="1.6"/>
+                    <path d="M2.2 6.6h11.6M6.6 6.6V13"/>
+                  </svg>
+                </div>
+                <div class="file-b">
+                  <div class="file-n">软著项目申报管理系统.xlsx</div>
+                  <div class="file-m">2.4 MB</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 归墟的回答：先说话，再给推断，最后给动作 -->
+          <div class="turn ag">
+            <div class="turn-av"></div>
+            <div class="turn-head">
+              <span class="turn-who">归墟</span>
+              <span class="turn-rule"></span>
+              <span class="turn-at">10:38:04</span>
+            </div>
+            <div class="turn-text">
+              读完了——<b>一张表，3,517 行、12 列</b>，没有合并单元格和空标题行。
+              有 4 列看着像编号或日期，我按这个推了类型。你看下对不对。
+            </div>
+            <div class="tools">
+              <div class="tool">
+                <span class="nm">read_file</span>
+                <span class="arg">data/uploads/软著项目申报管理系统.xlsx</span>
+                <span class="st ok">OK</span>
+                <span class="ms">412ms</span>
+              </div>
+              <div class="tool">
+                <span class="nm">infer_schema</span>
+                <span class="arg">12 列 · 检出 3,517 行</span>
+                <span class="st ok">OK</span>
+                <span class="ms">88ms</span>
+              </div>
+            </div>
+            <div class="frame">
+              <div class="frame-head">
+                <span class="t-kicker-zh">推断出的表结构</span>
+                <span class="n">12 列 · 只列前 5 列</span>
+              </div>
+              <table>
+                <thead>
+                  <tr><th>列名</th><th>推断类型</th><th>样例</th><th>建议</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>项目名称</td><td class="num">文本</td>
+                    <td>智能仓储调度管理系统</td>
+                    <td><span class="tag ok">主键</span></td>
+                  </tr>
+                  <tr>
+                    <td>申请主体</td><td class="num">文本</td>
+                    <td>杭州临平科技</td><td></td>
+                  </tr>
+                  <tr>
+                    <td>状态</td><td class="num">文本</td>
+                    <td>已下证</td>
+                    <td><span class="tag ok">建索引</span></td>
+                  </tr>
+                  <tr>
+                    <td>下证日期</td><td class="num">日期</td>
+                    <td>2026-08-12</td><td></td>
+                  </tr>
+                  <tr>
+                    <td>登记号</td><td class="num">文本</td>
+                    <td>2026SR0412887</td>
+                    <td><span class="tag ok">建索引</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <!-- 动作栏。推断来自机器，所以它默认是「待确认」不是「已完成」——
+                 这一步不做，用户会以为表已经建好了 -->
+            <div class="confirm-bar">
+              <span class="confirm-note">类型可以直接改，改完再建表</span>
+              <button class="btn">修改结构</button>
+              <button class="btn solid">按这个建表</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-in">
+          <div class="field">
+            <input placeholder="确认前还能补充说明，比如「登记号要唯一」">
+            <button class="model-pick">
+              DeepSeek · 通用
+              <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2.5 4.5 6 8l3.5-3.5"/>
+              </svg>
+            </button>
+            <button class="send">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2.5 8h11M9 3.5 13.5 8 9 12.5"/>
+              </svg>
+            </button>
+          </div>
+          <div class="hint">
+            <span>Enter 发送</span>
+            <span>Shift + Enter 换行</span>
+            <span class="hint-live">● 已就绪</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 6 · 数据字典 =====================
+     左栏「数据源概览」通向这儿。
+     它回答的是「我库里到底有什么」——按表列，每张表列出全部字段。
+     不做左右分栏：工作区本来就窄，而且「数据字典」这个词的意思
+     就是「把所有表的所有字段摊开」，摊开就够了 -->
+<section class="view" id="v6">
+<div class="app">
+  <header class="rail">
+    <div class="mark"></div>
+    <div class="brand">归墟</div>
+    <div class="brand-sub">数据处理 Agent</div>
+    <div class="rail-sp"></div>
+  </header>
+
+  <div class="body">
+    <aside class="side">
+      <div class="side-pad" style="padding-top:18px">
+        <button class="btn solid">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+          新建会话
+        </button>
+      </div>
+      <div class="assets">
+        <div class="list-label"><span class="t-kicker-zh">资产</span></div>
+        <button class="asset on">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <ellipse cx="8" cy="4" rx="4.8" ry="1.9"/>
+            <path d="M3.2 4v8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9V4"/>
+            <path d="M3.2 8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9"/>
+          </svg>
+          <span class="asset-n">数据源概览</span>
+          <span class="asset-m">2 表 · 3,929 行</span>
+        </button>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+            <path d="M8.5 1.5v4h4"/>
+          </svg>
+          <span class="asset-n">文档库概览</span>
+          <span class="asset-m">48 篇 · 312 切片</span>
+        </button>
+      </div>
+      <div class="list">
+        <div class="list-label">
+          <span class="t-kicker-zh">会话</span>
+          <span class="t-meta">12</span>
+        </div>
+        <button class="row">
+          <div class="row-t">软著已下证项目导出</div>
+          <div class="row-m"><span>3 轮</span><span>10:42</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">本月打回明细统计</div>
+          <div class="row-m"><span>5 轮</span><span>09:18</span></div>
+        </button>
+      </div>
+      <div class="side-foot">
+        <button class="foot-btn">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/>
+            <path d="M3 6.5V4a1 1 0 0 1 1-1h2.5M13 6.5V4a1 1 0 0 0-1-1h-2.5M3 9.5V12a1 1 0 0 0 1 1h2.5M13 9.5V12a1 1 0 0 1-1 1h-2.5"/>
+          </svg>
+          数据源与设置
+        </button>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <div class="stage-head">
+        <div class="stage-bar">
+          <span class="stage-title">数据源概览</span>
+          <div class="stage-meta">
+            <span class="t-meta">2 张表</span>
+            <span class="t-meta">3,929 行</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="schema">
+        <!-- 一张表 = 一个块。块头是「这张表是什么」，下面是它的全部字段。
+             字段表里那列「样例」是最有用的——类型名（文本/整数）用户看不出
+             所以然，一行真数据一眼就懂 -->
+        <div class="tbl">
+          <div class="tbl-head">
+            <span class="tbl-nm">projects</span>
+            <span class="tbl-cn">项目申报表</span>
+            <span class="tbl-meta">3,517 行 · 12 列</span>
+          </div>
+          <table>
+            <thead>
+              <tr><th>列名</th><th>类型</th><th>约束</th><th>中文名</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>id</td><td class="num">整数</td>
+                <td><span class="tag ok">主键</span></td>
+                <td class="cnm">ID</td>
+              </tr>
+              <tr>
+                <td>project_name</td><td class="num">文本</td>
+                <td><span class="tag req">必填</span></td>
+                <td class="cnm">项目名称</td>
+              </tr>
+              <tr>
+                <td>applicant</td><td class="num">文本</td>
+                <td><span class="tag req">必填</span></td>
+                <td class="cnm">申请主体</td>
+              </tr>
+              <tr>
+                <td>status</td><td class="num">文本</td>
+                <td><span class="tag ok">索引</span></td>
+                <td class="cnm editing"><input value="申报状态"></td>
+              </tr>
+              <tr>
+                <td>granted_at</td><td class="num">日期</td>
+                <td><span class="tag opt">可空</span></td>
+                <td class="cnm empty">添加中文名</td>
+              </tr>
+              <tr>
+                <td>reg_no</td><td class="num">文本</td>
+                <td><span class="tag ok">索引</span></td>
+                <td class="cnm">登记号</td>
+              </tr>
+              <tr>
+                <td>note</td><td class="num">文本</td>
+                <td><span class="tag opt">可空</span></td>
+                <td class="cnm empty">添加中文名</td>
+              </tr>
+              <tr class="more">
+                <td colspan="4">还有 5 列</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="tbl">
+          <div class="tbl-head">
+            <span class="tbl-nm">reject_logs</span>
+            <span class="tbl-cn">打回明细表</span>
+            <span class="tbl-meta">412 行 · 5 列</span>
+          </div>
+          <table>
+            <thead>
+              <tr><th>列名</th><th>类型</th><th>约束</th><th>中文名</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>id</td><td class="num">整数</td>
+                <td><span class="tag ok">主键</span></td>
+                <td class="cnm">ID</td>
+              </tr>
+              <tr>
+                <td>project_id</td><td class="num">整数</td>
+                <td><span class="tag ok">外键</span></td>
+                <td class="cnm empty">添加中文名</td>
+              </tr>
+              <tr>
+                <td>reject_reason</td><td class="num">文本</td>
+                <td><span class="tag req">必填</span></td>
+                <td class="cnm">打回原因</td>
+              </tr>
+              <tr>
+                <td>rejected_at</td><td class="num">日期</td>
+                <td><span class="tag req">必填</span></td>
+                <td class="cnm">打回日期</td>
+              </tr>
+              <tr>
+                <td>handler</td><td class="num">文本</td>
+                <td><span class="tag opt">可空</span></td>
+                <td class="cnm empty">添加中文名</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 7 · 设置 =====================
+     配置项原本是三组平铺的：llm / agent / display。
+     但后两组基本是给开发者调的——「只读工具熔断上限」这种东西
+     不该和「API Key」并排。所以常用项在前，调优项折叠进「高级」。
+     每条都带一句说明：设置项最怕的不是选错，是不知道它是干什么的 -->
+<section class="view" id="v7">
+<div class="app">
+  <header class="rail">
+    <div class="mark"></div>
+    <div class="brand">归墟</div>
+    <div class="brand-sub">数据处理 Agent</div>
+    <div class="rail-sp"></div>
+  </header>
+
+  <div class="body">
+    <aside class="side">
+      <div class="side-pad" style="padding-top:18px">
+        <button class="btn solid">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+          新建会话
+        </button>
+      </div>
+      <div class="assets">
+        <div class="list-label"><span class="t-kicker-zh">资产</span></div>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <ellipse cx="8" cy="4" rx="4.8" ry="1.9"/>
+            <path d="M3.2 4v8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9V4"/>
+            <path d="M3.2 8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9"/>
+          </svg>
+          <span class="asset-n">数据源概览</span>
+          <span class="asset-m">2 表 · 3,929 行</span>
+        </button>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+            <path d="M8.5 1.5v4h4"/>
+          </svg>
+          <span class="asset-n">文档库概览</span>
+          <span class="asset-m">48 篇 · 312 切片</span>
+        </button>
+      </div>
+      <div class="list">
+        <div class="list-label">
+          <span class="t-kicker-zh">会话</span>
+          <span class="t-meta">12</span>
+        </div>
+        <button class="row">
+          <div class="row-t">软著已下证项目导出</div>
+          <div class="row-m"><span>3 轮</span><span>10:42</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">本月打回明细统计</div>
+          <div class="row-m"><span>5 轮</span><span>09:18</span></div>
+        </button>
+      </div>
+      <div class="side-foot">
+        <button class="foot-btn on">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/>
+            <path d="M3 6.5V4a1 1 0 0 1 1-1h2.5M13 6.5V4a1 1 0 0 0-1-1h-2.5M3 9.5V12a1 1 0 0 0 1 1h2.5M13 9.5V12a1 1 0 0 1-1 1h-2.5"/>
+          </svg>
+          数据源与设置
+        </button>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <div class="stage-head">
+        <div class="stage-bar">
+          <span class="stage-title">设置</span>
+        </div>
+      </div>
+
+      <div class="settings">
+        <section class="set-group">
+          <h3 class="set-h">模型服务</h3>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">供应商</div>
+              <div class="set-hint">决定下面几项的默认值，改完接口地址和模型会跟着变</div>
+            </div>
+            <div class="set-f">
+              <div class="set-input">
+                <select>
+                  <option>DeepSeek</option>
+                  <option>通义千问</option>
+                  <option>智谱 GLM</option>
+                  <option>月之暗面 Kimi</option>
+                  <option>自定义 OpenAI 兼容接口</option>
+                </select>
+                <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M2.5 4.5 6 8l3.5-3.5"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">接口地址</div>
+              <div class="set-hint">改了供应商会自动填，一般不用动</div>
+            </div>
+            <div class="set-f">
+              <div class="set-input">
+                <input value="https://api.deepseek.com">
+              </div>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">API 密钥</div>
+              <div class="set-hint">只写在本机，不随任何请求外传</div>
+            </div>
+            <div class="set-f">
+              <div class="set-input">
+                <input type="password" value="sk-8f2a1c9e4b7d0f3a6e5c2b8d1a4f7e0c">
+              </div>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">模型</div>
+              <div class="set-hint">同一家供应商下的不同模型</div>
+            </div>
+            <div class="set-f">
+              <div class="set-input">
+                <select>
+                  <option>deepseek-chat</option>
+                  <option>deepseek-reasoner</option>
+                </select>
+                <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M2.5 4.5 6 8l3.5-3.5"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">连接状态</div>
+              <div class="set-hint">上次测试：2026-10-15 10:36，用时 412 毫秒</div>
+            </div>
+            <div class="set-f">
+              <button class="btn">测试连接</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <h3 class="set-h">生成</h3>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">单次输出上限</div>
+              <div class="set-hint">一次回答最多生成多少 token，调大能写更长的结论</div>
+            </div>
+            <div class="set-f">
+              <div class="set-input" style="width:230px">
+                <input value="4096">
+                <span class="set-range">256 – 8192</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">生成随机性</div>
+              <div class="set-hint">越低越稳定可复现，越高越发散。做数据建议保持低值</div>
+            </div>
+            <div class="set-f">
+              <div class="set-input" style="width:230px">
+                <input value="0.3">
+                <span class="set-range">0.0 – 1.0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">思考强度</div>
+              <div class="set-hint">复杂问题调高，简单查询调低会更快</div>
+            </div>
+            <div class="set-f">
+              <div class="set-input">
+                <select>
+                  <option>低</option>
+                  <option>中</option>
+                  <option>高</option>
+                </select>
+                <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M2.5 4.5 6 8l3.5-3.5"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-group">
+          <h3 class="set-h">数据源</h3>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">数据库位置</div>
+              <div class="set-hint">随项目自带，跟着换电脑一起搬走就行</div>
+            </div>
+            <div class="set-f">
+              <div class="set-input readonly">
+                <input value="%LOCALAPPDATA%\GuiXu\data\guixu.db" readonly>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">当前占用</div>
+              <div class="set-hint">2 张表 · 3,929 行 · 1.8 MB</div>
+            </div>
+            <div class="set-f"></div>
+          </div>
+        </section>
+
+        <!-- 原来这里有个「高级」折叠，装的是上下文压缩阈值、超时、
+             重试次数、熔断上限那一堆。砍掉了：
+             它们要么是内部机制，要么是安全阀（熔断上限尤其不该让用户关）。
+             「高级」这个折叠本身是个信号——一堆东西只能塞进「高级」时，
+             通常意味着它们不该出现在界面上。
+             真该给用户调的只有下面这两个，所以它们直接放出来，不藏。
+             其余的留在 config.yaml 里，文档里说一句就够了 -->
+        <section class="set-group">
+          <h3 class="set-h">安全与展示</h3>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">改动前确认</div>
+              <div class="set-hint">一次要改动超过这么多行数据时，先停下来问你</div>
+            </div>
+            <div class="set-f">
+              <div class="set-input" style="width:180px">
+                <input value="100">
+                <span class="set-range">行</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">结果展示条数</div>
+              <div class="set-hint">查询结果一次显示多少行，超出会自动折叠</div>
+            </div>
+            <div class="set-f">
+              <div class="set-input" style="width:180px">
+                <input value="50">
+                <span class="set-range">行</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</div>
+</section>
+
+<!-- ===================== 8 · 产物预览 =====================
+     它不是「工作区里的第三个 tab」，是【接替】工作区的一个模式。
+     理由：产物栏和产物预览说的是同一件事（一个列清单、一个看内容），
+     同时显示等于把「产物」说两遍；而且预览要宽度——表格要铺开、
+     PDF 要翻页，右边再挤一条栏就更窄了。
+     所以它是「进入一个文件」，左上角一个返回 -->
+<section class="view" id="v8">
+<div class="app">
+  <header class="rail">
+    <div class="mark"></div>
+    <div class="brand">归墟</div>
+    <div class="brand-sub">数据处理 Agent</div>
+    <div class="rail-sp"></div>
+  </header>
+
+  <div class="body">
+    <aside class="side">
+      <div class="side-pad" style="padding-top:18px">
+        <button class="btn solid">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+          新建会话
+        </button>
+      </div>
+      <div class="assets">
+        <div class="list-label"><span class="t-kicker-zh">资产</span></div>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <ellipse cx="8" cy="4" rx="4.8" ry="1.9"/>
+            <path d="M3.2 4v8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9V4"/>
+            <path d="M3.2 8c0 1.05 2.15 1.9 4.8 1.9s4.8-.85 4.8-1.9"/>
+          </svg>
+          <span class="asset-n">数据源概览</span>
+          <span class="asset-m">2 表 · 3,929 行</span>
+        </button>
+        <button class="asset">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
+            <path d="M8.5 1.5v4h4"/>
+          </svg>
+          <span class="asset-n">文档库概览</span>
+          <span class="asset-m">48 篇 · 312 切片</span>
+        </button>
+      </div>
+      <div class="list">
+        <div class="list-label">
+          <span class="t-kicker-zh">会话</span>
+          <span class="t-meta">12</span>
+        </div>
+        <button class="row on">
+          <div class="row-t">软著已下证项目导出</div>
+          <div class="row-m"><span>3 轮</span><span>10:42</span></div>
+        </button>
+        <button class="row">
+          <div class="row-t">本月打回明细统计</div>
+          <div class="row-m"><span>5 轮</span><span>09:18</span></div>
+        </button>
+      </div>
+      <div class="side-foot">
+        <button class="foot-btn">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/>
+            <path d="M3 6.5V4a1 1 0 0 1 1-1h2.5M13 6.5V4a1 1 0 0 0-1-1h-2.5M3 9.5V12a1 1 0 0 0 1 1h2.5M13 9.5V12a1 1 0 0 1-1 1h-2.5"/>
+          </svg>
+          数据源与设置
+        </button>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <div class="stage-head">
+        <div class="stage-bar">
+          <span class="stage-title">软著已下证项目导出</span>
+          <div class="vtabs">
+            <button class="on">对话</button>
+            <button>轨迹</button>
+          </div>
+          <div class="stage-meta">
+            <span class="t-meta">第 3 轮</span>
+            <span class="t-meta">4,912 tokens</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stream">
+        <div class="thread">
+          <div class="turn op">
+            <div class="turn-head">
+              <span class="turn-who">你</span>
+              <span class="turn-rule"></span>
+              <span class="turn-at">10:40:12</span>
+            </div>
+            <div class="turn-text">已下证的项目导成 Excel</div>
+          </div>
+          <div class="turn ag">
+            <div class="turn-av"></div>
+            <div class="turn-head">
+              <span class="turn-who">归墟</span>
+              <span class="turn-rule"></span>
+              <span class="turn-at">10:40:13</span>
+            </div>
+            <div class="turn-text">
+              在 <span style="font-family:var(--mono);color:var(--ink)">projects</span> 里筛出
+              <span style="font-family:var(--mono);color:var(--ink)">status = '已下证'</span>，
+              命中 37 条，已导出到右边。
+            </div>
+            <div class="tools">
+              <div class="tool">
+                <span class="nm">export_excel</span>
+                <span class="arg">exports/软著已下证.xlsx</span>
+                <span class="st ok">OK</span>
+                <span class="ms">361ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-in">
+          <div class="field">
+            <input placeholder="继续追问…">
+            <button class="model-pick">
+              DeepSeek · 通用
+              <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2.5 4.5 6 8l3.5-3.5"/>
+              </svg>
+            </button>
+            <button class="send">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2.5 8h11M9 3.5 13.5 8 9 12.5"/>
+              </svg>
+            </button>
+          </div>
+          <div class="hint">
+            <span>Enter 发送</span>
+            <span>Shift + Enter 换行</span>
+            <span class="hint-live">● 已就绪</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 预览弹窗：浮在工作区上，会话还在底下。
+           用户只是在看一个产出，不该被顶出会话 -->
+      <div class="modal-mask">
+        <div class="modal">
+          <div class="modal-head">
+            <span class="modal-title">软著已下证.xlsx</span>
+            <span class="t-meta">37 行 · 10:41</span>
+            <button class="modal-x" aria-label="关闭">
+              <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6">
+                <path d="M3 3l6 6M9 3l-6 6"/>
+              </svg>
+            </button>
+          </div>
+          <div class="modal-body">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th><th>项目名称</th><th>申请主体</th><th>状态</th>
+                  <th>下证日期</th><th>登记号</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="num">1</td><td>智能仓储调度管理系统</td><td>杭州临平科技</td>
+                  <td><span class="tag ok">已下证</span></td>
+                  <td class="num">2026-08-12</td><td class="num">2026SR0412887</td>
+                </tr>
+                <tr>
+                  <td class="num">2</td><td>工业设备故障预测平台</td><td>宁波北仑智造</td>
+                  <td><span class="tag ok">已下证</span></td>
+                  <td class="num">2026-08-09</td><td class="num">2026SR0411902</td>
+                </tr>
+                <tr>
+                  <td class="num">3</td><td>多源遥感影像拼接工具</td><td>湖州地理信息院</td>
+                  <td><span class="tag ok">已下证</span></td>
+                  <td class="num">2026-07-28</td><td class="num">2026SR0407731</td>
+                </tr>
+                <tr>
+                  <td class="num">4</td><td>医疗耗材追溯系统</td><td>嘉兴南湖医疗</td>
+                  <td><span class="tag ok">已下证</span></td>
+                  <td class="num">2026-07-25</td><td class="num">2026SR0406615</td>
+                </tr>
+                <tr>
+                  <td class="num">5</td><td>校园能耗监测平台</td><td>绍兴越城教育</td>
+                  <td><span class="tag ok">已下证</span></td>
+                  <td class="num">2026-07-21</td><td class="num">2026SR0405524</td>
+                </tr>
+                <tr>
+                  <td class="num">6</td><td>农产品溯源区块链系统</td><td>衢州柯城农业</td>
+                  <td><span class="tag ok">已下证</span></td>
+                  <td class="num">2026-07-18</td><td class="num">2026SR0404418</td>
+                </tr>
+                <tr>
+                  <td class="num">7</td><td>智慧水务管网监测</td><td>台州黄岩水务</td>
+                  <td><span class="tag ok">已下证</span></td>
+                  <td class="num">2026-07-14</td><td class="num">2026SR0403390</td>
+                </tr>
+                <tr>
+                  <td class="num">8</td><td>装配式建筑构件管理</td><td>温州瓯海建工</td>
+                  <td><span class="tag ok">已下证</span></td>
+                  <td class="num">2026-07-09</td><td class="num">2026SR0402207</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="modal-foot">
+            <button class="btn">用系统程序打开</button>
+            <button class="btn solid">另存为…</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <aside class="dock">
+      <div class="dock-head">
+        <div class="t-kicker-zh">产物</div>
+        <div class="dock-count">02</div>
+        <div class="dock-sub t-meta">本次会话</div>
+      </div>
+      <div class="art on">
+        <div class="art-ic xlsx">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <rect x="2.2" y="3" width="11.6" height="10" rx="1.6"/>
+            <path d="M2.2 6.6h11.6M6.6 6.6V13"/>
+          </svg>
+        </div>
+        <div class="art-b">
+          <div class="art-n">软著已下证.xlsx</div>
+          <div class="art-m">37 行 · 10:41</div>
+        </div>
+      </div>
+      <div class="art">
+        <div class="art-ic csv">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <rect x="2.2" y="3" width="11.6" height="10" rx="1.6"/>
+            <path d="M4.6 6.5h6.8M4.6 8.6h6.8M4.6 10.7h4"/>
+          </svg>
+        </div>
+        <div class="art-b">
+          <div class="art-n">打回明细.csv</div>
+          <div class="art-m">6 行 · 10:41</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+</section>
+
+<nav class="sw">
+  <button class="on" data-v="v1">1 空态</button>
+  <button data-v="v2">2 对话</button>
+  <button data-v="v3">3 引导</button>
+  <button data-v="v4">4 轨迹</button>
+  <button data-v="v5">5 导入</button>
+  <button data-v="v6">6 字典</button>
+  <button data-v="v7">7 设置</button>
+  <button data-v="v8">8 产物</button>
+  <span class="sw-gap"></span>
+  <button data-acc="orange">橙</button>
+  <button class="on" data-acc="blue">蓝</button>
+  <span class="sw-gap"></span>
+  <button class="on" data-font="sans">黑体</button>
+  <button data-font="serif">宋体</button>
+  <button data-font="kai">楷体</button>
+</nav>
+
+<script>
+/* 归墟标记：纯色，八片 + 中心光点同一种暖白。
+   几何在 boot.js 的 guixuPetals() 基础上收了两处——
+     半宽 8.4 → 7.0（瓣更细，瓣间空隙更大，读起来更「散」）
+     内尖 r6.5 → 8.0（中心空腔让出来）
+     光点 r2.6 → 1.7（原来是颗白豆子，压成一点余温） */
+(function () {
+  var D = 'M25 3.5 Q32 9.5 25 17 Q18 9.5 25 3.5 Z';
+  var petals = '';
+  for (var i = 0; i < 8; i++) {
+    petals += '<path d="' + D + '" transform="rotate(' + (i * 45) + ' 25 25)"/>';
+  }
+  var svg = '<svg viewBox="0 0 50 50" fill="none" aria-hidden="true">'
+    + '<g class="gx-petals" fill="currentColor">' + petals + '</g>'
+    + '<circle class="gx-core" cx="25" cy="25" r="1.7" fill="currentColor"/>'
+    + '</svg>';
+  Array.prototype.forEach.call(
+    document.querySelectorAll('.mark, .void-mark, .init-mark'),
+    function (el) { el.innerHTML = svg }
+  );
+  /* 对话里那枚小头像。和顶栏是同一个 svg，只是这一次
+     它代表「谁在说话」，不是「这是什么应用」 */
+  Array.prototype.forEach.call(
+    document.querySelectorAll('.turn.ag'),
+    function (t) {
+      var av = document.createElement('div')
+      av.className = 'turn-av'
+      av.innerHTML = svg
+      t.insertBefore(av, t.firstChild)
+      t.classList.add('has-av')
+    }
+  );
+})();
+
+(function () {
+  /* 只选带 data-v 的。不加这个限定，后面那些「橙/蓝」「宋体/楷体」
+     也会被选进来，它们没有 dataset.v —— show(undefined) 会把所有屏都关掉 */
+  var btns = document.querySelectorAll('.sw [data-v]');
+  function show(id) {
+    document.querySelectorAll('.view').forEach(function (v) {
+      v.classList.toggle('on', v.id === id);
+    });
+    btns.forEach(function (b) { b.classList.toggle('on', b.dataset.v === id); });
+  }
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () { show(b.dataset.v); });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '1') show('v1');
+    if (e.key === '2') show('v2');
+    if (e.key === '3') show('v3');
+    if (e.key === '4') show('v4');
+    if (e.key === '5') show('v5');
+    if (e.key === '6') show('v6');
+    if (e.key === '7') show('v7');
+    if (e.key === '8') show('v8');
+    /* L：线开 / 线关。反复按，比较「有线的平」和「无线的分层」 */
+    if (e.key === 'l' || e.key === 'L') {
+      document.querySelectorAll('.app').forEach(function (a) {
+        a.classList.toggle('wires');
+      });
+    }
+    /* 产物栏开关。P = panel */
+    if (e.key === 'p' || e.key === 'P') toggleDock();
+  });
+
+  function toggleDock() {
+    document.querySelectorAll('.dock').forEach(function (d) {
+      d.classList.toggle('shut');
+    });
+  }
+  /* 评审开关：强调色。橙是开机动画的原值，蓝是当初为对齐应用改的 */
+  document.querySelectorAll('.sw [data-acc]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.documentElement.classList.toggle('acc-orange', b.dataset.acc === 'orange');
+      document.querySelectorAll('.sw [data-acc]').forEach(function (x) {
+        x.classList.toggle('on', x === b);
+      });
+    });
+  });
+  /* 评审开关：品牌字体 */
+  document.querySelectorAll('.sw [data-font]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.brand').forEach(function (el) {
+        el.classList.remove('serif', 'kai');
+        if (b.dataset.font !== 'sans') el.classList.add(b.dataset.font);
+      });
+      document.querySelectorAll('.sw [data-font]').forEach(function (x) {
+        x.classList.toggle('on', x === b);
+      });
+    });
+  });
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('.dock-toggle')) toggleDock();
+  });
+})();
+</script>
+</body>
+</html>

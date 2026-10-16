@@ -12,7 +12,14 @@ ACCENT = "#f59e0b"
 
 
 def _setup_font():
-    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei"]
+    # 三平台各给一个中文字体名 —— matplotlib 不会自己回落，找不到就是一排方框。
+    # 这是全项目仅剩的一处平台绑定，补上它，换平台就不用再改代码
+    plt.rcParams["font.sans-serif"] = [
+        "Microsoft YaHei",   # Windows
+        "PingFang SC",       # macOS
+        "Noto Sans CJK SC",  # Linux
+        "SimHei",
+    ]
     plt.rcParams["axes.unicode_minus"] = False
 
 

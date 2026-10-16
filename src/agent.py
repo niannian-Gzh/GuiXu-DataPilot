@@ -13,7 +13,7 @@ WRITE_TOOLS = {
     "request_restore", "request_import",
 }
 
-SYSTEM_PROMPT = """你是 DataPilot，一个数据处理 Agent。工具是你与数据世界交互的途径。
+SYSTEM_PROMPT = """你是归墟（GuiXu），一个数据处理 Agent。工具是你与数据世界交互的途径。
 
 当前数据源包含以下表：
 {tables}
@@ -201,7 +201,8 @@ def run_agent(user_input: str, session, llm, db_path: str, table_name: str, trac
             continue
 
         answer = msg.content or ""
-        session.add_user(user_input)
+        # 只加助手那条：用户那条在 api.chat() 的一轮开始处就加了，
+        # 那样「问」和「答」两个时间戳才分得开
         session.add_assistant(answer, tools=tool_log, reasonings=reasoning_log)
         return _finish(emit, answer)
 

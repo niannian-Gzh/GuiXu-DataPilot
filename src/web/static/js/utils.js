@@ -92,6 +92,31 @@ export const shortTime = (iso) => {
   return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hm;
 };
 
+/* 生成一个时间戳，格式和会话落盘时写的 gx_at 完全一致
+   （本地时间、秒级、不带时区，见 src/session.py 的 _now()）。
+
+   为什么前端也要自己生成一个：实时那一轮还没落盘，等不到后端的值。
+   两边格式必须一样——差一点，同一次会话里就会出现「有的轮次解析得了、
+   有的解析不了」，而这种错是静默的，只表现为某个时间是空的 */
+export const stamp = (d = new Date()) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+       + `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
+
+/* 对话轮上的那个时刻。带秒是必需的：一轮里「问」和「答」往往只差几秒，
+   只到分的话两边永远是同一个数，标了等于没标。
+   不是今天的就补上日期，否则翻旧会话时会以为它是刚发生的 */
+export const clockTime = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  const hms = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  if (d.toDateString() === new Date().toDateString()) return hms;
+  return `${d.getMonth() + 1}/${d.getDate()} ${hms}`;
+};
+
 export const toolGist = (tool) => {
   const p = tool.parsed;
   if (p) {

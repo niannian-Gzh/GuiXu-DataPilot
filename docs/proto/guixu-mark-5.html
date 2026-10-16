@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>归墟 · 花瓣压深 · 光点收紧</title>
+<style>
+  :root{
+    --bg:#0a0c10;
+    --fg:#dde3ee; --fg-sub:#a6afbf; --fg-dim:#7c8697; --fg-faint:#5c6472;
+    --edge:rgba(166,181,188,.16);
+    --edge-2:rgba(166,181,188,.30);
+    --mark:#6b9dff;
+    --mono:'JetBrains Mono','Cascadia Code','SF Mono',Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif;
+    font-size:13.5px; line-height:1.62; padding:52px 44px 96px;
+  }
+  .head{max-width:1180px;margin:0 auto 8px;padding-bottom:26px;border-bottom:1px solid var(--edge-2)}
+  .head .kicker{font-family:var(--mono);font-size:10px;letter-spacing:.3em;color:var(--fg-faint);text-indent:.3em}
+  .head h1{font-size:23px;font-weight:400;letter-spacing:.04em;margin-top:10px}
+  .head p{color:var(--fg-dim);margin-top:12px;max-width:800px}
+  .head p b{color:var(--fg-sub);font-weight:500}
+  .head .swatches{display:flex;gap:34px;margin-top:20px;padding-top:16px;border-top:1px solid var(--edge)}
+  .head .swatches div{font-size:12px;color:var(--fg-faint);display:flex;align-items:center;gap:9px}
+  .head .swatches i{display:block;width:52px;height:9px;border-radius:2px}
+
+  main{max-width:1180px;margin:0 auto}
+  .v{display:grid;grid-template-columns:1fr 320px;gap:56px;align-items:start;padding:44px 0;border-bottom:1px solid var(--edge)}
+  .show{display:flex;flex-direction:column;gap:28px}
+  .hero{display:flex;justify-content:center}
+  .row{display:flex;align-items:flex-end;gap:38px;justify-content:center;padding-top:4px}
+  figure{display:flex;flex-direction:column;align-items:center;gap:11px}
+  figure svg{display:block;overflow:visible}
+  figcaption{font-family:var(--mono);font-size:10px;color:var(--fg-faint);letter-spacing:.1em}
+  figure[data-s="164"] svg{width:164px;height:164px}
+  figure[data-s="84"]  svg{width:84px;height:84px}
+  figure[data-s="34"]  svg{width:34px;height:34px}
+  figure[data-s="21"]  svg{width:21px;height:21px}
+
+  .desc .no{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.28em;color:var(--mark);opacity:.7}
+  .desc h2{font-size:16px;font-weight:500;letter-spacing:.06em;margin-top:7px}
+  .desc p{color:var(--fg-dim);margin-top:12px}
+  .desc p + p{margin-top:10px}
+  .desc .kv{margin-top:18px;padding-top:14px;border-top:1px solid var(--edge);display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:12px}
+  .desc .kv dt{font-family:var(--mono);color:var(--fg-faint);font-size:10.5px;letter-spacing:.06em}
+  .desc .kv dd{color:var(--fg-sub)}
+  .tail{max-width:1180px;margin:44px auto 0;color:var(--fg-faint);font-size:12px}
+</style>
+</head>
+<body>
+
+<header class="head">
+  <div class="kicker">GUIXU / BRAND MARK / DEEPEN II + CORE TIGHTEN</div>
+  <h1>归墟 · 花瓣压深 · 光点收紧</h1>
+  <p>
+    基准是上一页的 <b>C</b>。两处改动分开做，免得混在一起看不清是谁起的作用：
+    <b>花瓣再压一档</b>（外端 .72 → .92，内端 .62 → .55），
+    <b>光点收紧</b>（你说的 1:2 —— 实心核占 1/3，剩下 2/3 渐隐到全透明，而不是停在 .22）。
+  </p>
+  <div class="swatches">
+    <div><i style="background:linear-gradient(90deg,#33528fb8,#cfe0ff9e)"></i>C 原样 .72 → .62</div>
+    <div><i style="background:linear-gradient(90deg,#33528feb,#cfe0ff8c)"></i>压深一档 .92 → .55</div>
+  </div>
+</header>
+
+<main id="app"></main>
+
+<div class="tail">
+  预览页，位于 .refs/notes/，不动 src/ 一行。这一页不做取舍以外的判断——三个尺寸都摊开，小尺寸说不了谎。
+</div>
+
+<script>
+const C = { hi:'#dce9ff', mid:'#9dbcff', lo:'#33528f', core:'#cfe0ff', coreHi:'#ffffff', mark:'#6b9dff' };
+const f = n => Math.round(n * 100) / 100;
+
+const defs = u => `<defs>
+<linearGradient id="${u}-p0" gradientUnits="userSpaceOnUse" x1="24" y1="2.5" x2="24" y2="17.5">
+  <stop offset="0" stop-color="${C.lo}" stop-opacity=".72"/>
+  <stop offset="0.45" stop-color="${C.mid}" stop-opacity=".95"/>
+  <stop offset="1" stop-color="${C.coreHi}" stop-opacity=".62"/></linearGradient>
+<linearGradient id="${u}-p1" gradientUnits="userSpaceOnUse" x1="24" y1="2.5" x2="24" y2="17.5">
+  <stop offset="0" stop-color="${C.lo}" stop-opacity=".92"/>
+  <stop offset="0.45" stop-color="${C.mid}"/>
+  <stop offset="1" stop-color="${C.coreHi}" stop-opacity=".55"/></linearGradient>
+
+<radialGradient id="${u}-c0">
+  <stop offset="0" stop-color="${C.coreHi}"/><stop offset=".45" stop-color="${C.core}"/>
+  <stop offset="1" stop-color="${C.core}" stop-opacity=".22"/></radialGradient>
+<radialGradient id="${u}-c1">
+  <stop offset="0" stop-color="${C.coreHi}"/>
+  <stop offset=".34" stop-color="${C.coreHi}" stop-opacity=".88"/>
+  <stop offset="1" stop-color="${C.core}" stop-opacity="0"/></radialGradient>
+<radialGradient id="${u}-c2">
+  <stop offset="0" stop-color="${C.coreHi}"/>
+  <stop offset=".5" stop-color="${C.core}"/>
+  <stop offset="1" stop-color="${C.core}" stop-opacity="0"/></radialGradient>
+</defs>`;
+
+function MOTIF(u, grad){
+  const n = 8, rOut = 21.5, rIn = 6.5, rMid = 15.5, halfW = 4.2;
+  const d = 2 * halfW;
+  const yOut = f(24 - rOut), yIn = f(24 - rIn), yMid = f(24 - rMid);
+  const path = `M24 ${yOut} Q${f(24+d)} ${yMid} 24 ${yIn} Q${f(24-d)} ${yMid} 24 ${yOut} Z`;
+  return [...Array(n)].map((_, i) =>
+    `<path d="${path}" fill="url(#${u}-${grad})" transform="rotate(${f(i*360/n)} 24 24)"/>`).join('');
+}
+const CORE = (u, id, r) => `<circle cx="24" cy="24" r="${r}" fill="url(#${u}-${id})"/>`;
+
+const V = {};
+/* 基准：C 原样 */
+V.v0 = u => `${MOTIF(u, 'p0')}${CORE(u, 'c0', 2.5)}`;
+/* 01：只压深花瓣 */
+V.v1 = u => `${MOTIF(u, 'p1')}${CORE(u, 'c0', 2.5)}`;
+/* 02：压深 + 光点 1:2（实心 1/3，其余渐隐到 0） */
+V.v2 = u => `${MOTIF(u, 'p1')}${CORE(u, 'c1', 2.5)}`;
+/* 03：压深 + 光点整体缩小到 r 1.8 */
+V.v3 = u => `${MOTIF(u, 'p1')}${CORE(u, 'c2', 1.8)}`;
+
+const SHEETS = [
+  {
+    v:'v0', no:'基准', name:'C 原样',
+    p:['上一页定下来的那版。花瓣 .72 → .62，光点 r 2.5、边缘停在 .22。',
+       '放在这儿只是为了和下面三版对比时有个锚。'],
+    kv:[['花瓣','.72 → .62'],['光点','r 2.5，边缘 .22']]
+  },
+  {
+    v:'v1', no:'01', name:'只压深花瓣',
+    p:['外端 .72 → .92（几乎实心的深蓝），内端 .62 → .55。',
+       '判断点：单看这一步，花会不会沉下去、和背景糊在一起。'],
+    kv:[['花瓣','.92 → .55'],['光点','不动（r 2.5，边缘 .22）']]
+  },
+  {
+    v:'v2', no:'02', name:'压深 + 光点 1:2',
+    p:['你说的 1:2：最内 1/3 是实心核，外面 2/3 一路渐隐到**全透明**。',
+       '和原样的差别是那条尾巴——原来停在 .22（还看得见那一圈），现在收到 0，光点边界更硬。'],
+    kv:[['花瓣','.92 → .55'],['光点','r 2.5，实心 : 渐隐 = 1 : 2']]
+  },
+  {
+    v:'v3', no:'03', name:'压深 + 光点改小',
+    p:['这一版不走比例，直接缩本体：半径 2.5 → 1.8。',
+       '和 02 对照着看——**你要的是"尾巴短"还是"点小"，这两个是不同的东西。**'],
+    kv:[['花瓣','.92 → .55'],['光点','r 1.8，边缘 0']]
+  }
+];
+
+const SIZES = ['164', '84', '34', '21'];
+document.getElementById('app').innerHTML = SHEETS.map(s => `
+<section class="v">
+  <div class="show">
+    <div class="hero"><figure data-v="${s.v}" data-s="164"><figcaption>164</figcaption></figure></div>
+    <div class="row">
+      ${SIZES.slice(1).map(sz => `<figure data-v="${s.v}" data-s="${sz}"><figcaption>${sz}</figcaption></figure>`).join('')}
+    </div>
+  </div>
+  <div class="desc">
+    <span class="no">${s.no}</span>
+    <h2>${s.name}</h2>
+    ${s.p.map(x => `<p>${x.replace(/\*\*(.+?)\*\*/g, '<b style="color:var(--fg)">$1</b>')}</p>`).join('')}
+    <dl class="kv">${s.kv.map(([k, val]) => `<dt>${k}</dt><dd>${val}</dd>`).join('')}</dl>
+  </div>
+</section>`).join('');
+
+document.querySelectorAll('figure[data-v]').forEach(el => {
+  const u = `${el.dataset.v}-${el.dataset.s}`;
+  el.insertAdjacentHTML('afterbegin',
+    `<svg viewBox="0 0 48 48" fill="none">${defs(u)}${V[el.dataset.v](u)}</svg>`);
+});
+</script>
+
+</body>
+</html>

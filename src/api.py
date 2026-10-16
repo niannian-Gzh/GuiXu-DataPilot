@@ -11,15 +11,15 @@ import uuid
 from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from llm import LLM
 from session import Session
 from agent import run_agent
 from trace import Trace
 from config import (
-    load_config, resolve, resolve_db_url, PROJECT_ROOT, setting, get, get_config,
-    save_config,
+    load_config, resolve, resolve_db_url, PROJECT_ROOT, CONFIG_PATH,
+    setting, get, get_config, save_config,
 )
 import config_store as store
 from providers import PROVIDERS, get_provider, guess_model
@@ -112,7 +112,7 @@ async def lifespan(app: FastAPI):
     _sessions.clear()
 
 
-app = FastAPI(title="DataPilot 数据处理 Agent API", lifespan=lifespan)
+app = FastAPI(title="归墟 数据处理 Agent API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -124,6 +124,11 @@ app.add_middleware(
 # 前端拆成了外部 css/js，需要静态文件服务
 app.mount("/css", StaticFiles(directory=STATIC_DIR / "css"), name="css")
 app.mount("/js", StaticFiles(directory=STATIC_DIR / "js"), name="js")
+# 开机动画的旁白素材（自己导的，见 js/boot.js 的 assetBase）
+app.mount("/audio", StaticFiles(directory=STATIC_DIR / "audio"), name="audio")
+# 第三方前端库（Vue / marked）。放本地而不是 CDN：这是个要装到别人机器上的
+# 桌面应用，挂在别人家 CDN 上等于要求用户每次启动都能上外网
+app.mount("/vendor", StaticFiles(directory=STATIC_DIR / "vendor"), name="vendor")
 
 
 @app.middleware("http")
@@ -138,14 +143,32 @@ async def _revalidate_static(request, call_next):
     代价只有一次往返。这是本地工具，这个取舍划得来。
     """
     response = await call_next(request)
-    if request.url.path.startswith(("/js/", "/css/")):
+    # 音频也在这个名单里：素材是【按名覆盖】的，重新导一次 line-1.mp3
+    # 文件名不变，浏览器要是按启发式缓存留着旧的，就会出现"明明重导了，
+    # 听到的还是上一版"——和这里要防的是同一类事。
+    # vendor 同理：将来升 Vue 的时候文件名不会变。
+    if request.url.path.startswith(("/js/", "/css/", "/audio/", "/vendor/")):
         response.headers["Cache-Control"] = "no-cache"
     return response
 
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    """发首页时顺手把「有没有配置」告诉前端。
+
+    开机动画第 1 步就要决定弹不弹表单，所以这个判断不能留给前端启动后
+    再异步问一次——那样会先闪一帧「没有配置」的样子再跳回来。
+
+    判定只看 config.yaml 在不在，不看内容完不完整：
+    用户手改过、只填了一半，那也是他的选择，不该每次启动都追着问。
+    """
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    flag = "true" if CONFIG_PATH.exists() else "false"
+    html = html.replace(
+        "<!--__DP_CONFIGURED__-->",
+        f"<script>window.__DP_CONFIGURED__ = {flag}</script>",
+    )
+    return HTMLResponse(html)
 
 
 # ============ 数据模型 ============
@@ -185,6 +208,62 @@ def db_ping():
         return {"ok": True, "version": version}
     except Exception as e:
         return {"ok": False, "message": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/overview")
+def overview_api():
+    """左栏「资产」和顶栏状态要的那几个数：数据源 / 模型。
+
+    一次取回，不是省事——是**必须同一时刻取**。分两次请求的话，
+    用户看到的是两个不同瞬间的快照，那就不叫读数了。
+
+    规模（几表几行）本来不在这儿，理由是「欢迎页重复数据库概览页是浪费」。
+    现在欢迎页那几格读数删了，改由左栏的「资产」显示——
+    那就得给。它比想象中便宜：本地单库、表就几张，COUNT(*) 是毫秒级的。
+    """
+    out = {"source": {}, "model": {}}
+
+    # —— 数据源 ——
+    url = resolve_db_url()
+    out["source"]["kind"] = "postgresql" if url.startswith("postgresql://") else "duckdb"
+    try:
+        version = query_df("SELECT version() AS v", timeout=5).iloc[0]["v"]
+        # PG 的 version() 是一整句，只取开头两个词："PostgreSQL 16.2"
+        out["source"]["ok"] = True
+        out["source"]["version"] = " ".join(str(version).split()[:2])
+    except Exception as e:
+        out["source"]["ok"] = False
+        out["source"]["message"] = f"{type(e).__name__}: {e}"
+
+    # —— 规模：左栏「数据源概览」右端的那个计数 ——
+    try:
+        tables = schema_store.get_all_tables_schema()
+        out["source"]["tables"] = len(tables)
+        total = 0
+        for t in tables:
+            real = t.get("real_table") or t.get("name")
+            if not real:
+                continue
+            try:
+                total += int(query_df(f'SELECT COUNT(*) AS n FROM "{real}"', timeout=4).iloc[0]["n"])
+            except Exception:
+                # 单表数不出来不该让整个读数塌掉——跳过它，其余照常
+                pass
+        out["source"]["rows"] = total
+    except Exception:
+        out["source"]["tables"] = None
+
+    # —— 模型 ——
+    active = store.get_active() or {}
+    if active:
+        out["model"] = {
+            "name": active.get("model") or "",
+            "provider": active.get("provider") or "",
+            "label": active.get("name") or "",
+        }
+
+    return out
+
 
 # ============ 对话接口 ============
 
@@ -241,8 +320,8 @@ def _final_event(session, trace, msg_start: int, think_rounds: int, status: str)
     """
     tools = []
     for m in session.messages[msg_start:]:
-        if m.get("role") == "assistant" and m.get("dp_tools"):
-            tools.extend(m["dp_tools"])
+        if m.get("role") == "assistant" and m.get("gx_tools"):
+            tools.extend(m["gx_tools"])
 
     return {
         "type": "final",
@@ -274,7 +353,9 @@ def chat(req: ChatRequest):
         events.put(event)
 
     def run():
-        # final 只报这一轮新增的工具，所以先记住起点
+        # final 只报这一轮新增的工具，所以先记住起点。
+        # 用户那条消息在下面才 append，所以切片里会带上它——
+        # 它没有 gx_tools，捞不出东西，无害
         msg_start = len(session.messages)
         think_rounds = 0
         status = "ok"
@@ -291,14 +372,28 @@ def chat(req: ChatRequest):
             sink(event)
 
         try:
-            sink({"type": "start", "session_id": session_id, "question": req.question})
+            # 用户那条消息在【这一轮开始】时就落进会话，不等回答写完。
+            # 两个理由：时间戳要的是「什么时候问的」，而 agent 跑完可能
+            # 要几十秒，落在那儿就把「问」和「答」记成了同一个时刻；
+            # 再者中途报错时，这条消息本来就该留下。
+            # 所以整条链路只在这里调一次 add_user（原来在三个分支里各调一次）
+            session.add_user(req.question)
+
+            # 时刻以后端记的为准，前端拿它去标这一轮。
+            # 让前端自己生成的话，刷新之后会从会话文件里读到另一个值，
+            # 同一条消息前后显示两个时间
+            sink({
+                "type": "start",
+                "session_id": session_id,
+                "question": req.question,
+                "at": session.messages[-1]["gx_at"],
+            })
 
             handled, msg = pending_service.handle_pending(
                 req.question, session,
                 _state["db_path"], _state["llm"],
             )
             if handled:
-                session.add_user(req.question)
                 session.add_assistant(msg)
                 sink({"type": "answer", "content": msg})
             else:
@@ -311,7 +406,6 @@ def chat(req: ChatRequest):
         except UserInputRequired as e:
             status = "needs_input"
             pending = pending_service.enrich_pending(e.pending_action)
-            session.add_user(req.question)
             session.set_pending(pending)
             sink({
                 "type": "pending",
@@ -337,6 +431,9 @@ def chat(req: ChatRequest):
                 "type": "done",
                 "session_id": session_id,
                 "elapsed_ms": trace.data["elapsed_ms"],
+                # 同 start：给这一轮标时刻用后端记的那个。
+                # pending 轮次没有 add_assistant，[-1] 是用户那条，也对
+                "at": session.messages[-1].get("gx_at") if session.messages else None,
             })
 
     def stream():
@@ -502,6 +599,16 @@ def update_settings(req: SettingsUpdate):
             # 整数型参数去掉小数尾巴（比如前端传 4096.0）
             if isinstance(p["default"], int) and isinstance(val, float) and val.is_integer():
                 val = int(val)
+        elif p["type"] == "select":
+            # 封闭集合就得在这儿关死。前端以后可能是下拉，但接口是公开的，
+            # 一个错的枚举值存进去不会报错，只会让模型静默忽略这一项
+            val = "" if raw is None else str(raw).strip()
+            allowed = [o["value"] for o in p.get("options") or []]
+            if val not in allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"「{p['label']}」只能是 {' / '.join(allowed)}",
+                )
         else:
             val = "" if raw is None else str(raw)
 
@@ -768,6 +875,36 @@ def set_config_key(config_id: str, req: KeyUpdate):
     store.set_key(config_id, req.key.strip())
     _rebuild_llm()
     return {"status": "ok", "has_key": bool(store.get_key(config_id))}
+
+
+@app.get("/configs/{config_id}/models")
+def list_config_models(config_id: str):
+    """按一条【已保存的】配置拉它上游可用的模型名。
+
+    和 /settings/models 的区别在 key 从哪来：那边是编辑页，用户刚填完
+    还没保存，只能以表单里的为准；这边是对话页的模型切换器，它手上
+    没有 key —— key 从不外传，只活在服务端，所以按 id 现读。
+    """
+    c = store.get_config(config_id)
+    if not c:
+        return {"ok": False, "models": [], "message": "配置不存在"}
+
+    key = store.get_key(config_id)
+    provider = get_provider(c.get("provider"))
+    # 本地部署（Ollama）没有 key 这一说，别拦
+    if not key and not (provider and provider.get("free_input")):
+        return {"ok": False, "models": [], "message": "这条配置还没有填 API Key"}
+
+    try:
+        client = OpenAI(api_key=key or "not-needed",
+                        base_url=c["base_url"], timeout=15.0)
+        ids = sorted(m.id for m in client.models.list().data)
+        if not ids:
+            return {"ok": False, "models": [], "message": "接口没有返回任何模型"}
+        return {"ok": True, "models": ids, "message": f"获取到 {len(ids)} 个模型"}
+    except Exception as e:
+        # 不是所有家都实现了 /models，失败是正常情况，别当异常上报
+        return {"ok": False, "models": [], "message": f"{type(e).__name__}: {e}"}
 
 
 @app.post("/configs/{config_id}/test")
