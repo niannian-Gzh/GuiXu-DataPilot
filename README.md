@@ -1,4 +1,11 @@
-# 归墟 · 数据处理 Agent
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/guixu-mark.svg">
+    <img src="docs/brand/guixu-mark-dark.svg" alt="归墟" width="120">
+  </picture>
+</p>
+
+<h1 align="center">归墟 · 数据处理 Agent</h1>
 
 用自然语言完成数据的查询、新增、修改、删除、导入、导出、检查和报表生成。
 
