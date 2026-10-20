@@ -288,7 +288,7 @@ export default {
               </span>
             </td>
             <!-- 不就地放输入框：真实的「中文含义」是上百字的提示语
-                 （比如 status_raw 那条取值说明），一行 input 只看得到开头，
+                 （比如「状态」那列的取值说明），一行 input 只看得到开头，
                  还会把表格撑得高低不齐。点开面板写 -->
             <td class="cnm" :class="{empty: !f.label}">
               <button class="cnm-btn" :title="f.label || t.unlabeled"

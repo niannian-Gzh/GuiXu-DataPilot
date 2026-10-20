@@ -1,130 +1,139 @@
+"""修改记录。
+
+**不认识业务字段。** 定位用**主键**，改哪些列由模型给。
+
+旧版用 `project_name` 定位——那是软著表的一个列名，换张表就找不到行；
+而 `recompute_status_flags`（改状态文本时联动五个布尔字段）更是把
+"这张表长什么样"写进了服务层。**那种联动该是数据库触发器的事**：
+它属于数据的一致性，不属于某一次业务动作。
+
+唯一保留的"不许改"是系统列（`is_deleted` / `deleted_at`）——
+那不是业务限制，是隔离机制的地基。
+"""
+
 import json
-from services import UserInputRequired, bulk_threshold
-from services._filters import find_candidates
-from storage import describe
+import sqlite3
+
+import storage
 from audit import log
-from display import format_table
-from runner import execute
+from runner import execute, using
+from services import UserInputRequired, bulk_threshold, card_columns, card_records
+from services._filters import find_candidates
 
 
-FORBIDDEN_FIELDS = {"is_deleted", "deleted_at", "deleted_by", "delete_trace_id"}
-
-
-def recompute_status_flags(status_raw: str) -> dict:
-    return {
-        "is_pending": "待提交" in status_raw,
-        "is_submitted": "已提交" in status_raw,
-        "is_rejected": "已打回" in status_raw,
-        "is_settled": "已结算" in status_raw,
-        "is_certified": "已下证" in status_raw,
-    }
+def _label_map(ctx) -> tuple[list[str], dict]:
+    keys, labels = card_columns(ctx)
+    return keys, dict(zip(keys, labels))
 
 
 def request_update(filter_question: str, updates: dict, ctx) -> str:
-    for field in updates:
-        if field in FORBIDDEN_FIELDS:
-            return json.dumps(
-                {"error": f"字段 {field} 不允许修改", "is_security": True},
-                ensure_ascii=False,
-            )
+    keys, lab = _label_map(ctx)
+    known = set(keys)
 
-    valid_fields = {c["name"] for c in describe(ctx.real_table)}
-    for field in updates:
-        if field not in valid_fields:
-            return json.dumps(
-                {"error": f"字段 {field} 不存在。可用字段：{sorted(valid_fields)}"},
-                ensure_ascii=False,
-            )
-        
-    candidates = find_candidates(filter_question, ctx)
-    if not candidates:
+    blocked = [f for f in updates if f in storage.SYSTEM_COLS]
+    if blocked:
         return json.dumps(
-            {"status": "not_found", "message": "没有找到匹配的记录"},
+            {"ok": False, "error": f"这些是系统列，不能改：{blocked}",
+             "error_type": "security"},
             ensure_ascii=False,
         )
 
-    pending = {
-        "type": "update", 
-        "stage": "confirm",
-        "table_name": ctx.table_name,
-        "real_table": ctx.real_table, 
-        "candidates": candidates,
-        "updates": updates,
-        "user_input": ctx.trace.data["question"], 
-        "trace_id": ctx.trace.id,
-    }
-    raise UserInputRequired(
-        question=f"找到 {len(candidates)} 条匹配，等待用户确认",
-        pending_action=pending,
-    )
+    unknown = [f for f in updates if f not in known]
+    if unknown:
+        return json.dumps(
+            {"ok": False, "error": f"表里没有这些列：{unknown}。可用的有：{keys}",
+             "error_type": "invalid"},
+            ensure_ascii=False,
+        )
 
+    if not updates:
+        return json.dumps(
+            {"ok": False, "error": "没有给出要改成什么", "error_type": "invalid"},
+            ensure_ascii=False,
+        )
 
-def format_update_confirm(candidates: list, updates: dict) -> str:
+    candidates = find_candidates(filter_question, ctx)
+    if not candidates:
+        total = using(
+            lambda con: con.execute(
+                f"SELECT COUNT(*) FROM {storage.quote(ctx.table_name)}"
+            ).fetchone()[0]
+        )
+        return json.dumps(
+            {"ok": True, "status": "empty", "table": ctx.table_name,
+             "row_count": 0, "total_records_in_table": total},
+            ensure_ascii=False,
+        )
+
     n = len(candidates)
-    skip = {"is_pending", "is_submitted", "is_rejected", "is_settled", "is_certified"}
+    labels, rows = card_records(ctx, candidates)
 
-    if n == 1:
-        record = candidates[0]
-        rows = []
-        for field, new_value in updates.items():
-            if field in skip:
-                continue
-            rows.append({
-                "字段": field,
-                "原值": str(record.get(field, "") or "（空）"),
-                "新值": str(new_value),
-            })
-        text = f"即将修改记录「**{record['project_name']}**」：\n\n"
-        text += format_table(rows)
-        text += "\n\n确认修改吗？回复「确认」执行，或「取消」放弃。"
-        return text
+    # 字段级 diff：前 N 条各不相同的时候，只报"各不相同"，不假装有个统一原值
+    changes = [
+        {
+            "field": lab.get(field, field),
+            "before": candidates[0].get(field) if n == 1 else f"（{n} 条各不相同）",
+            "after": new,
+        }
+        for field, new in updates.items()
+    ]
 
-    # 批量
-    dist_rows = []
-    for field in updates:
-        if field in skip:
-            continue
-        dist = {}
-        for c in candidates:
-            v = str(c.get(field, "") or "（空）")
-            dist[v] = dist.get(v, 0) + 1
-        for value, count in dist.items():
-            dist_rows.append({"字段": field, "当前值": value, "条数": count})
-
-    text = f"即将修改 **{n}** 条记录。\n\n**修改内容：**\n\n"
-    for field, new_value in updates.items():
-        if field in skip:
-            continue
-        text += f"- {field} → {new_value}\n"
-
-    text += "\n**改前分布：**\n\n" + format_table(dist_rows)
-
-    if n <= bulk_threshold():
-        text += f"\n\n确认修改这 {n} 条吗？回复「确认」执行，或「取消」放弃。"
-    else:
-        text += "\n\n**⚠️ 批量修改警告**\n如确认，请输入「修改{n}条」；或回复「取消」放弃。"
-    return text
-
-
-def execute_update(candidates, updates, real_table, trace_id, user_input):
-    if "status_raw" in updates:
-        updates = dict(updates)
-        updates.update(recompute_status_flags(updates["status_raw"]))
-
-    names = [c["project_name"] for c in candidates]
-    set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
-    placeholders = ", ".join(["?"] * len(names))
-
-    execute(
-        f"UPDATE {real_table} SET {set_clause} "
-        f"WHERE project_name IN ({placeholders}) AND is_deleted = false",
-        list(updates.values()) + names,
+    raise UserInputRequired(
+        question=f"找到 {n} 条匹配，等待用户确认",
+        pending_action={
+            "type": "update",
+            "stage": "confirm",
+            "table": ctx.table_name,
+            "columns": labels,
+            "records": rows,
+            "affected": n,
+            "danger": n > bulk_threshold(),
+            "changes": changes,
+            # —— 内部字段 ——
+            "table_name": ctx.table_name,
+            "real_table": ctx.real_table,
+            "candidates": candidates,
+            "updates": updates,
+            "user_input": ctx.trace.data["question"],
+            "trace_id": ctx.trace.id,
+        },
     )
+
+
+def execute_update(candidates, updates, table_name, trace_id, user_input):
+    """按主键更新。返回 JSON——affected 是数据库实际改的行数，不是"找到几行"。"""
+    pk = using(storage.pk_of, table_name + storage.SOFTDEL_SUFFIX)
+    if not pk:
+        return json.dumps(
+            {"ok": False, "error": "这张表没有主键，无法精确定位要改的行",
+             "error_type": "invalid"},
+            ensure_ascii=False,
+        )
+
+    ids = [c[pk] for c in candidates]
+    set_clause = ", ".join(f"{storage.quote(k)} = ?" for k in updates)
+    marks = ", ".join("?" * len(ids))
+
+    try:
+        affected = execute(
+            f"UPDATE {storage.quote(table_name)} SET {set_clause} "
+            f"WHERE {storage.quote(pk)} IN ({marks})",
+            list(updates.values()) + ids,
+        )
+    except sqlite3.IntegrityError as e:
+        err = storage.translate(None, e)
+        kind = "duplicate" if isinstance(err, storage.Duplicate) else "constraint"
+        return json.dumps(
+            {"ok": False, "error": str(err), "error_type": kind}, ensure_ascii=False
+        )
 
     log("update", {
         "trace_id": trace_id, "user_input": user_input,
-        "affected_count": len(candidates),
-        "changes": updates,
-        "affected_records": names,
+        "table": table_name, "affected_count": affected,
+        "changes": updates, "affected_ids": ids,
     })
-    return len(candidates)
+    return json.dumps(
+        {"ok": True, "table": table_name, "affected": affected,
+         "changes": [{"field": k, "to": v} for k, v in updates.items()]},
+        ensure_ascii=False,
+    )

@@ -104,7 +104,7 @@ def enrich_pending(pending: dict) -> dict:
 
 
 def _handle_delete(question, session, pending):
-    n = len(pending["candidates"])
+    n = pending["affected"]
     if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
     else:
@@ -112,16 +112,16 @@ def _handle_delete(question, session, pending):
 
     if valid:
         count = delete_service.execute_delete(
-            pending["candidates"], pending["real_table"],
+            pending["candidates"], pending["table_name"],
             pending["trace_id"], pending["user_input"],
         )
         session.clear_pending()
-        return True, f"已删除 {count} 条记录。7 天内可恢复。"
+        return True, f"已在「{pending['table']}」删除 {count} 条记录。7 天内可恢复。"
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
 def _handle_restore(question, session, pending):
-    n = len(pending["candidates"])
+    n = pending["affected"]
     if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
     else:
@@ -129,11 +129,11 @@ def _handle_restore(question, session, pending):
 
     if valid:
         count = restore_service.execute_restore(
-            pending["candidates"], pending["real_table"],
+            pending["candidates"], pending["table_name"],
             pending["trace_id"], pending["user_input"],
         )
         session.clear_pending()
-        return True, f"已恢复 {count} 条记录，它们已重新出现在项目台账里。"
+        return True, f"已恢复 {count} 条记录。"
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
@@ -171,19 +171,21 @@ def _handle_batch_create(question, session, pending):
 
 
 def _handle_update(question, session, pending):
-    n = len(pending["candidates"])
+    n = pending["affected"]
     if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
     else:
         valid = delete_service.is_bulk_confirm(question, n)
 
     if valid:
-        count = update_service.execute_update(
-            pending["candidates"], pending["updates"], pending["real_table"],
+        result = json.loads(update_service.execute_update(
+            pending["candidates"], pending["updates"], pending["table_name"],
             pending["trace_id"], pending["user_input"],
-        )
+        ))
         session.clear_pending()
-        return True, f"已修改 {count} 条记录。"
+        if not result.get("ok"):
+            return True, f"修改失败：{result.get('error')}"
+        return True, f"已在「{pending['table']}」修改 {result['affected']} 条记录。"
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
@@ -261,31 +263,3 @@ pending["real_table"], pending["trace_id"], pending["user_input"],
     return True, "抱歉，我没理解你的回答。请回答之前的问题，或回复「取消」。"
 
 
-def format_pending_display(pending: dict) -> str:
-    """根据 pending 类型，格式化展示消息。"""
-    ptype = pending.get("type")
-
-    if ptype == "delete":
-        msg = delete_service.format_candidates(pending["candidates"])
-        msg += "\n\n" + delete_service.delete_confirm_prompt(pending["candidates"])
-        return msg
-    if ptype == "restore":
-        msg = restore_service.format_candidates(pending["candidates"])
-        msg += "\n\n" + restore_service.restore_confirm_prompt(pending["candidates"])
-        return msg
-    if ptype == "create":
-        return create_service.format_create_confirm(pending["record"])
-    if ptype == "batch_create":
-        return create_service.format_batch_create_confirm(pending["records"])
-    if ptype == "update":
-        return update_service.format_update_confirm(pending["candidates"], pending["updates"])
-    if ptype == "transform":
-        return transform_service.format_transform_confirm(
-            pending, pending.get("table_name", "")
-        )
-    if ptype == "add_column":
-        return add_column_service.format_add_column_confirm(pending)
-    if ptype == "import":
-        return import_service.format_import_summary(pending["scan_result"])
-
-    return "需要用户确认"

@@ -407,11 +407,9 @@ def chat(req: ChatRequest):
             status = "needs_input"
             pending = pending_service.enrich_pending(e.pending_action)
             session.set_pending(pending)
-            sink({
-                "type": "pending",
-                "pending": pending,
-                "message": pending_service.format_pending_display(pending),
-            })
+            # 只发结构化数据。卡片怎么长是前端的事——design 说得明白：
+            # "卡片文案前端写死一句，后端不传文案"。
+            sink({"type": "pending", "pending": pending})
 
         except Exception as e:
             status = "error"

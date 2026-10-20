@@ -109,35 +109,6 @@ def request_transform(description: str, ctx) -> str:
     )
 
 
-def format_transform_confirm(pending: dict, table_name: str) -> str:
-    """渲染确认卡片：预览表格 + 待执行的 SQL + 提示。"""
-    total = pending["total"]
-    cols = pending["columns"]
-    rows = pending["rows"]
-
-    # 列名 → 中文
-    headers = {c: _label_for_column(c, table_name) for c in cols}
-    table_rows = [
-        {headers[c]: r.get(c, "") for c in cols}
-        for r in rows
-    ]
-
-    lines = [f"即将执行数据变换，影响 **{total}** 条记录。\n"]
-    if pending.get("is_full_table"):
-        lines.append("⚠️ **此操作没有筛选条件，将修改全表所有记录。**\n")
-    lines.append(format_table(table_rows))
-    if total > len(rows):
-        lines.append(f"\n（共 {total} 条，此处仅显示前 {len(rows)} 条）")
-
-    lines.append("")
-    lines.append("**将执行的 SQL：**\n")
-    lines.append("```sql")
-    lines.append(pending["update_sql"])
-    lines.append("```")
-    lines.append("")
-    lines.append("确认执行吗？回复「确认」执行，或「取消」放弃。")
-
-    return "\n".join(lines)
 
 def execute_transform(pending: dict, table_name: str,
                      trace_id: str, user_input: str) -> int:

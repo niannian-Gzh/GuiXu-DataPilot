@@ -1,17 +1,21 @@
 import json
 from datetime import datetime
+
+import storage
 from nl2sql import get_schema, generate_filter_sql
 from execute import execute_sql
-from services import UserInputRequired, bulk_threshold
+from services import UserInputRequired, bulk_threshold, card_records
 from audit import log
-from display import format_table
-from config import setting
-from runner import execute
+from runner import execute, using
 
 
 def find_deleted(filter_question: str, ctx) -> list:
-    """在已软删除的记录里按自然语言条件筛选。"""
-    schema = get_schema(ctx.real_table)
+    """在已软删除的记录里按自然语言条件筛选。
+
+    schema 用**业务名**读（`get_schema` 走的是表定义），而 SQL 打**底表**——
+    已删的行只在底表里看得见。
+    """
+    schema = get_schema(ctx.table_name)
     sql = generate_filter_sql(filter_question, ctx.llm, schema, ctx.real_table)
     # 外层强制限定在已删除集合内，无论模型生成了什么条件
     wrapped = (
@@ -29,9 +33,17 @@ def request_restore(filter_question: str, ctx) -> str:
             {"status": "not_found", "message": "没有找到可恢复的记录"},
             ensure_ascii=False,
         )
+    labels, rows = card_records(ctx, candidates)
     pending = {
         "type": "restore",
         "stage": "confirm",
+        # —— 卡片字段 ——
+        "table": ctx.table_name,
+        "columns": labels,
+        "records": rows,
+        "affected": len(candidates),
+        "danger": False,
+        # —— 内部字段 ——
         "table_name": ctx.table_name,
         "real_table": ctx.real_table,
         "candidates": candidates,
@@ -62,56 +74,30 @@ def _days_left(value) -> str:
     return f"剩 {max(left, 0)} 天"
 
 
-def format_candidates(candidates: list) -> str:
-    n = len(candidates)
-    all_threshold = setting("display.display_all_threshold")
-    sample_count = setting("display.display_sample_count")
-    shown = candidates if n <= all_threshold else candidates[:sample_count]
-    rows = [
-        {
-            "项目名称": c.get("project_name", ""),
-            "负责人": c.get("owner", "") or "",
-            "状态": c.get("status_raw", "") or "",
-            "删除时间": _format_deleted_at(c.get("deleted_at")),
-            "保留期": _days_left(c.get("deleted_at")),
-        }
-        for c in shown
-    ]
-    note = "" if n <= all_threshold else f"\n\n（共 {n} 条，此处仅显示前 {sample_count} 条）"
-    return f"找到 **{n}** 条可恢复记录：\n\n" + format_table(rows) + note
+def execute_restore(candidates, table_name: str, trace_id: str, user_input: str) -> int:
+    """恢复。**走底表的特权旁路**——视图里根本看不见已删的行。
 
+    只清两个系统列，其余不动。`deleted_by` / `delete_trace_id` 是旧版
+    留下的列名，早就不存在了，这里也不该再提。
+    """
+    pk = using(storage.pk_of, table_name + storage.SOFTDEL_SUFFIX)
+    if not pk:
+        return 0
 
-def restore_confirm_prompt(candidates: list) -> str:
-    n = len(candidates)
-    if n <= bulk_threshold():
-        return (
-            f"确认恢复这 {n} 条吗？恢复后它们会重新出现在项目台账里。\n"
-            f"回复「确认」执行恢复，或回复「取消」放弃。"
-        )
-    return (
-        f"⚠️ 批量恢复\n"
-        f"即将恢复 {n} 条记录。\n"
-        f"如确认，请输入「恢复{n}条」；或回复「取消」放弃。"
-    )
-
-
-def execute_restore(candidates, real_table: str, trace_id: str, user_input: str) -> int:
-    names = [c["project_name"] for c in candidates]
-    placeholders = ",".join(["?"] * len(names))
+    ids = [c[pk] for c in candidates]
+    marks = ",".join("?" * len(ids))
     execute(
-        f"UPDATE {real_table} SET is_deleted = false, "
-        f"deleted_at = NULL, deleted_by = NULL, delete_trace_id = NULL "
-        f"WHERE project_name IN ({placeholders})",
-        names,
+        f"UPDATE {storage.quote(table_name + storage.SOFTDEL_SUFFIX)} "
+        f"SET is_deleted = 0, deleted_at = NULL "
+        f"WHERE {storage.quote(pk)} IN ({marks})",
+        ids,
     )
 
     log("restore", {
         "trace_id": trace_id,
         "user_input": user_input,
-        "affected_count": len(candidates),
-        "affected_records": [
-            {"project_name": c["project_name"], "owner": c.get("owner", "")}
-            for c in candidates
-        ],
+        "table": table_name,
+        "affected_count": len(ids),
+        "affected_ids": ids,
     })
-    return len(candidates)
+    return len(ids)

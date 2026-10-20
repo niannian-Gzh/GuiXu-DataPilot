@@ -8,6 +8,7 @@ from nl2sql import generate_filter_sql
 from execute import execute_sql
 from audit import log
 from config import PROJECT_ROOT
+from services import card_columns
 import re
 
 
@@ -24,19 +25,6 @@ def _sanitize_filename(text: str, max_len: int = 30) -> str:
 
 EXPORT_DIR = PROJECT_ROOT / "data" / "exports"
 
-EXPORT_COLUMNS = {
-    "project_name": "项目名称",
-    "owner": "负责人",
-    "status_raw": "状态",
-    "issued_date": "项目下发时间",
-    "certified_date": "项目下证时间",
-    "category": "分类",
-    "resubmit_name": "重提项目名",
-    "reject_date": "（最新）打回时间",
-    "resubmit_date": "（打回）提交时间",
-    "reject_count": "打回次数",
-}
-
 
 def run(filter_question: str, ctx) -> str:
     try:
@@ -51,9 +39,13 @@ def run(filter_question: str, ctx) -> str:
             "message": "没有找到符合条件的记录，未生成文件。",
         }, ensure_ascii=False)
 
-    # 只保留业务字段，并改成中文列名
-    available = [c for c in EXPORT_COLUMNS if c in df.columns]
-    df = df[available].rename(columns=EXPORT_COLUMNS)
+    # 列名从**表定义**取（没标中文的回落成字段名）。
+    # 旧版这里有一张写死的 EXPORT_COLUMNS——跟确认卡片用的是同一件事，
+    # 两处各写一份，加一列就要改两个地方。
+    keys, labels = card_columns(ctx)
+    rename = dict(zip(keys, labels))
+    available = [c for c in df.columns if c in rename]
+    df = df[available].rename(columns=rename)
 
     # 日期字段转字符串
     for col in df.columns:

@@ -14,8 +14,7 @@ from services import report_service
 
 # 工具定义里"表名参数"的统一描述——12 处复用
 _TABLE_DESC = (
-    "要操作的表名（视图名，如 projects）。"
-    "从 system prompt 里的『可用表列表』中选一个。"
+    "要操作的表名，从上下文里的表定义中选一个。"
 )
 
 

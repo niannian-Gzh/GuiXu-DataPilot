@@ -1,11 +1,11 @@
 import json
 import re
+
+import storage
 from services import UserInputRequired, bulk_threshold, card_records
 from services._filters import find_candidates
 from audit import log
-from display import format_table
-from config import setting
-from runner import execute
+from runner import execute, using
 
 
 CONFIRM_WORDS = {"确认", "确定", "是", "对", "好", "可以", "删", "删除", "删吧", "yes", "y", "ok"}
@@ -42,43 +42,6 @@ def request_delete(filter_question: str, ctx) -> str:
     )
 
 
-def format_candidates(candidates: list) -> str:
-    n = len(candidates)
-    all_threshold = setting("display.display_all_threshold")
-    sample_count = setting("display.display_sample_count")
-    if n <= all_threshold:
-        shown = candidates
-        note = ""
-    else:
-        shown = candidates[:sample_count]
-        note = f"\n\n（共 {n} 条，此处仅显示前 {sample_count} 条）"
-
-    rows = [
-        {
-            "项目名称": c.get("project_name", ""),
-            "负责人": c.get("owner", "") or "",
-            "状态": c.get("status_raw", "") or "",
-        }
-        for c in shown
-    ]
-    return f"找到 **{n}** 条匹配：\n\n" + format_table(rows) + note
-
-
-def delete_confirm_prompt(candidates: list) -> str:
-    n = len(candidates)
-    if n <= bulk_threshold():
-        return (
-            f"确认删除这 {n} 条吗？\n"
-            f"删除后 7 天内可恢复，之后永久清理。\n"
-            f"回复「确认」执行删除，或回复「取消」放弃。"
-        )
-    return (
-        f"⚠️ 批量删除警告\n"
-        f"即将删除 {n} 条记录。删除后 7 天内可恢复，之后永久清理。\n"
-        f"如确认，请输入「删除{n}条」；或回复「取消」放弃。"
-    )
-
-
 def is_confirm(text: str) -> bool:
     return text.strip().lower() in CONFIRM_WORDS
 
@@ -92,24 +55,30 @@ def is_bulk_confirm(text: str, expected_count: int) -> bool:
     return str(expected_count) in nums
 
 
-def execute_delete(candidates, real_table, trace_id, user_input):
-    names = [c["project_name"] for c in candidates]
-    placeholders = ",".join(["?"] * len(names))
-    execute(
-        f"UPDATE {real_table} SET is_deleted = true, "
-        f"deleted_at = CAST(NOW() AS TIMESTAMP), "
-        f"delete_trace_id = ?, deleted_by = 'local_user' "
-        f"WHERE project_name IN ({placeholders})",
-        [trace_id] + names,
+def execute_delete(candidates, table_name, trace_id, user_input):
+    """软删除。**走视图的 DELETE 触发器**——不手写 `SET is_deleted = 1`。
+
+    旧版自己拼 `UPDATE … SET is_deleted = true, deleted_at = NOW(), …`，
+    三个毛病叠在一起：`NOW()` 是 PG 语法、`delete_trace_id` / `deleted_by`
+    这两列根本不存在、以及用 `project_name` 定位行（换张表就找不到）。
+    现在一句 DELETE，隔离层负责其余。
+    """
+    pk = using(storage.pk_of, table_name + storage.SOFTDEL_SUFFIX)
+    if not pk:
+        return 0
+    ids = [c[pk] for c in candidates]
+    marks = ",".join("?" * len(ids))
+    affected = execute(
+        f"DELETE FROM {storage.quote(table_name)} "
+        f"WHERE {storage.quote(pk)} IN ({marks})",
+        ids,
     )
 
     log("soft_delete", {
         "trace_id": trace_id,
         "user_input": user_input,
-        "affected_count": len(candidates),
-        "affected_records": [
-            {"project_name": c["project_name"], "owner": c.get("owner", "")}
-            for c in candidates
-        ],
+        "table": table_name,
+        "affected_count": affected,
+        "affected_ids": ids,
     })
-    return len(candidates)
+    return affected

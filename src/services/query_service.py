@@ -10,37 +10,12 @@ from execute import execute_sql
 from runner import query_df
 
 
-AMBIGUOUS_FIELD_MAP = {
-    "is_settled = true": ("status_raw = '已结算'", "精确匹配：状态恰好是'已结算'"),
-    "is_certified = true": ("status_raw = '已下证'", "精确匹配：状态恰好是'已下证'"),
-    "is_rejected = true": ("status_raw = '已打回'", "精确匹配：状态恰好是'已打回'"),
-    "is_pending = true": ("status_raw = '待提交'", "精确匹配：状态恰好是'待提交'"),
-    "is_submitted = true": ("status_raw = '已提交'", "精确匹配：状态恰好是'已提交'"),
-}
-
-
-def _detect_ambiguity(sql, df, ctx):
-    """检测 SQL 是否有歧义解读。只在 SQL 用了布尔字段时检测。"""
-    for old, (new, description) in AMBIGUOUS_FIELD_MAP.items():
-        if old in sql:
-            alt_sql = sql.replace(old, new)
-            try:
-                alt_df = execute_sql(alt_sql)
-            except Exception:
-                continue
-            if df.to_string() != alt_df.to_string():
-                def _val(d):
-                    if d.shape == (1, 1):
-                        return str(d.iloc[0, 0])
-                    return f"{d.shape[0]} 行"
-                return {
-                    "ambiguous": True,
-                    "branches": [
-                        {"interpretation": "包含匹配（默认，含组合状态）", "value": _val(df)},
-                        {"interpretation": description, "value": _val(alt_df)},
-                    ],
-                }
-    return None
+# 旧版这里有一个 AMBIGUOUS_FIELD_MAP：检测"布尔列 vs 状态文本"的两种理解。
+# 那是软著表的结构（派生布尔字段 + 组合状态字符串），别的表不长这样——
+# 它把一张测试数据的 schema 固化进了产品。删掉。
+#
+# 如果将来真需要"同一查询的两种理解"，那该由**表定义**驱动
+# （比如声明"这列由那列派生"），而不是写死五个中文状态词。
 
 
 def _jsonable(v):
@@ -86,10 +61,6 @@ def run(question: str, ctx) -> str:
             "truncated": bool(df.attrs.get("truncated")),
             "sql": sql,
         }
-
-        ambiguity = _detect_ambiguity(sql, df, ctx)
-        if ambiguity:
-            result.update(ambiguity)
 
         if len(df) == 0:
             # 空结果是**事实**，不是失败。给一个参照物：表里一共多少行——

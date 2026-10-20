@@ -245,16 +245,16 @@ if __name__ == "__main__":
         print(f"   {'✓' if passed else '✗'} {label}{'  ' + detail if detail else ''}")
 
     storage.create_table(
-        con, "projects",
-        "id INTEGER PRIMARY KEY, name TEXT NOT NULL, owner TEXT, count INTEGER DEFAULT 0",
+        con, "orders",
+        "id INTEGER PRIMARY KEY, name TEXT NOT NULL, customer TEXT, count INTEGER DEFAULT 0",
         unique="name",
     )
-    con.execute("INSERT INTO projects (name, owner, count) VALUES ('甲', '张三', 2)")
-    con.execute("INSERT INTO projects (name, owner, count) VALUES ('乙', '李四', 0)")
+    con.execute("INSERT INTO orders (name, customer, count) VALUES ('甲', '张三', 2)")
+    con.execute("INSERT INTO orders (name, customer, count) VALUES ('乙', '李四', 0)")
 
     print("① 落一份快照")
     con.execute("BEGIN")
-    s1 = snapshot(con, "projects", "import")
+    s1 = snapshot(con, "orders", "import")
     con.execute("COMMIT")
     check("元信息记上了",
           con.execute(f"SELECT kind, rows FROM {META} WHERE id={s1}").fetchone() == ("import", 2))
@@ -262,54 +262,54 @@ if __name__ == "__main__":
           con.execute(f"SELECT count(*) FROM {SNAP_PREFIX}{s1}").fetchone()[0] == 2)
 
     print("\n② 破坏它：改数据 + 删一列")
-    con.execute("UPDATE projects SET count = 99 WHERE name = '甲'")
-    con.execute("DELETE FROM projects WHERE name = '乙'")
-    storage.drop_column(con, "projects", "owner")
-    check("owner 没了", "owner" not in storage.columns_of(con, "projects"))
-    check("乙被软删", con.execute("SELECT count(*) FROM projects").fetchone()[0] == 1)
+    con.execute("UPDATE orders SET count = 99 WHERE name = '甲'")
+    con.execute("DELETE FROM orders WHERE name = '乙'")
+    storage.drop_column(con, "orders", "customer")
+    check("customer 没了", "customer" not in storage.columns_of(con, "orders"))
+    check("乙被软删", con.execute("SELECT count(*) FROM orders").fetchone()[0] == 1)
 
     print("\n③ 回滚")
     con.execute("BEGIN")
     rollback(con, s1)
     con.execute("COMMIT")
-    cols_back = storage.columns_of(con, "projects")
-    rows_back = con.execute("SELECT name, owner, count FROM projects").fetchall()
+    cols_back = storage.columns_of(con, "orders")
+    rows_back = con.execute("SELECT name, customer, count FROM orders").fetchall()
     print(f"   列：{cols_back}")
     print(f"   行：{sorted(rows_back)}")
-    check("列回来了", "owner" in cols_back)
+    check("列回来了", "customer" in cols_back)
     check("数据回来了",
           sorted(rows_back) == sorted([("甲", "张三", 2), ("乙", "李四", 0)]))
     check("被软删的乙复活了", len(rows_back) == 2)
 
     print("\n④ 结构不只是列名——约束也得回来")
-    ddl = con.execute("SELECT sql FROM sqlite_master WHERE name='projects_all'").fetchone()[0]
+    ddl = con.execute("SELECT sql FROM sqlite_master WHERE name='orders_all'").fetchone()[0]
     print(f"   {ddl}")
     check("NOT NULL 在", "NOT NULL" in ddl)
     check("默认值在", "DEFAULT 0" in ddl)
     check("主键在", "PRIMARY KEY" in ddl)
 
     print("\n⑤ 回滚本身也留了一份")
-    kinds = [s["kind"] for s in list_snapshots(con, "projects")]
+    kinds = [s["kind"] for s in list_snapshots(con, "orders")]
     check("多了一份 rollback", "rollback" in kinds, f"{kinds}")
-    check("label 给界面用", list_snapshots(con, "projects")[0]["label"] == "回滚前")
+    check("label 给界面用", list_snapshots(con, "orders")[0]["label"] == "回滚前")
 
     print("\n⑥ 覆盖导入")
     con.execute("BEGIN")
-    n = replace_all(con, "projects", ["id", "name", "owner", "count"],
+    n = replace_all(con, "orders", ["id", "name", "customer", "count"],
                     [(1, "丙", "王五", 0), (2, "丁", "赵六", 3), (3, "戊", "孙七", 1)])
     con.execute("COMMIT")
-    rows = con.execute("SELECT name FROM projects").fetchall()
+    rows = con.execute("SELECT name FROM orders").fetchall()
     print(f"   灌进去 {n} 行，现在有 {[r[0] for r in rows]}")
     check("旧数据被覆盖了", ("甲",) not in rows and ("乙",) not in rows)
     check("新数据都在", len(rows) == 3)
     check("覆盖前留了快照",
-          list_snapshots(con, "projects")[0]["kind"] == "import")
+          list_snapshots(con, "orders")[0]["kind"] == "import")
     check("新行是活的（没被继承软删状态）",
-          con.execute("SELECT count(*) FROM projects_all WHERE is_deleted = 0").fetchone()[0] == 3)
+          con.execute("SELECT count(*) FROM orders_all WHERE is_deleted = 0").fetchone()[0] == 3)
 
     print("\n⑦ 部分唯一索引在覆盖后仍然生效")
     try:
-        con.execute("INSERT INTO projects (name, owner) VALUES ('丙', '重复')")
+        con.execute("INSERT INTO orders (name, customer) VALUES ('丙', '重复')")
         check("重名该被挡", False, "居然插进去了")
     except sqlite3.IntegrityError:
         check("重名被挡", True)
@@ -319,20 +319,20 @@ if __name__ == "__main__":
     print(f"   {cols} / {len(rows)} 行")
     check("is_deleted 不露面", "is_deleted" not in cols)
     check("拿到的是那一刻的数据", len(rows) == 2)
-    snapshot_now = list_snapshots(con, "projects")[-1]
+    snapshot_now = list_snapshots(con, "orders")[-1]
     check("最早的快照是那次 import", snapshot_now["id"] == s1)
 
     print("\n⑨ 删表")
     con.execute("BEGIN")
-    drop_table(con, "projects")
+    drop_table(con, "orders")
     con.execute("COMMIT")
-    check("表没了", "projects" not in storage.list_tables(con))
+    check("表没了", "orders" not in storage.list_tables(con))
     check("底表也没了", con.execute(
-        "SELECT count(*) FROM sqlite_master WHERE name='projects_all'").fetchone()[0] == 0)
+        "SELECT count(*) FROM sqlite_master WHERE name='orders_all'").fetchone()[0] == 0)
     check("中文映射跟着删了", con.execute(
-        f"SELECT count(*) FROM {storage.META} WHERE tbl='projects'").fetchone()[0] == 0)
+        f"SELECT count(*) FROM {storage.META} WHERE tbl='orders'").fetchone()[0] == 0)
     check("但快照还在（这就是删表前的退路）",
-          len(list_snapshots(con, "projects")) >= 3)
+          len(list_snapshots(con, "orders")) >= 3)
 
     print("\n⑩ 30 天清理")
     con.execute(f"UPDATE {META} SET created_at = '2000-01-01T00:00:00'")

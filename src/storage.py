@@ -5,11 +5,11 @@
 
 ## 三层名字，只有一个约定
 
-    外面认识的：  projects           ← 视图。services、模型写的 SQL、报表都只见它
-    内部那一半：  projects_all       ← 底表。真数据在这，带 is_deleted
+    外面认识的：  orders           ← 视图。services、模型写的 SQL、报表都只见它
+    内部那一半：  orders_all       ← 底表。真数据在这，带 is_deleted
 
-**露出给外面的名字必须是安全的那张。** 反过来（底表叫 projects、
-视图叫 projects_view）就全完了——任何一处顺手写 `projects`
+**露出给外面的名字必须是安全的那张。** 反过来（底表叫 orders、
+视图叫 orders_view）就全完了——任何一处顺手写 `orders`
 都会绕过软删隔离，而且不报错。
 
 知道 `_all` 的只有三处：建表改结构、垃圾桶的旁路读、视图定义本身。
@@ -527,7 +527,7 @@ def render(con: sqlite3.Connection, tables: list[str] | None = None) -> str:
 class Duplicate(Exception):
     """唯一约束冲突。带上哪张表哪些列——模型要知道改哪个字段。
 
-    SQLite 原文是 `UNIQUE constraint failed: projects.name`，
+    SQLite 原文是 `UNIQUE constraint failed: orders.name`，
     模型看得懂字面，但不知道该怎么办。转成这个再往上抛。
     """
 
@@ -554,7 +554,7 @@ def translate(con: sqlite3.Connection, err: sqlite3.IntegrityError) -> Exception
     text = str(err)
     if "UNIQUE constraint failed" not in text:
         return ConstraintFailed(text)
-    target = text.split(":", 1)[-1].strip()          # "projects_all.name"
+    target = text.split(":", 1)[-1].strip()          # "orders_all.name"
     for pair in target.split(","):
         parts = pair.strip().split(".")
         if len(parts) == 2:
@@ -585,42 +585,42 @@ if __name__ == "__main__":
 
     print("① 建表")
     create_table(
-        con, "projects",
+        con, "orders",
         "id INTEGER PRIMARY KEY, name TEXT NOT NULL, owner TEXT, count INTEGER DEFAULT 0",
         unique="name",
     )
     check("视图不带 is_deleted",
-          "is_deleted" not in columns_of(con, "projects"), f"{columns_of(con, 'projects')}")
-    check("list_tables 只给业务表", list_tables(con) == ["projects"], f"{list_tables(con)}")
+          "is_deleted" not in columns_of(con, "orders"), f"{columns_of(con, 'orders')}")
+    check("list_tables 只给业务表", list_tables(con) == ["orders"], f"{list_tables(con)}")
 
     print("\n② 增删改走视图")
-    con.execute("INSERT INTO projects (name, owner) VALUES ('甲', '张三')")
-    con.execute("INSERT INTO projects (name, owner) VALUES ('乙', '李四')")
-    con.execute("DELETE FROM projects WHERE name = '甲'")
-    check("视图只剩活的", con.execute("SELECT count(*) FROM projects").fetchone()[0] == 1)
-    check("底表两条都在", con.execute("SELECT count(*) FROM projects_all").fetchone()[0] == 2)
+    con.execute("INSERT INTO orders (name, owner) VALUES ('甲', '张三')")
+    con.execute("INSERT INTO orders (name, owner) VALUES ('乙', '李四')")
+    con.execute("DELETE FROM orders WHERE name = '甲'")
+    check("视图只剩活的", con.execute("SELECT count(*) FROM orders").fetchone()[0] == 1)
+    check("底表两条都在", con.execute("SELECT count(*) FROM orders_all").fetchone()[0] == 2)
 
     print("\n③ 唯一约束——而且是「部分」唯一（关键的这条）")
     try:
-        con.execute("INSERT INTO projects (name, owner) VALUES ('乙', '王五')")
+        con.execute("INSERT INTO orders (name, owner) VALUES ('乙', '王五')")
         check("重复该被挡", False, "居然插进去了")
     except sqlite3.IntegrityError as e:
         dup = translate(con, e)
         check("被挡住了", isinstance(dup, Duplicate), str(dup))
-    con.execute("INSERT INTO projects (name, owner) VALUES ('甲', '赵六')")
+    con.execute("INSERT INTO orders (name, owner) VALUES ('甲', '赵六')")
     check("软删掉的名字可以再用（普通 UNIQUE 会在这里失败）",
-          con.execute("SELECT owner FROM projects WHERE name='甲'").fetchone() == ("赵六",))
+          con.execute("SELECT owner FROM orders WHERE name='甲'").fetchone() == ("赵六",))
 
     print("\n④ 表定义")
-    set_note(con, "projects", "", "项目表")
-    set_note(con, "projects", "name", "项目的正式全称，对外报送时用它")
-    set_note(con, "projects", "owner", "负责这个项目的同事姓名")
+    set_note(con, "orders", "", "订单表")
+    set_note(con, "orders", "name", "项目的正式全称，对外报送时用它")
+    set_note(con, "orders", "owner", "负责这个项目的同事姓名")
     create_table(
-        con, "reviews",
-        "id INTEGER PRIMARY KEY, project_name TEXT NOT NULL, reason TEXT",
+        con, "order_items",
+        "id INTEGER PRIMARY KEY, order_no TEXT NOT NULL, reason TEXT",
     )
-    set_note(con, "reviews", "", "打回记录表")
-    add_relation(con, "reviews", "project_name", "projects", "name", "1:N")
+    set_note(con, "order_items", "", "订单明细表")
+    add_relation(con, "order_items", "order_no", "orders", "name", "1:N")
     text = render(con)
     print(text)
     check("中文映射进去了", "对外报送时用它" in text)
@@ -629,23 +629,23 @@ if __name__ == "__main__":
     check("is_deleted 不出现", "is_deleted" not in text)
 
     print("\n⑤ 关系校验（假关系会误导模型去 JOIN 不存在的表）")
-    for table, col, why in (("不存在表", "x", "表不存在"), ("projects", "不存在列", "列不存在")):
+    for table, col, why in (("不存在表", "x", "表不存在"), ("orders", "不存在列", "列不存在")):
         try:
-            add_relation(con, "reviews", "project_name", table, col)
+            add_relation(con, "order_items", "order_no", table, col)
             check(f"{why}该被拒", False, "居然加进去了")
         except ValueError as e:
             check(f"{why}被拒", True, str(e))
 
     print("\n⑥ 加列 / 删列")
-    add_column(con, "projects", "priority TEXT")
-    con.execute("INSERT INTO projects (name, owner, priority) VALUES ('丙', '孙七', '高')")
+    add_column(con, "orders", "priority TEXT")
+    con.execute("INSERT INTO orders (name, owner, priority) VALUES ('丙', '孙七', '高')")
     check("加列后能写", con.execute(
-        "SELECT priority FROM projects WHERE name='丙'").fetchone() == ("高",))
-    drop_column(con, "projects", "priority")
-    check("删列后视图同步", "priority" not in columns_of(con, "projects"))
+        "SELECT priority FROM orders WHERE name='丙'").fetchone() == ("高",))
+    drop_column(con, "orders", "priority")
+    check("删列后视图同步", "priority" not in columns_of(con, "orders"))
     check("删列后还能写", (con.execute(
-        "INSERT INTO projects (name, owner) VALUES ('丁', '周八')"),
-        con.execute("SELECT count(*) FROM projects WHERE name='丁'").fetchone()[0])[1] == 1)
+        "INSERT INTO orders (name, owner) VALUES ('丁', '周八')"),
+        con.execute("SELECT count(*) FROM orders WHERE name='丁'").fetchone()[0])[1] == 1)
 
     print("\n⑦ 空库怎么说")
     empty = connect(":memory:")

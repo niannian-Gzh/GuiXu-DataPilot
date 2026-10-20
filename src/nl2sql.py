@@ -15,13 +15,6 @@ SYSTEM_PROMPT = """你是一个SQL生成助手。用户会用自然语言提问�
 2. 只生成 SELECT 查询，禁止 DELETE / UPDATE / INSERT / DROP
 3. 严格使用下面提供的表名和列名，不要臆造
 4. 当前日期是 {today}，如果用户说"上个月""本周"等，以此为基准
-5. **状态筛选规则（重要）**：
-   - 默认情况：用户说"已结算"、"已下证"、"已打回"、"待提交"、"已提交"时，
-     使用对应的布尔字段（is_settled / is_certified / is_rejected / is_pending / is_submitted）。
-     这表示"包含匹配"——比如"已结算"包含"已结算已下证"和"已结算已打回"。
-   - 精确匹配：当用户说"仅为XX"、"恰好是XX"、"精确等于XX"、"状态就是XX"、
-     "状态为'XX'"（带引号）时，使用 status_raw = 'XX' 做精确匹配。
-   - 判断依据：有没有"仅/只/精确/恰好/就是"这类限定词。
 
 表名：{table_name}
 
@@ -193,16 +186,15 @@ TRANSFORM_SYSTEM_PROMPT = """你是数据变换助手。用户描述一个变换
 6. 当前日期是 {today}
 7. 不要解释、不要 markdown 代码块、不要结尾分号
 
-表名（真实表）：{table_name}
-（这是底层存储表。视图 projects 只是它的过滤视图，写操作一律用真实表。）
+表名：{table_name}
 
 表结构：
 {schema}
 
 输出示例：
-UPDATE projects_all SET reject_count = reject_count + 1 WHERE owner = '关梓鹤';
+UPDATE "orders" SET qty = qty + 1 WHERE status = '待发货';
 ---
-SELECT project_name, reject_count FROM projects_all WHERE owner = '关梓鹤';
+SELECT id, amount FROM "orders" WHERE status = '待发货';
 """
 
 

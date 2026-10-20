@@ -2,7 +2,6 @@
    全部是纯函数：给定输入必然得到同样输出，不碰 DOM、不碰网络、不碰 store，
    所以从 setup 里提出来是安全的。 */
 
-/* 字段的界面显示名。改前后对比、确认卡片都靠它把 project_name 变成「项目名称」 */
 /* SQL 高亮的关键字表 */
 export const SQL_WORDS = [
   'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'ORDER', 'BY',

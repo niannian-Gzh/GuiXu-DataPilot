@@ -132,26 +132,6 @@ def request_add_column(column_name: str, column_type: str,
     )
 
 
-def format_add_column_confirm(pending: dict) -> str:
-    lines = [
-        f"即将在表「**{pending['real_table']}**」加一列：\n",
-        f"- 列名：`{pending['column_name']}`",
-        f"- 类型：`{pending['column_type']}`",
-    ]
-    if pending.get("default_value"):
-        lines.append(f"- 默认值：`{pending['default_value']}`")
-    if pending.get("label"):
-        lines.append(f"- 中文含义：{pending['label']}")
-    lines.append("")
-    lines.append("**将执行的 SQL：**\n")
-    lines.append("```sql")
-    lines.append(pending["sql"])
-    lines.append("```")
-    lines.append("")
-    lines.append("确认执行吗？回复「确认」执行，或「取消」放弃。")
-    return "\n".join(lines)
-
-
 def execute_add_column(pending: dict, trace_id: str, user_input: str) -> dict:
     """执行加列。返回 {column, label_set}。
 
