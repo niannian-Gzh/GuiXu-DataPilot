@@ -5,8 +5,8 @@ import storage
 from nl2sql import get_schema, generate_filter_sql
 from execute import execute_sql
 from services import UserInputRequired, bulk_threshold, card_columns, card_records
-from audit import log
-from runner import execute, using
+from audit import record
+from runner import transaction, using
 
 
 def find_deleted(filter_question: str, ctx) -> list:
@@ -122,19 +122,19 @@ def execute_restore(candidates, table_name: str, trace_id: str, user_input: str)
 
     ids = [c[pk] for c in candidates]
     marks = ",".join("?" * len(ids))
-    execute(
-        f"UPDATE {storage.quote(table_name + storage.SOFTDEL_SUFFIX)} "
-        f"SET is_deleted = 0, deleted_at = NULL "
-        f"WHERE {storage.quote(pk)} IN ({marks})",
-        ids,
-        system=True,   # 底表 + 系统列，特权旁路
-    )
-
-    log("restore", {
-        "trace_id": trace_id,
-        "user_input": user_input,
-        "table": table_name,
-        "affected_count": len(ids),
-        "affected_ids": ids,
-    })
+    with transaction() as tx:
+        # 底表 + 系统列，特权旁路——事务句柄本来就不设闸门
+        tx.execute(
+            f"UPDATE {storage.quote(table_name + storage.SOFTDEL_SUFFIX)} "
+            f"SET is_deleted = 0, deleted_at = NULL "
+            f"WHERE {storage.quote(pk)} IN ({marks})",
+            ids,
+        )
+        record(tx, "restore", {
+            "trace_id": trace_id,
+            "user_input": user_input,
+            "table": table_name,
+            "affected_count": len(ids),
+            "affected_ids": ids,
+        })
     return len(ids)

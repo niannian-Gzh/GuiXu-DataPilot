@@ -26,8 +26,8 @@ import re
 
 import snapshot as snapshot_mod
 import storage
-from audit import log
-from runner import using
+from audit import record
+from runner import transaction, using
 from services import UserInputRequired
 
 
@@ -267,47 +267,38 @@ def execute_structure(pending: dict, trace_id: str, user_input: str) -> str:
     table = pending["table_name"]
 
     try:
-        if action == "create_table":
-            _run(lambda con: _do_create_table(con, pending))
-            # 建表后写中文名（如果有）
-        elif action == "add_column":
-            _run(lambda con: storage.add_column(con, table, pending["coldef"]))
-            if pending.get("label"):
-                using(lambda con: storage.set_note(con, table, pending["column"], pending["label"]))
-        elif action == "alter_column":
-            _run(lambda con: (
-                snapshot_mod.snapshot(con, table, "drop_column"),
-                storage.change_column_type(con, table, pending["column"], pending["new_type"]),
-            ))
-        elif action == "drop_column":
-            _run(lambda con: (
-                snapshot_mod.snapshot(con, table, "drop_column"),
-                storage.drop_column(con, table, pending["column"]),
-            ))
-        elif action == "drop_table":
-            _run(lambda con: snapshot_mod.drop_table(con, table))
-        elif action == "rollback":
-            _run(lambda con: snapshot_mod.rollback(con, pending["snapshot_id"]))
-        else:
-            raise ValueError(f"未知的结构动作：{action}")
+        # 整个结构变更 + 审计包在一个事务里：要么都成，要么都不成
+        with transaction() as tx:
+            if action == "create_table":
+                _do_create_table(tx, pending)
+            elif action == "add_column":
+                storage.add_column(tx, table, pending["coldef"])
+                if pending.get("label"):
+                    storage.set_note(tx, table, pending["column"], pending["label"])
+            elif action == "alter_column":
+                snapshot_mod.snapshot(tx, table, "drop_column")
+                storage.change_column_type(tx, table, pending["column"], pending["new_type"])
+            elif action == "drop_column":
+                snapshot_mod.snapshot(tx, table, "drop_column")
+                storage.drop_column(tx, table, pending["column"])
+            elif action == "drop_table":
+                snapshot_mod.drop_table(tx, table)
+            elif action == "rollback":
+                snapshot_mod.rollback(tx, pending["snapshot_id"])
+            else:
+                raise ValueError(f"未知的结构动作：{action}")
+
+            record(tx, "structure", {
+                "trace_id": trace_id, "user_input": user_input,
+                "table": table, "action": action,
+            })
     except Exception as e:
         return json.dumps(
             {"ok": False, "error": str(e), "error_type": "constraint"},
             ensure_ascii=False,
         )
 
-    log("structure", {
-        "trace_id": trace_id, "user_input": user_input,
-        "table": table, "action": action,
-    })
     return json.dumps({"ok": True, "table": table, "action": action}, ensure_ascii=False)
-
-
-def _run(fn):
-    """在一个事务里跑一串结构操作。"""
-    from runner import transaction
-    with transaction() as tx:
-        fn(tx)
 
 
 def _do_create_table(tx, pending):

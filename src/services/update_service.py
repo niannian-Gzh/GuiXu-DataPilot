@@ -15,8 +15,8 @@ import json
 import sqlite3
 
 import storage
-from audit import log
-from runner import execute, using
+from audit import record
+from runner import transaction, using
 from services import UserInputRequired, bulk_threshold, card_columns, card_records
 from services._filters import find_candidates
 
@@ -115,23 +115,26 @@ def execute_update(candidates, updates, table_name, trace_id, user_input):
     marks = ", ".join("?" * len(ids))
 
     try:
-        affected = execute(
-            f"UPDATE {storage.quote(table_name)} SET {set_clause} "
-            f"WHERE {storage.quote(pk)} IN ({marks})",
-            list(updates.values()) + ids,
-        )
+        with transaction() as tx:
+            before = tx.total_changes
+            tx.execute(
+                f"UPDATE {storage.quote(table_name)} SET {set_clause} "
+                f"WHERE {storage.quote(pk)} IN ({marks})",
+                list(updates.values()) + ids,
+            )
+            affected = tx.total_changes - before
+            # 审计和写入在同一个事务里：要么都成，要么都不成
+            record(tx, "update", {
+                "trace_id": trace_id, "user_input": user_input,
+                "table": table_name, "affected_count": affected,
+                "changes": updates, "affected_ids": ids,
+            })
     except sqlite3.IntegrityError as e:
         err = storage.translate(None, e)
         kind = "duplicate" if isinstance(err, storage.Duplicate) else "constraint"
         return json.dumps(
             {"ok": False, "error": str(err), "error_type": kind}, ensure_ascii=False
         )
-
-    log("update", {
-        "trace_id": trace_id, "user_input": user_input,
-        "table": table_name, "affected_count": affected,
-        "changes": updates, "affected_ids": ids,
-    })
     return json.dumps(
         {"ok": True, "table": table_name, "affected": affected,
          "changes": [{"field": k, "to": v} for k, v in updates.items()]},

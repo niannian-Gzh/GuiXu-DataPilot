@@ -2,7 +2,7 @@ import json
 from runner import query_df, transaction
 from nl2sql import generate_transform_sql
 from guard import check_transform_safety
-from audit import log
+from audit import record
 from services import UserInputRequired, jsonable
 from config import setting
 
@@ -131,14 +131,14 @@ def execute_transform(pending: dict, table_name: str,
 
     with transaction() as tx:
         tx.execute(update_sql)
-
-    log("transform", {
-        "trace_id": trace_id,
-        "user_input": user_input,
-        "table": table_name,
-        "update_sql": update_sql,
-        "affected_count": affected,
-    })
+        # 审计和写入在同一个事务里：要么都成，要么都不成
+        record(tx, "transform", {
+            "trace_id": trace_id,
+            "user_input": user_input,
+            "table": table_name,
+            "update_sql": update_sql,
+            "affected_count": affected,
+        })
     return json.dumps({
         "ok": True,
         "table": table_name,

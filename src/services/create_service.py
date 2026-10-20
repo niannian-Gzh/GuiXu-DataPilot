@@ -22,7 +22,7 @@ import json
 import sqlite3
 
 import storage
-from audit import log
+from audit import record
 from runner import transaction, using
 from services import UserInputRequired, bulk_threshold, card_records
 
@@ -135,6 +135,11 @@ def execute_create(records, table_name, trace_id, user_input):
                     f"VALUES ({', '.join('?' * len(cols))})"
                 )
                 tx.execute(sql, [r[c] for c in cols])
+            # 审计和写入在同一个事务里：要么都成，要么都不成
+            record(tx, "create", {
+                "trace_id": trace_id, "user_input": user_input,
+                "table": table_name, "affected_count": len(records),
+            })
     except sqlite3.IntegrityError as e:
         err = storage.translate(None, e)
         kind = "duplicate" if isinstance(err, storage.Duplicate) else "constraint"
@@ -142,11 +147,6 @@ def execute_create(records, table_name, trace_id, user_input):
             {"ok": False, "error": str(err), "error_type": kind},
             ensure_ascii=False,
         )
-
-    log("create", {
-        "trace_id": trace_id, "user_input": user_input,
-        "table": table_name, "affected_count": len(records),
-    })
     return json.dumps(
         {"ok": True, "table": table_name, "affected": len(records)},
         ensure_ascii=False,

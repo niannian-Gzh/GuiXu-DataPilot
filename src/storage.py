@@ -47,6 +47,7 @@ SOFTDEL_SUFFIX = "_all"
 
 META = "_gx_meta"          # 表中文名 + 列的中文说明
 REL = "_gx_relation"       # 字段 ↔ 字段的逻辑关联
+AUDIT = "_gx_audit"        # 业务凭据：谁、何时、改了什么
 
 
 # ============================================================ 连接
@@ -433,12 +434,15 @@ def repair(con: sqlite3.Connection) -> dict:
 # ============================================================ 表定义
 
 def ensure_meta(con: sqlite3.Connection) -> None:
-    """建两张 meta 表。幂等，每次开库都调它。
+    """建三张系统表。幂等，每次开库都调它。
 
-    **分两张不是一张**：表中文名和列说明是"一段话"，而关系是
-    "四个坐标"（本端表.列 ↔ 对端表.列 + 基数）。硬塞进一张
-    「kind / 谁 / 什么 / 文本」的表里，关系那几列只能压成 JSON 字符串——
-    那就等于把结构又还给了文本。
+    **分三张不是一张**：表中文名和列说明是"一段话"，关系是
+    "四个坐标"（本端表.列 ↔ 对端表.列 + 基数），审计是"一条流水"。
+    硬塞进一张「kind / 谁 / 什么 / 文本」的表里，结构和审计都只能
+    压成 JSON 字符串——那就等于把结构又还给了文本。
+
+    审计进库而不是追加文件：**它要和改库在同一个事务里**。
+    改成功但审计写失败 = 没账；审计写了但库没改 = 假账。
     """
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {META} ("
@@ -453,6 +457,16 @@ def ensure_meta(con: sqlite3.Connection) -> None:
         "  to_table   TEXT NOT NULL, to_column   TEXT NOT NULL,"
         "  cardinality TEXT NOT NULL DEFAULT '',"
         "  PRIMARY KEY (from_table, from_column, to_table, to_column))"
+    )
+    con.execute(
+        f"CREATE TABLE IF NOT EXISTS {AUDIT} ("
+        "  id         INTEGER PRIMARY KEY,"
+        "  at         TEXT NOT NULL,"
+        "  action     TEXT NOT NULL,"
+        "  trace_id   TEXT,"
+        "  user_input TEXT,"
+        "  tbl        TEXT,"
+        "  detail     TEXT)"             # 改动明细 / 影响行数，JSON
     )
 
 

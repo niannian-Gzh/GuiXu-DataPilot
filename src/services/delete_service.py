@@ -4,8 +4,8 @@ import re
 import storage
 from services import UserInputRequired, bulk_threshold, card_records
 from services._filters import find_candidates
-from audit import log
-from runner import execute, using
+from audit import record
+from runner import transaction, using
 
 
 CONFIRM_WORDS = {"确认", "确定", "是", "对", "好", "可以", "删", "删除", "删吧", "yes", "y", "ok"}
@@ -69,17 +69,20 @@ def execute_delete(candidates, table_name, trace_id, user_input):
         return 0
     ids = [c[pk] for c in candidates]
     marks = ",".join("?" * len(ids))
-    affected = execute(
-        f"DELETE FROM {storage.quote(table_name)} "
-        f"WHERE {storage.quote(pk)} IN ({marks})",
-        ids,
-    )
-
-    log("soft_delete", {
-        "trace_id": trace_id,
-        "user_input": user_input,
-        "table": table_name,
-        "affected_count": affected,
-        "affected_ids": ids,
-    })
+    with transaction() as tx:
+        before = tx.total_changes
+        tx.execute(
+            f"DELETE FROM {storage.quote(table_name)} "
+            f"WHERE {storage.quote(pk)} IN ({marks})",
+            ids,
+        )
+        affected = tx.total_changes - before
+        # 审计和写入在同一个事务里：要么都成，要么都不成
+        record(tx, "soft_delete", {
+            "trace_id": trace_id,
+            "user_input": user_input,
+            "table": table_name,
+            "affected_count": affected,
+            "affected_ids": ids,
+        })
     return affected

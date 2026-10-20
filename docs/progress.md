@@ -122,11 +122,27 @@ design 编排层 §四的五条账：
 - **解析失败不再一律拒绝**：关键字兜底（开头词 + 禁用词），判据是"这条语句想干什么"，不是"解析器认不认识它"
 - **`system=True` 特权旁路**：恢复已删行、清理回收站、导入比对、变换预览——它们本来就要碰底表和 `is_deleted`；旁路只跳过表名和系统列，语句类型照查
 
-## 下一步：横切层（2/3）
+**audit 进库 ✅** —— 审计从追加文件改成内部表 `_gx_audit`。
 
-**audit 进库** —— 现在 `audit.log` 追加写文件，改库成功但审计失败 = 没账。要改成内部表 `_gx_audit`，和改库同一个事务。
+| 动作 | 写法 |
+|---|---|
+| 增删改 / 恢复 / 变换 / 导入 / 结构变更 | `record(tx, ...)`，**和写入同一个事务** |
+| 导出 / 清理（没有事务可依附） | `log(action, detail)`，自己开连接包事务 |
 
-要动的：`audit.py`、六个服务的写入路径（create/update/delete/restore/transform/import）、`cleanup.py`。
+- `ensure_meta` 每次开连接都会建表（幂等），旧库不用迁移
+- 事务回滚时审计跟着回滚——实测验证
+- `_gx_audit` 不在 `list_tables` 里，模型看不见；要读它得走 `system=True`
+
+## 下一步：横切层（3/3）
+
+**设置页重分类** —— 用户偏好留下、内部参数搬进「开发者模式」；取消 `normal/advanced` 分级，改按用户会怎么找分组。
+
+参数增删改（design 横切层 §三）：
+
+- **删**：`llm.base_url` / `llm.model`（僵尸）、`env.DEEPSEEK_API_KEY`（与配置卡片重复）
+- **改名**：`display.max_llm_rows` → 读类返回行数上限；`compact_threshold` 已改成比例
+- **重定位**：`agent.tool_result_limit` → 界面展示上限
+- **新增**：快照保留期、快照自动清理开关
 
 ## 已知缺口（留给后面的层）
 

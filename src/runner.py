@@ -132,6 +132,15 @@ class _Handle:
     def __init__(self, con: sqlite3.Connection):
         self._con = con
 
+    @property
+    def total_changes(self) -> int:
+        """连接上的累计改动数。两次读数相减 = 这段操作实际改了几行。
+
+        和 `execute()` 同一个口径：视图的 INSTEAD OF 触发器里的改动，
+        游标的 rowcount 看不见，`total_changes` 看得见。
+        """
+        return self._con.total_changes
+
     def execute(self, sql: str, params=None, purpose: str | None = None):
         """事务内执行。
 

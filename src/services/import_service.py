@@ -28,7 +28,7 @@ import json
 import pandas as pd
 
 import storage
-from audit import log
+from audit import record
 from services import UserInputRequired, card_columns, card_records
 from runner import query_df, transaction, using
 
@@ -346,10 +346,11 @@ def execute_import(scan_result, rename_map, deleted_action, conflict_action,
                 )
                 restored += 1
 
-    log("import", {
-        "trace_id": trace_id, "user_input": user_input, "table": table_name,
-        "inserted": inserted, "updated": updated, "restored": restored,
-    })
+        # 审计和写入在同一个事务里：要么都成，要么都不成
+        record(tx, "import", {
+            "trace_id": trace_id, "user_input": user_input, "table": table_name,
+            "inserted": inserted, "updated": updated, "restored": restored,
+        })
     return json.dumps({
         "ok": True, "table": table_name,
         "inserted": inserted, "updated": updated, "restored": restored,
