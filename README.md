@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/guixu-mark.svg">
-    <img src="docs/brand/guixu-mark-dark.svg" alt="归墟" width="120">
+    <source media="(prefers-color-scheme: dark)" srcset="archive/brand/guixu-mark.svg">
+    <img src="archive/brand/guixu-mark-dark.svg" alt="归墟" width="120">
   </picture>
 </p>
 
@@ -57,7 +57,7 @@
 
 底层 34 题、Agent 层 15 题，覆盖布尔筛选、数值筛选、聚合、分组、组合条件、空结果、排序七类。
 
-> **正在按新架构重写。** 旧题库的期望值是对着当时那份测试数据硬算的——数据一变就全错。留下的是**题目与覆盖面**（见 [docs/eval-questions.md](docs/eval-questions.md)），重写后重新生成期望值。
+> **正在按新架构重写。** 旧题库的期望值是对着当时那份测试数据硬算的——数据一变就全错。留下的是**题目与覆盖面**（见 [archive/docs/eval-questions.md](archive/docs/eval-questions.md)），重写后重新生成期望值。
 
 ## 架构
 
@@ -133,7 +133,7 @@ uv run playwright install chromium
 DEEPSEEK_API_KEY=你的key
 ```
 
-`config.yaml` 只指定库文件放哪：
+`config.yaml` **可选**：不写就用默认值（库在 `data/guixu.db`），设置页保存参数时会自动生成。它只存你改过的东西，默认值只有 `settings_spec` 一个来源。要换库位置才需要手写它：
 
 ```yaml
 data:
@@ -197,7 +197,7 @@ SQLite 单文件。备份 = 复制一个文件。**没有要起、要停、要�
 
 ### 5. 数据字典只存"用户可改的"
 
-字段名、类型、必填是数据库的事实，从库里现读；中文含义是你的标注，存在 `schema_meta.json`。两者分开，数据库加列改类型时字典不会过期。同一个入口还兼作数据库概览页。
+字段名、类型、必填是数据库的事实，从库里现读；中文含义是你的标注，存在库里的 `_gx_meta` 表。两者分开，数据库加列改类型时字典不会过期。同一个入口还兼作数据库概览页。
 
 ### 6. 三层确认机制
 
@@ -235,7 +235,7 @@ SQLite 单文件。备份 = 复制一个文件。**没有要起、要停、要�
 
 ## 项目结构
 
-> 想知道**代码怎么分层**（每层负责什么、文件怎么归位），见 [docs/design.md](docs/design.md)。
+> 想知道**代码怎么分层**（每层负责什么、文件怎么归位），见 [archive/docs/design.md](archive/docs/design.md)。
 
 ```
 src/

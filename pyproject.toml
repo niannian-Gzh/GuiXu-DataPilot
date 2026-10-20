@@ -32,7 +32,7 @@ dependencies = [
 #   Linux    WebKitGTK（多数发行版有）
 # 所以这里只需要 pywebview 和它在各平台跟系统内核通话的桥。
 # 原来装的是 PySide6（自带 QtWebEngine），600 多 MB —— 而且实测它显示不了 PDF
-# （PdfViewerEnabled 枚举存在但渲染空白，那份构建没编进 PDFium）。见 docs/design.md 第六节。
+# （PdfViewerEnabled 枚举存在但渲染空白，那份构建没编进 PDFium）。见 archive/docs/design.md 第六节。
 desktop = [
     "pywebview>=5.0",
     "pythonnet>=3.0; sys_platform == 'win32'",

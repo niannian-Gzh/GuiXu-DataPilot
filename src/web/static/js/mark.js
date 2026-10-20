@@ -7,11 +7,11 @@
 
    填充一律 currentColor。它在开机动画里本来就是纯色的，
    工作台上也该是同一个东西：没有渐变，没有一处模糊半径
-   （见 docs/design-language.md 二章）。
+   （见 archive/docs/design-language.md 二章）。
 
    早先这版用的是「八片渐变 + 中心辉光」，那是照意象画的，
    不是照开机动画画的——两边摆在一起一眼就不像一家。
-   这类错我犯过两次，判据写在 docs/design-language.md 附二。
+   这类错我犯过两次，判据写在 archive/docs/design-language.md 附二。
 
    参数来源与逐版对比：.refs/notes/guixu-mark-5.html */
 

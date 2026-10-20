@@ -3,17 +3,18 @@
 secrets.json
 config.yaml
 configs.json
-schema_meta.json
 
 # ============ 本地数据与运行产物 ============
 data/*.db
-data/*.duckdb
 data/*.xlsx
 data/exports/
 data/reports/
 data/uploads/
 logs/*.jsonl
 logs/sessions/
+
+# ============ 存档里的旧数据（留着看，不进库）============
+archive/legacy/
 
 # ============ 工具产物 ============
 .playwright-mcp/

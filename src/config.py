@@ -17,9 +17,17 @@ _cache = {"mtime": None, "data": {}}
 
 
 def load_config() -> dict:
-    """直接读文件，不走缓存。"""
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    """直接读文件，不走缓存。
+
+    **文件不存在就是一张空配置**：所有参数落到 settings_spec 的默认值，
+    库落在 data/guixu.db。config.yaml 是「改过的参数」的存档，不是
+    启动的先决条件——第一次在设置页点保存时它才会被创建。
+    """
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except OSError:
+        return {}
 
 
 def get_config() -> dict:

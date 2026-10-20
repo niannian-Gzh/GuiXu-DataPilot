@@ -7,7 +7,7 @@
   ③ 空结果分支会不会崩（status: empty + 表里总行数）
 
 跑法：
-    PYTHONPATH=src uv run python eval/smoke_query.py
+    PYTHONPATH=src uv run python archive/eval/smoke_query.py
 
 会建一张 10 行的测试表，跑完删掉。
 """
@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 import config
