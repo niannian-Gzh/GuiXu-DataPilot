@@ -6,7 +6,8 @@
 
 - 确认类：执行结果 JSON（删了多少、改了多少、失败原因）
 - `ask_user`：`{ok: true, answer: "..."}`，答案本身就是结果
-- 取消：`{ok: false, error_type: "cancelled"}`，让模型知道用户拒绝了
+- 取消确认：`{ok: false, error_type: "cancelled"}`，让模型知道用户拒绝了
+- 跳过提问：**不续跑**——模型没有答案，续跑只会凑一段解释。这一轮到此为止
 
 两种例外仍然直接给用户、不续跑：
 - **确认没通过**（比如批量删除要求手打「删除 166 条」，用户打错了）——
@@ -57,6 +58,7 @@ def answer_pending(question: str, session, llm=None):
     - `"none"`   —— 不是对中断的回答，交给 agent 正常跑
     - `"done"`   —— payload 是直接给用户的一句话（不续跑，pending 保留）
     - `"resume"` —— payload 是工具返回的 JSON，调用方用它续跑
+    - `"skip"`   —— 用户跳过了提问：这一轮到此为止（清 pending，不调模型）
     """
     pending = session.get_pending()
     if not pending:
@@ -67,6 +69,12 @@ def answer_pending(question: str, session, llm=None):
                 "请重新发起原始请求。"
             )
         return "none", ""
+
+    # 跳过提问 ≠ 取消操作。取消删除要续跑一句"好的，没删"，模型知道
+    # 用户拒绝了；跳过提问时模型手里**没有答案**，续跑只会拿猜测或
+    # 一句解释凑一段回答。所以这一轮直接停在这里
+    if pending.get("type") == "ask" and delete_service.is_cancel(question):
+        return "skip", _cancelled("用户跳过了这次提问")
 
     if delete_service.is_cancel(question):
         return "resume", _cancelled()
@@ -91,6 +99,43 @@ def answer_pending(question: str, session, llm=None):
         return _handle_ask(question, pending)
 
     return "none", ""
+
+
+# 卡片上要留痕的字段。**内部字段一个都不存**——候选 id、扫描结果、
+# 断点片段这些是执行时才用的，存进会话文件除了撑大没有别的用处。
+# 卡片字段要全留着：设计里那张缩略卡"可点开回看当初的详情"，
+# 只留一个数字的话，展开就只剩空壳
+_CARD_FIELDS = (
+    "type", "table", "columns", "records", "affected",
+    "changes", "danger", "question", "options",
+)
+
+
+def settle(pending: dict, tool_result: str) -> dict:
+    """把一次中断的结局固定成可回看的记录。落进这一轮的用户消息（gx_confirms）。
+
+    **结局从工具的续体返回判，不从用户那句话猜**：取消统一是
+    `error_type: cancelled`，导入那种由模型解析出来的取消也在里面；
+    按输入猜的话，换个说法就漏了。
+    """
+    try:
+        result = json.loads(tool_result)
+    except (TypeError, ValueError):
+        result = {}
+
+    cancelled = result.get("error_type") == "cancelled"
+    if cancelled:
+        outcome = "cancelled"
+    elif pending.get("type") == "ask":
+        outcome = "answered"
+    else:
+        outcome = "executed"
+
+    record = {k: pending[k] for k in _CARD_FIELDS if k in pending}
+    record["outcome"] = outcome
+    if outcome == "answered":
+        record["answer"] = result.get("answer") or ""
+    return record
 
 
 def enrich_pending(pending: dict) -> dict:

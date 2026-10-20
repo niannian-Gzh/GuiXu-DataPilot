@@ -53,15 +53,35 @@ class Session:
     def add_user(self, text: str):
         self.messages.append({"role": "user", "content": text, "gx_at": _now()})
 
-    def add_assistant(self, text: str, tools: list = None, reasonings: list = None):
+    def add_assistant(self, text: str, tools: list = None, reasonings: list = None,
+                      notice: bool = False):
         """tools 是这一轮的工具调用记录，reasonings 是这一轮的思考链，
-        都只供界面回看，不发给模型。"""
+        都只供界面回看，不发给模型。
+
+        notice=True 表示这句话不是模型说的，是这一轮被迫停下的提示
+        （比如跳过提问）。内容照常进历史，但界面把它画成警告，不是正文。
+        """
         msg = {"role": "assistant", "content": text, "gx_at": _now()}
         if tools:
             msg["gx_tools"] = tools
         if reasonings:
             msg["gx_reasonings"] = reasonings
+        if notice:
+            msg["gx_notice"] = True
         self.messages.append(msg)
+
+    def add_confirm(self, record: dict):
+        """把一次中断的结局挂到本轮开头那条用户消息上。
+
+        为什么不挂在最终那条 assistant 上：续跑途中又中断时，assistant
+        那条还没写（`_end` 要到这一轮真正结束才调），这时刷新页面，
+        已经答过的那几张卡会一起消失。挂在用户消息上就没有这个空窗——
+        "这一轮里发生过什么"本来就该跟着这一轮的起点走。
+        """
+        for m in reversed(self.messages):
+            if m.get("role") == "user":
+                m.setdefault("gx_confirms", []).append(record)
+                return
 
     def get_history(self) -> list:
         """给模型的那一份：摘要 + **尚未被摘要的消息**。
@@ -94,7 +114,9 @@ class Session:
 
             lines = []
             for t in tools:
-                if t.get("security"):
+                if t.get("cancelled"):
+                    status = "已取消"
+                elif t.get("security"):
                     status = "被安全拒绝"
                 elif t.get("ok"):
                     status = "成功"

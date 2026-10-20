@@ -1086,8 +1086,25 @@ td .tag, .tag {
 }
 .confirm.resolved { background: none; }
 .confirm.resolved .confirm-head { border-bottom: none; }
-.confirm.resolved .confirm-body { display: none; }
 .confirm.resolved.cancelled .confirm-head { color: var(--muted); }
+/* 展开回看：确认类的缩略卡可以点开，候选 / 差异还在里面 */
+.confirm.resolved .confirm-head.foldable { cursor: pointer; }
+.confirm.resolved .confirm-head.foldable:hover .fold { color: var(--ink); }
+.confirm.resolved .fold {
+  width: 14px; height: 14px; flex: none; margin-left: 2px;
+  color: var(--faint); transition: transform .18s ease;
+}
+.confirm.resolved .fold.open { transform: rotate(180deg); }
+/* 已解决的 ask：问题本身。标题只说"已回答"，光有答案看不出在回答什么 */
+.confirm-question {
+  padding: 0 14px 6px; font-size: 12.5px; line-height: 1.75;
+  color: var(--ink); letter-spacing: .03em;
+}
+/* 跳过的 ask 没有答案行，问题就是卡片的最后一行——补一点底，
+   别让下一句回答看起来像卡片里的内容 */
+.confirm.resolved.cancelled .confirm-question {
+  color: var(--muted); padding-bottom: 12px;
+}
 .confirm-head {
   display: flex; align-items: center; gap: 9px;
   padding: 12px 14px; border-bottom: 1px solid var(--hair-soft);
@@ -1165,6 +1182,16 @@ td .tag, .tag {
 
 /* ---------- 12.8 回答正文 ---------- */
 /* md() 渲染出来的东西。字号跟 .turn-text 走，别另起一档 */
+/* 中断提示：不是模型说的话，是这一轮停下的状态。
+   所以它不按正文排版，用警告色和一块浅底把它和回答分开 */
+.turn-notice {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 15px; padding: 11px 14px;
+  background: var(--warn-dim); border-radius: var(--r-box);
+  font-size: 12px; letter-spacing: .04em; color: var(--warn);
+}
+.turn-notice svg { width: 14px; height: 14px; flex: none; }
+
 .prose { font-size: 14.5px; line-height: 1.88; letter-spacing: .015em; color: var(--ink); word-break: break-word; }
 .prose > * + * { margin-top: 11px; }
 .prose h1, .prose h2, .prose h3, .prose h4 {

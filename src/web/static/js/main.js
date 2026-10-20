@@ -2,7 +2,7 @@ import {
   SQL_WORDS,
   escapeHtml, strongify, md, safeParse, prettyJson, highlightSql,
   fmtVal, shortTime, stamp, clockTime, toolGist, makeThinkNode, thinkGist,
-  confirmColumns, confirmTitle, buildConfirm,
+  confirmColumns, confirmTitle, buildConfirm, settleConfirm,
 } from './utils.js';
 import * as api from './api.js';
 import { dict, fmt } from './i18n.js';
@@ -613,11 +613,18 @@ createApp({
           turn.stage = '';
           // 触发确认的那个工具没返回结果，停在"待确认"而不是一直转
           turn.tools.forEach((t) => { if (t.state === 'run') t.state = 'wait'; });
-          turn.confirm = buildConfirm(ev.pending);
+          // 一轮里可以中断多次（先问口径、再确认删除）。每来一次挂一个，
+          // 不覆盖——上一张已经答过的卡还要留在对话流里
+          turn.confirms.push(buildConfirm(ev.pending));
           break;
 
         case 'answer':
           turn.answer = ev.content || '';
+          break;
+
+        // 这一轮被中断时留的警告。不是模型说的，别混进正文
+        case 'notice':
+          turn.notice = ev.content || '';
           break;
 
         case 'error':
@@ -665,7 +672,7 @@ createApp({
 
       turns.value.push({
         question: q, askedAt: stamp(),
-        tools: [], artifacts: [], answer: '', stage: '',
+        tools: [], artifacts: [], confirms: [], answer: '', stage: '',
       });
 
       /* 必须从 turns.value 取回代理再往下传。
@@ -688,21 +695,22 @@ createApp({
       send();
     };
 
-    const answerConfirm = async (ti, text) => {
+    const answerConfirm = async (ti, ci, text) => {
       const turn = turns.value[ti];
-      if (!turn || !turn.confirm || busy.value) return;
+      const card = turn && turn.confirms[ci];
+      if (!card || busy.value) return;
 
       const cancelled = text === '取消';
-      const isAsk = turn.confirm.kind === 'ask';
+      const isAsk = card.kind === 'ask';
 
-      turn.confirm.resolved = true;
-      turn.confirm.cancelled = cancelled;
+      card.resolved = true;
+      card.cancelled = cancelled;
 
       if (isAsk && !cancelled) {
-        turn.confirm.answer = text;
-        turn.confirm.verdict = `已回答：${text}`;
+        card.answer = text;
+        card.verdict = `已回答：${text}`;
       } else {
-        turn.confirm.verdict = cancelled ? '任务已被终止' : '正在执行…';
+        card.verdict = cancelled ? '任务已被终止' : '正在执行…';
       }
 
       // 挂起的那次调用不会单独发 tool_result——它没有返回，答案就是
@@ -723,13 +731,7 @@ createApp({
 
       // 续跑后模型会给出自己的回答，那是正文（prose），不是卡片的终态。
       // 这里只记一句结果，卡片保持一行——把它塞进 verdict 就糊了
-      if (cancelled) {
-        turn.confirm.verdict = isAsk ? '已跳过' : '任务已被终止';
-      } else if (isAsk) {
-        turn.confirm.verdict = `已回答：${turn.confirm.answer}`;
-      } else {
-        turn.confirm.verdict = '已执行';
-      }
+      settleConfirm(card, cancelled, card.answer || '');
     };
 
 
@@ -763,11 +765,18 @@ createApp({
         if (m.role === 'user') {
           cur = {
             question: m.content, askedAt: m.gx_at || '',
-            tools: [], artifacts: [], answer: '', stage: '',
+            tools: [], artifacts: [], confirms: [], answer: '', stage: '',
           };
+          // 这一轮里经过的中断，终态记录挂在用户那条上（见 session.add_confirm）。
+          // 记录本身就是 buildConfirm 要的形状，加上 outcome / answer 就是终态卡
+          if (m.gx_confirms) {
+            cur.confirms = m.gx_confirms.map((r) => buildConfirm(r, r));
+          }
           out.push(cur);
         } else if (m.role === 'assistant' && cur) {
-          cur.answer = m.content;
+          // 中断提示不是正文（见 session.add_assistant 的 notice）
+          if (m.gx_notice) cur.notice = m.content;
+          else cur.answer = m.content;
           cur.answeredAt = m.gx_at || '';
 
           // 思考链和工具是两条独立记录，各自带轮次，合起来按轮次排。
@@ -803,7 +812,8 @@ createApp({
               callId: '',
               name: t.name,
               args: t.args || {},
-              state: t.security ? 'warn' : (t.ok ? 'ok' : 'err'),
+              // 取消不是失败：回放时画成灰色，和实时那一行一致
+              state: t.cancelled ? 'cancel' : (t.security ? 'warn' : (t.ok ? 'ok' : 'err')),
               open: false,
               ms: t.ms,
               raw: legacyRaw,
@@ -836,8 +846,10 @@ createApp({
         // 不重建的话，用户看不到确认入口，下一条消息会被当成"确认"吞掉
         if (data.pending) {
           const lastTurn = turns.value[turns.value.length - 1];
-          if (lastTurn && !lastTurn.confirm) {
-            lastTurn.confirm = buildConfirm(data.pending);
+          // 同一条 pending 重复加载时会多画一张，先看它是不是已经挂上了
+          const attached = lastTurn && lastTurn.confirms.some((c) => !c.resolved);
+          if (lastTurn && !attached) {
+            lastTurn.confirms.push(buildConfirm(data.pending));
           }
         }
 

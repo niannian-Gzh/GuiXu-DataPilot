@@ -82,17 +82,26 @@ export default {
     Vue.onMounted(() => document.addEventListener('click', onDocClick));
     Vue.onUnmounted(() => document.removeEventListener('click', onDocClick));
 
-    /* 当前未解决的中断。中断是串行的——中断了就停，不会攒，
-       所以最多一个。从 turns 派生，不另存一份状态：另存就要在
-       新建会话、刷新、续跑三处都记得同步，迟早漏一处 */
+    /* 当前未解决的中断。中断是串行的——中断了就停，所以任意时刻
+       最多一个未解决；但**一轮里可以有好几张**（答完一个又中断一次）。
+       从 turns 派生，不另存一份状态：另存就要在新建会话、刷新、续跑
+       三处都记得同步，迟早漏一处 */
     const activeConfirm = Vue.computed(() => {
       const list = store.turns.value;
       for (let i = list.length - 1; i >= 0; i--) {
-        const c = list[i].confirm;
-        if (c && !c.resolved) return { ti: i, confirm: c };
+        const cards = list[i].confirms || [];
+        for (let j = 0; j < cards.length; j++) {
+          if (!cards[j].resolved) return { ti: i, ci: j, confirm: cards[j] };
+        }
       }
       return null;
     });
+
+    /* 已解决的确认卡可以点开回看当初的候选 / 差异（design 交互层 §二）。
+       ask 没有可展开的东西——问题和答案都已经在卡上了 */
+    const toggleConfirm = (c) => {
+      if (c.kind === 'confirm') c.open = !c.open;
+    };
 
     // ask 和手打确认都要输入框；普通确认卡片只要两个按钮
     const needsInput = (c) => c.kind === 'ask' || c.confirm_mode === 'typed';
@@ -102,12 +111,12 @@ export default {
 
     const submitFree = (box) => {
       const v = (box.confirm.free_input || '').trim();
-      if (v) store.answerConfirm(box.ti, v);
+      if (v) store.answerConfirm(box.ti, box.ci, v);
     };
 
     return {
       ...store, i18n: t, today, tries, pickOpen, pickWrap, openPick, pickModel,
-      activeConfirm, needsInput, inputHint, submitFree,
+      activeConfirm, needsInput, inputHint, submitFree, toggleConfirm,
     };
   },
   template: `
@@ -346,100 +355,78 @@ export default {
           </div>
 
           <!-- 已解决的中断在对话流里留一行缩略——它是"发生过什么"的记录。
+               一轮里可以有好几张（先问口径、再确认删除），所以是一串。
                **未解决的不在这儿**：所有要你回应的东西都在底部弹窗，
                位置固定，不用在对话流里找（design 交互层 §二） -->
-          <div v-if="t.confirm && t.confirm.resolved" class="confirm resolved"
-               :class="{cancelled: t.confirm.cancelled}">
-            <div class="confirm-head">
-              <span class="dot">
-                <svg v-if="t.confirm.cancelled" viewBox="0 0 24 24" fill="none"
-                     stroke="currentColor" stroke-width="3.2" stroke-linecap="round"
-                     stroke-linejoin="round">
-                  <line x1="7" y1="12" x2="17" y2="12"></line>
+          <template v-for="(c, ci) in t.confirms" :key="'c' + ci">
+            <div v-if="c.resolved" class="confirm resolved"
+                 :class="{cancelled: c.cancelled}">
+              <div class="confirm-head" :class="{foldable: c.kind === 'confirm'}"
+                   @click="toggleConfirm(c)">
+                <span class="dot">
+                  <svg v-if="c.cancelled" viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" stroke-width="3.2" stroke-linecap="round"
+                       stroke-linejoin="round">
+                    <line x1="7" y1="12" x2="17" y2="12"></line>
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" stroke-width="3" stroke-linecap="round"
+                       stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                </span>
+                {{ confirmTitle(c) }}
+                <span class="tag" v-if="c.scope">{{ c.scope }}</span>
+                <!-- 确认类可以点开回看候选 / 差异；ask 没有可展开的东西 -->
+                <svg v-if="c.kind === 'confirm'" class="fold" :class="{open: c.open}"
+                     viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                     stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m4 6 4 4 4-4"></path>
                 </svg>
-                <svg v-else-if="t.confirm.resolved" viewBox="0 0 24 24" fill="none"
-                     stroke="currentColor" stroke-width="3" stroke-linecap="round"
-                     stroke-linejoin="round">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-                  <line x1="12" y1="9" x2="12" y2="13"></line>
-                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                </svg>
-              </span>
-              {{ confirmTitle(t.confirm) }}
-              <span class="tag" v-if="t.confirm.scope">{{ t.confirm.scope }}</span>
-            </div>
-
-            <div class="confirm-body">
-              <!-- 候选清单 -->
-              <div class="cands" v-if="t.confirm.rows && t.confirm.rows.length">
-                <table>
-                  <thead>
-                    <tr><th v-for="c in confirmColumns(t.confirm)" :key="c">{{ c }}</th></tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="(r, ri) in t.confirm.rows" :key="ri">
-                      <td v-for="c in confirmColumns(t.confirm)" :key="c">{{ r[c] ?? '—' }}</td>
-                    </tr>
-                  </tbody>
-                </table>
               </div>
 
-              <!-- 改写对照 -->
-              <div v-if="t.confirm.diffs && t.confirm.diffs.length">
-                <div class="diff-row" v-for="(d, di) in t.confirm.diffs" :key="di">
-                  <div class="diff-field">{{ d.field }}</div>
-                  <div class="diff-vals">
-                    <span class="diff-from">{{ d.from ?? '空' }}</span>
-                    <span class="diff-arrow">→</span>
-                    <span class="diff-to">{{ d.to }}</span>
+              <!-- ask：标题只说"已回答"，问的是什么在这儿 -->
+              <div class="confirm-question" v-if="c.kind === 'ask'">{{ c.question }}</div>
+
+              <!-- 只有 ask 需要这一行：答案在这儿。
+                   确认卡片的终态 head 已经说完了，再来一行"已执行"是重复。
+                   跳过的 ask 也不画：head 已经写着"已跳过"，没有答案可补 -->
+              <div class="confirm-verdict" v-if="c.kind === 'ask' && !c.cancelled">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                {{ c.verdict }}
+              </div>
+
+              <!-- 展开：当初要动的是哪几条、字段怎么改 -->
+              <div class="confirm-body" v-if="c.kind === 'confirm' && c.open">
+                <div class="cands" v-if="c.rows && c.rows.length">
+                  <table>
+                    <thead>
+                      <tr><th v-for="col in confirmColumns(c)" :key="col">{{ col }}</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(r, ri) in c.rows" :key="ri">
+                        <td v-for="col in confirmColumns(c)" :key="col">{{ r[col] ?? '—' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div v-if="c.diffs && c.diffs.length">
+                  <div class="diff-row" v-for="(d, di) in c.diffs" :key="di">
+                    <div class="diff-field">{{ d.field }}</div>
+                    <div class="diff-vals">
+                      <span class="diff-from">{{ d.from ?? '空' }}</span>
+                      <span class="diff-arrow">→</span>
+                      <span class="diff-to">{{ d.to }}</span>
+                    </div>
                   </div>
                 </div>
               </div>
-
-              <div class="confirm-note" v-if="t.confirm.note">{{ t.confirm.note }}</div>
-
-              <div class="confirm-actions" v-if="!t.confirm.resolved">
-                <button class="btn" @click="answerConfirm(ti, '取消')"
-                        :disabled="busy">{{ i18n.cancel }}</button>
-
-                <!-- 大批量：必须手动输入含数量的确认文本。这是最后一道闸门 -->
-                <template v-if="t.confirm.confirm_mode === 'typed'">
-                  <input class="typed-confirm" v-model="t.confirm.typed_input"
-                         :placeholder="'请输入「' + t.confirm.confirm_hint + '」'"
-                         :disabled="busy"
-                         @keydown.enter.prevent="
-                           t.confirm.typed_input.trim()
-                             && answerConfirm(ti, t.confirm.typed_input)">
-                  <button class="btn" :class="t.confirm.danger ? 'danger' : 'solid'"
-                          @click="answerConfirm(ti, t.confirm.typed_input)"
-                          :disabled="busy || !t.confirm.typed_input.trim()">
-                    执行
-                  </button>
-                </template>
-
-                <button v-else class="btn" :class="t.confirm.danger ? 'danger' : 'solid'"
-                        @click="answerConfirm(ti, t.confirm.confirm_hint)"
-                        :disabled="busy">
-                  {{ t.confirm.verb }}
-                </button>
-              </div>
             </div>
-
-            <!-- 只有 ask 需要这一行：head 只说"已回答"，答案在这儿。
-                 确认卡片的终态 head 已经说完了，再来一行"已执行"是重复 -->
-            <div class="confirm-verdict"
-                 v-if="t.confirm.resolved && t.confirm.kind === 'ask'">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
-                   stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-              {{ t.confirm.verdict }}
-            </div>
-          </div>
+          </template>
 
           <!-- 产物卡。和右栏的 .art 是同一件事的两个粒度：
                那边是清单，这边是「这一轮产出了它」 -->
@@ -472,8 +459,19 @@ export default {
                卡片那头只留一行终态，两者不重复 -->
           <div class="prose" v-if="t.answer" v-html="md(t.answer)"></div>
 
+          <!-- 这一轮被中断：不是回答，是一条状态提示 -->
+          <div class="turn-notice" v-if="t.notice">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+              <line x1="12" y1="9" x2="12" y2="13"></line>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+            {{ t.notice }}
+          </div>
+
           <!-- 等待中 -->
-          <div v-if="ti === turns.length - 1 && busy && !t.answer" class="thinking">
+          <div v-if="ti === turns.length - 1 && busy && !t.answer && !t.notice" class="thinking">
             <i></i><i></i><i></i>
           </div>
         </div>
@@ -568,7 +566,7 @@ export default {
              v-if="activeConfirm.confirm.kind === 'ask' && activeConfirm.confirm.options.length">
           <button v-for="(o, oi) in activeConfirm.confirm.options" :key="oi"
                   class="ask-opt" :disabled="busy"
-                  @click="answerConfirm(activeConfirm.ti, o)">{{ o }}</button>
+                  @click="answerConfirm(activeConfirm.ti, activeConfirm.ci, o)">{{ o }}</button>
         </div>
 
         <!-- 确认卡片：候选清单 -->
@@ -608,7 +606,7 @@ export default {
                @keydown.enter.prevent="submitFree(activeConfirm)">
 
         <div class="confirm-actions">
-          <button class="btn" @click="answerConfirm(activeConfirm.ti, '取消')"
+          <button class="btn" @click="answerConfirm(activeConfirm.ti, activeConfirm.ci, '取消')"
                   :disabled="busy">{{ i18n.cancel }}</button>
 
           <!-- ask：自由输入 → 发送 -->
@@ -627,7 +625,7 @@ export default {
           <button v-else class="btn"
                   :class="activeConfirm.confirm.danger ? 'danger' : 'solid'"
                   :disabled="busy"
-                  @click="answerConfirm(activeConfirm.ti, activeConfirm.confirm.confirm_hint)">
+                  @click="answerConfirm(activeConfirm.ti, activeConfirm.ci, activeConfirm.confirm.confirm_hint)">
             {{ activeConfirm.confirm.verb }}
           </button>
         </div>

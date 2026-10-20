@@ -139,13 +139,28 @@ export const thinkGist = (text) =>
   String(text || '').replace(/\s+/g, ' ').trim().slice(0, 70);
 
 export const confirmColumns = (c) => (c.rows && c.rows.length ? Object.keys(c.rows[0]) : []);
+
+/* 标题只说**状态**，做了什么由旁边的 scope 标签交代。
+   以前标题里已经带了 scope（「删除 3 条记录 · 已执行」），标签又写一遍，
+   同一句话在头里出现两次 */
 export const confirmTitle = (c) => {
   if (c.kind === 'ask') {
     if (!c.resolved) return '等你回答';
     return c.cancelled ? '已跳过' : '已回答';
   }
-  if (!c.resolved) return c.scope + ' · 等待确认';
-  return c.scope + ' · ' + (c.cancelled ? '已终止' : '已执行');
+  if (!c.resolved) return '等待确认';
+  return c.cancelled ? '已终止' : '已执行';
+};
+
+/* 卡片的终态只在这里定。实时（answerConfirm）和历史回放（buildConfirm）
+   各写一份的话，同一次操作刷新前后会显示成两种说法 */
+export const settleConfirm = (c, cancelled, answer = '') => {
+  c.resolved = true;
+  c.cancelled = !!cancelled;
+  c.answer = answer;
+  c.verdict = c.kind === 'ask'
+    ? (c.cancelled ? '已跳过' : `已回答：${answer}`)
+    : (c.cancelled ? '任务已被终止' : '已执行');
 };
 
 /* ---------------- 确认卡片构造 ---------------- */
@@ -181,7 +196,7 @@ const CONFIRM_NOTE = {
                 + '要改口径请直接在输入框说明，例如「导入，并恢复已删除的记录」。',
 };
 
-export const buildConfirm = (pending) => {
+export const buildConfirm = (pending, settled = null) => {
   const type = pending.type;
   const n = pending.affected ?? (pending.records ? pending.records.length : 0);
 
@@ -189,7 +204,7 @@ export const buildConfirm = (pending) => {
   // 它和确认卡片是**同一种中断**——都是「工具挂起，等用户一句话」，
   // 只是 payload 不同（design 工具层 §二）
   if (type === 'ask') {
-    return {
+    const card = {
       kind: 'ask',
       resolved: false,
       verdict: '',
@@ -197,11 +212,16 @@ export const buildConfirm = (pending) => {
       question: pending.question || '',
       options: Array.isArray(pending.options) ? pending.options.slice(0, 3) : [],
       free_input: '',
+      open: false,
       danger: false,
       scope: '提问',
       verb: '发送',
       note: '',
     };
+    if (settled) {
+      settleConfirm(card, settled.outcome === 'cancelled', settled.answer || '');
+    }
+    return card;
   }
 
   const c = {
@@ -212,6 +232,8 @@ export const buildConfirm = (pending) => {
     diffs: null,
     // ask 和手打确认共用这个自由输入框，只是提示语不同
     free_input: '',
+    // 已解决的卡片可以展开回看候选 / 差异（design 交互层 §二）
+    open: false,
     confirm_mode: pending.confirm_mode || 'simple',
     confirm_hint: pending.confirm_hint || '确认',
     danger: !!pending.danger,
@@ -243,5 +265,7 @@ export const buildConfirm = (pending) => {
     }));
   }
 
+  // settled 是会话文件里那条终态记录（见 pending_service.settle）
+  if (settled) settleConfirm(c, settled.outcome === 'cancelled');
   return c;
 };

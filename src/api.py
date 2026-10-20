@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from llm import LLM
 from session import Session
-from agent import run_agent
+from agent import run_agent, resume_entry
 from trace import Trace
 from config import (
     load_config, resolve, resolve_db_path, PROJECT_ROOT, CONFIG_PATH,
@@ -401,7 +401,27 @@ def chat(req: ChatRequest):
                         "这次操作挂起时没有留下断点，无法接着执行。请重新发起。"
                     )
 
-                if action == "resume":
+                if action == "skip":
+                    # 跳过提问：这一轮停在中断处，不再调模型。
+                    # 记结局、清挂起，留一条警告——它不是模型说的
+                    session.add_confirm(pending_service.settle(pending, payload))
+                    session.clear_pending()
+                    # 这一轮已经调过的工具，加上挂起这次（ask_user），
+                    # 都要留在记录里，否则刷新后工具行全没了
+                    resume = pending.get("resume") or {}
+                    tools = list(resume.get("tool_log") or [])
+                    if resume.get("call"):
+                        tools.append(resume_entry(resume, payload))
+                    notice = "已取消工具调用，任务已中断"
+                    session.add_assistant(
+                        notice, notice=True, tools=tools,
+                        reasonings=resume.get("reasoning_log"),
+                    )
+                    sink({"type": "notice", "content": notice})
+                elif action == "resume":
+                    # 结局先落盘，再续跑：续跑途中又中断时，这一张卡
+                    # 也已经在会话里了（见 Session.add_confirm）
+                    session.add_confirm(pending_service.settle(pending, payload))
                     session.clear_pending()
                     run_agent(
                         req.question, session, _state["llm"], trace,

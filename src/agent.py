@@ -83,7 +83,11 @@ def _tool_evidence(result_str: str) -> dict:
     if not isinstance(data, dict):
         return {}
 
-    if data.get("ok") is False:
+    if data.get("error_type") == "cancelled":
+        # 取消不是失败。模型回看时看到「失败」会以为自己写错了什么；
+        # 状态栏已经写着「已取消」，要点就不用再重复一遍
+        gist = ""
+    elif data.get("ok") is False:
         gist = "失败：" + str(data.get("error") or "")[:60]
     else:
         bits = []
@@ -108,6 +112,32 @@ def _tool_evidence(result_str: str) -> dict:
     }
     # 空值不落盘：每条都带一堆 "" 和 null，文件平白多一截
     return {k: v for k, v in evidence.items() if v not in ("", None)}
+
+
+def resume_entry(resume: dict, tool_result: str) -> dict:
+    """续跑时补上**挂起的那次工具调用**。
+
+    它在 dispatch 返回之前就挂了，`tool_log.append` 永远走不到。实时
+    界面上那一行是前端把「待确认」改成「成功 / 已取消」画出来的，
+    刷新之后就没了——同一轮里卡片还在，工具行却少一条。
+    """
+    try:
+        cancelled = json.loads(tool_result).get("error_type") == "cancelled"
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        cancelled = False
+
+    entry = {
+        "round": resume.get("round", 0),
+        "name": resume["call"]["name"],
+        "args": resume.get("args") or {},
+        "ok": _is_success(tool_result),
+        "security": _is_security_error(tool_result),
+        **_tool_evidence(tool_result),
+    }
+    # 用户取消不是「失败」：回放时画成灰色「已取消」，不是红色错误
+    if cancelled:
+        entry["cancelled"] = True
+    return entry
 
 
 def _emit(sink, type_: str, **payload):
@@ -198,6 +228,9 @@ def run_agent(user_input: str, session, llm, trace,
     success_counts = {}
     failure_counts = {}
     tool_log = list(resume.get("tool_log") or []) if resume else []
+    if resume and resume.get("call"):
+        # 挂起的那次调用，结局就是这次的续体结果
+        tool_log.append(resume_entry(resume, tool_result))
     reasoning_log = list(resume.get("reasoning_log") or []) if resume else []
 
     def _end(text: str) -> str:
@@ -293,6 +326,9 @@ def run_agent(user_input: str, session, llm, trace,
                         e.pending_action["resume"] = {
                             "messages": messages[segment_start:],
                             "call": {"id": tc.id, "name": name},
+                            # 参数也存下来：续跑后要把它补进工具记录，
+                            # 没有参数那一行回放出来就是空的
+                            "args": args or {},
                             # 同一批里排在它后面的工具，续跑时补一条「未执行」
                             "skipped": [c.id for c in msg.tool_calls[ci + 1:]],
                             "tool_log": tool_log,
