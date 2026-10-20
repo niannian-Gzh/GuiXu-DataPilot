@@ -242,6 +242,12 @@ export default {
   <template v-else>
     <div class="stage-head">
       <div class="stage-bar">
+        <!-- 顶栏没了，返回对话的入口挪到这儿 -->
+        <button class="rail-icon" @click="goChat" title="返回对话">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M10 3 5 8l5 5"/>
+          </svg>
+        </button>
         <span class="stage-title">{{ t.settings }}</span>
         <div class="stage-meta">
           <span class="t-meta" v-if="dirtyCount">{{ dirtyCount }} 项未保存</span>

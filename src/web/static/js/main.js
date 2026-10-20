@@ -269,10 +269,6 @@ createApp({
     const goSchema = guarded(goSchemaRaw);
     const newSession = guarded(newSessionRaw);
 
-    /* 从设置 / 数据字典退回对话。顶栏那个按钮和左栏点会话都走它
-       （前者直接调，后者在 openSession 内部顺手把 view 摆回来） */
-    const leaveView = () => { if (view.value !== 'chat') goChat(); };
-
     const saveSettings = async () => {
       if (!dirtyCount.value || saving.value) return;
       saving.value = true;
@@ -993,7 +989,7 @@ createApp({
       leaveGuard,
       allGroups, isLocalGroup, activeGroupParams, activeGroupDesc,
       dirty, groupDirty, dirtyCount, editValue, onEdit, resetField,
-      discardDraft, loadSettings, goSettings, goChat, goSchema, saveSettings, leaveView,
+      discardDraft, loadSettings, goSettings, goChat, goSchema, saveSettings,
 
       // 模型配置
       providers, configs, activeId, currentModel, editor, formModels, formState,
@@ -1034,27 +1030,14 @@ createApp({
        不管你打开哪个会话、切到哪一屏，上面都一样。
        「已就绪」不在这儿——它是「你要不要发这句话」的读数，
        归输入区（见 ChatView 的 .hint） -->
-  <header class="rail">
+  <!-- 品牌区只占左栏顶部，不是一条横贯全宽的顶栏。
+       产物开关搬进了工作区的页签行；设置/字典页的返回也搬进了各自的 stage-bar -->
+  <header class="rail" :class="{shut: leftShut}">
     <div class="mark">${guixuMark()}</div>
-    <div class="brand">归墟</div>
-    <div class="brand-sub">数据处理 Agent</div>
-    <div class="rail-sp"></div>
-    <!-- 这个位置常驻，但按当前是哪一屏换身份：
-         对话页它是产物栏的开关（产物栏只在对话页存在）；
-         设置 / 数据字典页它是退出——那两屏没有产物栏可收，
-         在同一个位置留一个按不动的开关，不如换成一扇能走的门 -->
-    <button v-if="view === 'chat'" class="rail-icon"
-            @click="toggleRail" title="显示或隐藏产物栏">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
-        <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
-        <path d="M8.5 1.5v4h4"/>
-      </svg>
-    </button>
-    <button v-else class="rail-icon" @click="leaveView" title="返回对话">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
-        <path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/>
-      </svg>
-    </button>
+    <div class="rail-text">
+      <div class="brand">归墟</div>
+      <div class="brand-sub">数据处理 Agent</div>
+    </div>
   </header>
 
   <!-- 三栏。线在栏上，不在栏之间——所以左栏收起时线也跟着走。

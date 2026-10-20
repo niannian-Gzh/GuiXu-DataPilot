@@ -129,6 +129,7 @@ body {
 /* 工作台是一块【浮在暗底上的面板】。这一圈 8px 和那个圆角，
    是让「面」成立的最低代价 */
 .app {
+  position: relative;           /* 品牌区绝对定位在左栏顶部 */
   display: flex; flex-direction: column;
   height: calc(100vh - 16px); margin: 8px;
   background: var(--side);
@@ -138,19 +139,83 @@ body {
   overflow: hidden;
 }
 
-/* 顶部状态带：品牌 + 功能按钮。它只承载「这个应用是什么」，
-   不承载任何会变的读数——「已就绪」在输入区（见 .hint）。
-   41px 是压过 5px 的高度：46 的时候它读起来是一条"带子"，
-   压到 41 才退成一道"边"。左栏内容跟着往上走（它们在同一个 flex 里） */
+/* 品牌区：**只占左栏顶部**，不再是一条横贯全宽的顶栏。
+   工作区因此能从应用顶端开始，不用先让出一条带子。
+   图标在最左、跨两行；两行文字左对齐——和左栏下面的导航共用一条左边距。
+
+   64px 是图标 34 + 上下各 15 的呼吸；比原来的 41 高，
+   但它只占左栏，不挤压工作区。 */
 .rail {
-  display: flex; align-items: center; gap: 14px; flex: none;
-  height: 41px; padding: 0 18px;
+  position: absolute; top: 0; left: 0; z-index: 3;
+  width: 240px; height: 64px;
+  padding: 0 23px;
+  display: flex; align-items: center; gap: 11px;
   background: var(--side);
+}
+
+/* 文字两行竖排。用 flex 而不是 grid：grid 的行高会被跨两行的图标
+   拉扯，两行会贴到一起；这里间距由 margin 说了算 */
+.rail-text { display: flex; flex-direction: column; justify-content: center; }
+
+/* 左栏收起时品牌区跟着走——它不属于工作区 */
+.rail.shut { display: none; }
+
+/* 分隔线：两端渐隐。中间用最弱那档线，两端各留 22% 淡出——
+   硬线会把左栏切成两段，渐隐只提示「这里是两块」 */
+.rail::after {
+  content: '';
+  position: absolute; left: 23px; right: 23px; bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent,
+    var(--hair-soft) 22%,
+    var(--hair-soft) 78%,
+    transparent);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0% 100%;
+}
+
+/* 中心光点：加载时先亮一下，撑开、淡出——线看起来是「从点里长出来的」 */
+.rail::before {
+  content: '';
+  position: absolute; left: 50%; bottom: -1px;
+  width: 44px; height: 3px;
+  transform: translateX(-50%);
+  background: radial-gradient(closest-side, rgba(255, 255, 255, .42), transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 用 background-size 展开，不用 scaleX：scaleX 会把渐变一起拉长，
+   展开过程中两端是硬切口；background-size 相对线本身计算，
+   两端一路保持渐隐。节奏沿用 .void-rule 的 .9s + --ease。 */
+/* 挂载时播一次，不需要额外的触发类 */
+.rail::after { animation: rail-line-in .9s var(--ease) both .1s; }
+.rail::before { animation: rail-spark .7s ease-out both; }
+
+@keyframes rail-line-in {
+  to { background-size: 100% 100%; }
+}
+
+@keyframes rail-spark {
+  0%   { opacity: 0; transform: translateX(-50%) scaleX(.25); }
+  30%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(-50%) scaleX(1.8); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail::after { animation: none; background-size: 100% 100%; }
+  .rail::before { animation: none; }
 }
 /* 归墟标记。八片与中心光点【同一种】暖白，两个动作都做在填充上，
    没有一处模糊半径（见 design-language 二章） */
 .mark, .void-mark { color: var(--ink); }
-.mark { width: 26px; height: 26px; flex: none; display: grid; place-items: center; }
+/* 34px 是标记在品牌区里的档：和两行文字等高，视觉重心才压得住 20px 的字 */
+.mark {
+  width: 34px; height: 34px; flex: none;
+  display: grid; place-items: center;
+}
 .mark svg, .void-mark svg { width: 100%; height: 100%; }
 
 /* 八重对称 ⇒ 视觉周期只有 45°，走满 45° 就是一整圈，
@@ -188,11 +253,13 @@ body {
   -webkit-background-clip: text; background-clip: text;
   color: transparent;
 }
+/* 副标题：和标题走同一条左线，不再是一段带竖线的尾巴。
+   4px 是两行的间距——再大就成了两块，再小就贴住了 */
 .brand-sub {
-  font-size: 11px; letter-spacing: .08em; color: var(--muted);
-  padding-left: 12px; border-left: 1px solid var(--hair-soft); margin-left: 2px;
+  font-size: 11px; letter-spacing: .08em; line-height: 1.1;
+  color: var(--muted);
+  margin-top: 4px;
 }
-.rail-sp { flex: 1; }
 
 /* 产物栏的开关常驻顶栏。它不能放在产物栏自己身上——
    栏收起来之后，那个按钮就跟着一起没了 */
@@ -209,6 +276,7 @@ body {
 .body { flex: 1; min-height: 0; display: flex; }
 .side {
   width: 240px; flex: none; display: flex; flex-direction: column;
+  padding-top: 64px;            /* 给绝对定位的品牌区让位 */
   background: var(--side);
 }
 /* 左栏收起。用 display 而不是宽度归零：栏里全是文字和图标，
@@ -231,7 +299,8 @@ body {
 .stage {
   flex: 1; min-width: 0; position: relative;
   background: var(--bg); overflow: hidden;
-  margin: 13px 13px 13px 8px;
+  /* 上 / 右 / 下 一致 20px，左边 8px 贴着左栏 */
+  margin: 20px 20px 20px 8px;
   border-radius: var(--r-pane);
   border: 1px solid var(--hair-soft);
   box-shadow: 0 4px 20px rgba(0, 0, 0, .5);
@@ -244,12 +313,15 @@ body {
   grid-column: 1 / -1; grid-row: 2; min-height: 0;
 }
 .stream, .void, .trace { grid-column: 1; }
-.dock    { grid-column: 2; grid-row: 2; }
-.composer { grid-column: 1 / -1; grid-row: 3; }
+/* 产物栏跨「内容行 + 输入行」，再上移一个页签行的高度——
+   标题栏以下到底占满，顶边和「对话/轨迹/产物」那一行齐平 */
+.dock    { grid-column: 2; grid-row: 2 / 4; margin-top: -45px; }
+/* 输入区退回左列：右边是产物栏，不是空白 */
+.composer { grid-column: 1; grid-row: 3; }
 
 
 /* ===================== 四 · 左栏 ===================== */
-.side-pad { padding: 18px 16px 10px; flex: none; }
+.side-pad { padding: 12px 16px 10px; flex: none; }
 
 /* 资产：Agent 能读到的东西——数据源是表，文档库是语料。
    两者同构：一行图标 + 名字 + 等宽计数，计数是最该被扫到的部分 */

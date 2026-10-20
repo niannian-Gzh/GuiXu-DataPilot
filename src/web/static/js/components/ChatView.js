@@ -133,14 +133,15 @@ export default {
       </div>
     </div>
 
-    <!-- 对话 / 轨迹：这是【这一个会话】的两个面，所以它在工作区里。
-         放左栏等于把它说成「会话列表的另一个模式」，那是另一回事。
+    <!-- 对话 / 轨迹 / 产物：三个都是【这一个会话】的面，长相不区分。
+         「产物」不是页签，它开合右栏——但用户看的是「这一面」，不是机制。
          见 docs/design-language.md 5.6 -->
     <div class="vtabs">
       <button :class="{on: leftTab === 'sessions'}"
               @click="leftTab = 'sessions'">对话</button>
       <button :class="{on: leftTab === 'trace'}"
               @click="leftTab = 'trace'">轨迹</button>
+      <button :class="{on: railOpen}" @click="toggleRail">产物</button>
     </div>
   </div>
 
