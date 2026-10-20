@@ -23,8 +23,8 @@ import sqlite3
 
 import storage
 from audit import log
-from runner import execute, transaction, using
-from services import UserInputRequired, card_records
+from runner import transaction, using
+from services import UserInputRequired, bulk_threshold, card_records
 
 
 def _columns_meta(ctx) -> tuple[dict, list[str]]:
@@ -65,57 +65,16 @@ def _prepare(record: dict, ctx) -> tuple[dict | None, list[str]]:
     return {k: v for k, v in record.items() if v is not None}, []
 
 
-def _insert_one(record: dict, table_name: str) -> None:
-    """插一行。列按 record 的键动态生成——**没有哪一列是写死的**。
+def request_create(records: list, ctx) -> str:
+    """请求新增。**单条也走数组**——一个工具只有一种参数形状。
 
-    写的是**视图**（`table_name`），不是底表——`is_deleted` 由视图的
-    INSERT 触发器补，调用方不用管。
-    """
-    cols = list(record)
-    sql = (
-        f"INSERT INTO {storage.quote(table_name)} "
-        f"({', '.join(storage.quote(c) for c in cols)}) "
-        f"VALUES ({', '.join('?' * len(cols))})"
-    )
-    execute(sql, [record[c] for c in cols])
-
-
-def request_create(record: dict, ctx) -> str:
-    """请求新增一条。抛确认，不直接写库。
+    design 工具层把 `create` 和 `batch_create` 合成一个：确认形态、
+    输入、执行、返回四项全同，只差条数。分成两个工具，只会让模型在
+    "这次算单条还是批量"上多猜一次，还多一处会漂移的实现。
 
     **表名从 ctx 来**（`ctx.for_table(name)` 已经表达了"绑定到哪张表"），
     不再单独收一个参数——那样同一个信息会出现在两个地方，迟早不一致。
     """
-    filled, errors = _prepare(record, ctx)
-    if errors:
-        return json.dumps(
-            {"ok": False, "error": "；".join(errors), "error_type": "invalid"},
-            ensure_ascii=False,
-        )
-
-    labels, rows = card_records(ctx, [filled])
-    raise UserInputRequired(
-        question="等待用户确认新增",
-        pending_action={
-            "type": "create",
-            "stage": "confirm",
-            "table": ctx.table_name,
-            "columns": labels,
-            "records": rows,
-            "affected": 1,
-            "danger": False,
-            # —— 内部字段（执行时用，前端忽略）——
-            "table_name": ctx.table_name,
-            "real_table": ctx.real_table,
-            "record": filled,
-            "user_input": ctx.trace.data["question"],
-            "trace_id": ctx.trace.id,
-        },
-    )
-
-
-def request_batch_create(records: list, ctx) -> str:
-    """请求批量新增。逐条校验，然后抛一次确认。"""
     if not records:
         return json.dumps(
             {"ok": False, "error": "records 不能为空", "error_type": "invalid"},
@@ -125,7 +84,9 @@ def request_batch_create(records: list, ctx) -> str:
     filled, errors = [], []
     for i, r in enumerate(records, 1):
         item, errs = _prepare(r, ctx)
-        errors += [f"第 {i} 条：{e}" for e in errs]
+        # 只有一条时不必标"第 1 条"——那不是信息，是噪音
+        prefix = f"第 {i} 条：" if len(records) > 1 else ""
+        errors += [prefix + e for e in errs]
         if item:
             filled.append(item)
 
@@ -135,58 +96,35 @@ def request_batch_create(records: list, ctx) -> str:
             ensure_ascii=False,
         )
 
+    n = len(filled)
     labels, rows = card_records(ctx, filled)
     raise UserInputRequired(
-        question=f"待新增 {len(filled)} 条，等待用户确认",
+        question=f"待新增 {n} 条，等待用户确认",
         pending_action={
-            "type": "create",                 # 与单条同类型——卡片长相一样
+            "type": "create",
             "stage": "confirm",
             "table": ctx.table_name,
             "columns": labels,
             "records": rows,
-            "affected": len(filled),
-            "danger": len(filled) > 1 and len(filled) > _bulk(),
-            # —— 内部字段 ——
+            "affected": n,
+            "danger": n > bulk_threshold(),
+            # —— 内部字段（执行时用，前端忽略）——
             "table_name": ctx.table_name,
             "real_table": ctx.real_table,
-            "batch_records": filled,          # 执行时用这个键（records 已经是卡片的二维行）
+            # 卡片上的 records 是二维行，这里存原始记录数组——两个键不是一回事
+            "values": filled,
             "user_input": ctx.trace.data["question"],
             "trace_id": ctx.trace.id,
         },
     )
 
 
-def _bulk() -> int:
-    from services import bulk_threshold
-    return bulk_threshold()
+def execute_create(records, table_name, trace_id, user_input):
+    """写入。**整批一个事务**——要么全进，要么全不进。
 
-
-def execute_create(record, table_name, trace_id, user_input):
-    """写入一行。唯一冲突由数据库挡，翻译成模型看得懂的话。"""
-    try:
-        _insert_one(record, table_name)
-    except sqlite3.IntegrityError as e:
-        err = storage.translate(None, e)
-        kind = "duplicate" if isinstance(err, storage.Duplicate) else "constraint"
-        return json.dumps(
-            {"ok": False, "error": str(err), "error_type": kind},
-            ensure_ascii=False,
-        )
-
-    log("create", {
-        "trace_id": trace_id, "user_input": user_input, "table": table_name,
-        "record": record,
-    })
-    # 返回的是**写进去的那一行**——模型能看见库里的最终形态（含默认值、生成的主键）
-    return json.dumps(
-        {"ok": True, "table": table_name, "affected": 1,
-         "columns": list(record), "records": [list(record.values())]},
-        ensure_ascii=False,
-    )
-
-
-def execute_batch_create(records, table_name, trace_id, user_input):
-    """批量写入。整批一个事务——要么全进，要么全不进。"""
+    单条也走同一个事务：对一行没有额外代价，但省掉一条分支。
+    分支少了，"单条和批量行为不一致"这类毛病就没有地方长出来。
+    """
     try:
         with transaction() as tx:
             for r in records:
@@ -205,7 +143,7 @@ def execute_batch_create(records, table_name, trace_id, user_input):
             ensure_ascii=False,
         )
 
-    log("batch_create", {
+    log("create", {
         "trace_id": trace_id, "user_input": user_input,
         "table": table_name, "affected_count": len(records),
     })

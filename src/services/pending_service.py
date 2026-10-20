@@ -79,8 +79,6 @@ def answer_pending(question: str, session, llm=None):
         return _handle_restore(question, pending)
     if ptype == "create":
         return _handle_create(question, pending)
-    if ptype == "batch_create":
-        return _handle_batch_create(question, pending)
     if ptype == "update":
         return _handle_update(question, pending)
     if ptype == "import":
@@ -106,8 +104,8 @@ def enrich_pending(pending: dict) -> dict:
     if ptype in ("delete", "restore", "update"):
         n = len(pending.get("candidates", []))
         verb = {"delete": "删除", "restore": "恢复", "update": "修改"}[ptype]
-    elif ptype == "batch_create":
-        n = len(pending.get("records", []))
+    elif ptype == "create":
+        n = pending.get("affected", 1)
         verb = "新增"
     elif ptype == "transform":
         n = pending.get("total", 0)
@@ -161,20 +159,11 @@ def _handle_restore(question, pending):
 
 
 def _handle_create(question, pending):
-    if not delete_service.is_confirm(question):
-        return "done", "请回复「确认」执行新增，或「取消」放弃。"
-    return "resume", create_service.execute_create(
-        pending["record"], pending["table_name"],
-        pending["trace_id"], pending["user_input"],
-    )
-
-
-def _handle_batch_create(question, pending):
-    # 卡片的 records 是二维行，执行数据在 batch_records——两个键不是一回事
     if not _confirm_ok(question, pending):
         return "done", "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
-    return "resume", create_service.execute_batch_create(
-        pending["batch_records"], pending["table_name"],
+    # values 是原始记录数组（单条也走数组）；卡片上的 records 是二维行
+    return "resume", create_service.execute_create(
+        pending["values"], pending["table_name"],
         pending["trace_id"], pending["user_input"],
     )
 

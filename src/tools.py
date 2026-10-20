@@ -10,7 +10,6 @@ from services import (
     update_service, transform_service, structure_service,
 )
 from services import import_service, restore_service
-from services import consistency_service
 from services import export_service
 from services import report_service
 
@@ -97,23 +96,25 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "request_create",
             "description": (
-                "请求新增一条记录。\n"
-                "record 是一行数据：{字段名: 值}。字段名必须是该表定义里存在的列；\n"
+                "请求新增记录。**单条也传数组**（长度 1）——一个工具只有一种形状。\n"
+                "每行是一个 {字段名: 值}。字段名必须是该表定义里存在的列；\n"
                 "标着「必填」的列不能缺；没给的「可空」列会留空，"
                 "有默认值的列由库里填默认值。\n"
-                "唯一约束会由数据库在写入时检查——重复了会返回 error_type: duplicate，"
+                "多条整批要么全进、要么全不进，不会写进去一半。\n"
+                "唯一约束由数据库在写入时检查——重复了返回 error_type: duplicate，"
                 "那不是失败，是提示你换一个值。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "table_name": {"type": "string", "description": _TABLE_DESC},
-                    "record": {
-                        "type": "object",
-                        "description": "一行数据：{字段名: 值}",
+                    "records": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "要新增的行。只有一条也要放进数组：[{字段名: 值}]",
                     },
                 },
-                "required": ["table_name", "record"],
+                "required": ["table_name", "records"],
             },
         },
     },
@@ -135,29 +136,6 @@ TOOL_SCHEMAS = [
                     "updates": {"type": "object", "description": "要改的字段和值"},
                 },
                 "required": ["table_name", "filter_question", "updates"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "request_batch_create",
-            "description": (
-                "请求批量新增记录。records 是多行，每行一个 {字段名: 值}，"
-                "字段规则同 request_create。\n"
-                "整批要么全进、要么全不进——不会写进去一半。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "table_name": {"type": "string", "description": _TABLE_DESC},
-                    "records": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "多行数据，每行 {字段名: 值}",
-                    },
-                },
-                "required": ["table_name", "records"],
             },
         },
     },
@@ -212,30 +190,6 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "check_consistency",
-            "description": (
-                "检查记录是否存在字段自相矛盾。"
-                "检查项包括：状态字段与状态文本不匹配、日期顺序异常。"
-                "用于数据质量体检。不检查字段缺失（缺失是允许的）。\n"
-                "table_name 不传时检查所有表。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "table_name": {
-                        "type": "string",
-                        "description": (
-                            "要检查的表名。不传则检查所有表。"
-                        ),
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "export_to_excel",
             "description": (
                 "把符合条件的记录导出为 Excel 文件。"
@@ -258,37 +212,55 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "generate_report",
             "description": (
-                "生成日/周/月报（PDF，含图表和明细）。"
-                "period：day/week/month；items 是要包含的事件，"
-                "取值：issued（下发）/ certified（下证）/ rejected（打回）/ resubmitted（重提）。"
-                "如果用户没指定 items，默认用 ['issued', 'certified', 'rejected']。"
-                "如果用户说'上个/上次/昨天/上周/上个月'，用 offset=-1；"
-                "'上上/前天'用 offset=-2。"
-                "如果用户说'对比/环比/跟上周/上月比'，传 compare=true。"
-                "如果用户指定了自定义时间段，传 custom_start 和 custom_end（YYYY-MM-DD）。"
-                "注意：自定义时间段不支持环比。"
+                "把整理好的内容渲染成 PDF 报告。**它只排版，不做统计。**\n"
+                "正确顺序：先用 query_database 把数据查出来、自己算清楚，"
+                "再把结果按 sections 交给它。标题、概述、每一节的文字/表格/图表"
+                "都由你组织——它不知道任何业务字段。\n"
+                "图表给 labels + values，会自动画成柱状图；表格给 columns + rows（二维数组）。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "table_name": {"type": "string", "description": _TABLE_DESC},
-                    "period": {"type": "string", "enum": ["day", "week", "month"]},
-                    "items": {
+                    "title": {"type": "string", "description": "报告标题"},
+                    "intro": {
+                        "type": "string",
+                        "description": "开头的概述，2-3 句话。不写就不放概述块",
+                    },
+                    "sections": {
                         "type": "array",
-                        "items": {"type": "string", "enum": ["issued", "certified", "rejected", "resubmitted"]},
-                    },
-                    "custom_start": {"type": "string"},
-                    "custom_end": {"type": "string"},
-                    "offset": {
-                        "type": "integer",
-                        "description": "偏移量。0=当前，-1=上一个，-2=上上个。",
-                    },
-                    "compare": {
-                        "type": "boolean",
-                        "description": "是否对比上一周期。",
+                        "description": "报告的节。一节一个标题，可带文字、表格、图表",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "heading": {"type": "string", "description": "这一节的标题"},
+                                "body": {"type": "string", "description": "这一节的说明文字"},
+                                "table": {
+                                    "type": "object",
+                                    "properties": {
+                                        "columns": {"type": "array", "items": {"type": "string"}},
+                                        "rows": {
+                                            "type": "array",
+                                            "items": {"type": "array"},
+                                            "description": "二维数组，每行与 columns 对齐",
+                                        },
+                                    },
+                                    "required": ["columns", "rows"],
+                                },
+                                "chart": {
+                                    "type": "object",
+                                    "properties": {
+                                        "labels": {"type": "array", "items": {"type": "string"}},
+                                        "values": {"type": "array", "items": {"type": "number"}},
+                                        "title": {"type": "string"},
+                                    },
+                                    "required": ["labels", "values"],
+                                },
+                            },
+                            "required": ["heading"],
+                        },
                     },
                 },
-                "required": ["table_name", "period"],
+                "required": ["title", "sections"],
             },
         },
     },
@@ -514,14 +486,11 @@ def build_tool_functions(llm, trace):
     def request_restore(table_name, filter_question):
         return restore_service.request_restore(filter_question, base_ctx.for_table(table_name))
 
-    def request_create(table_name, record):
-        return create_service.request_create(record, base_ctx.for_table(table_name))
+    def request_create(table_name, records):
+        return create_service.request_create(records, base_ctx.for_table(table_name))
 
     def request_update(table_name, filter_question, updates):
         return update_service.request_update(filter_question, updates, base_ctx.for_table(table_name))
-
-    def request_batch_create(table_name, records):
-        return create_service.request_batch_create(records, base_ctx.for_table(table_name))
 
     def request_import(table_name, file_path):
         return import_service.request_import(file_path, base_ctx.for_table(table_name))
@@ -546,22 +515,12 @@ def build_tool_functions(llm, trace):
             },
         )
 
-    def check_consistency(table_name=None):
-        # 传了表名——检查那一张；不传——检查所有表
-        if table_name:
-            return consistency_service.run(base_ctx.for_table(table_name))
-        return consistency_service.run_all(base_ctx)
-
     def export_to_excel(table_name, filter_question):
         return export_service.run(filter_question, base_ctx.for_table(table_name))
 
-    def generate_report(table_name, period, items=None,
-                        custom_start=None, custom_end=None,
-                        offset=0, compare=False):
-        return report_service.run(
-            period, items or [], base_ctx.for_table(table_name),
-            custom_start, custom_end, offset, compare,
-        )
+    def generate_report(title, sections, intro=""):
+        # 不绑定表：报告是把已经取好的数据排版，统计在 query 那一步就完成了
+        return report_service.run(title, intro, sections)
 
     def transform_data(table_name, description):
         return transform_service.request_transform(description, base_ctx.for_table(table_name))
@@ -610,10 +569,8 @@ def build_tool_functions(llm, trace):
         "request_restore": request_restore,
         "request_create": request_create,
         "request_update": request_update,
-        "request_batch_create": request_batch_create,
         "request_import": request_import,
         "ask_user": ask_user,
-        "check_consistency": check_consistency,
         "export_to_excel": export_to_excel,
         "generate_report": generate_report,
         "transform_data": transform_data,
