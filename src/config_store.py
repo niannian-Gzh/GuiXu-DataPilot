@@ -29,7 +29,33 @@ _cache = {"mtime": None, "data": None}
 
 # 新建/更新时接受哪些字段。白名单而不是黑名单：
 # 漏掉一个字段顶多是少个功能，放进来一个（比如 id）就是数据损坏
-EDITABLE = ("name", "provider", "base_url", "model", "note")
+EDITABLE = ("name", "provider", "base_url", "model", "note", "capabilities")
+
+# 能力清单能改哪些键。白名单之外的一律丢掉——
+# 这些值会决定"带不带某个参数"，混进一个错的比没有更糟
+CAPABILITY_KEYS = ("tool_calling", "reasoning", "reasoning_echo",
+                   "reasoning_effort", "context_window")
+
+
+def _clean_capabilities(value) -> dict:
+    """只收认识的键，类型按用途兜。"""
+    if not isinstance(value, dict):
+        return {}
+    out = {}
+    for k in CAPABILITY_KEYS:
+        if k not in value:
+            continue
+        v = value[k]
+        if k == "context_window":
+            try:
+                n = int(v)
+            except (TypeError, ValueError):
+                continue
+            if n > 0:
+                out[k] = n
+        else:
+            out[k] = bool(v)
+    return out
 
 
 # ---------------- 底层读写 ----------------
@@ -122,7 +148,10 @@ def add_config(data: dict) -> dict:
     cfg = _cached()
     item = {"id": uuid.uuid4().hex[:8]}
     for k in EDITABLE:
-        item[k] = str(data.get(k) or "").strip()
+        if k == "capabilities":
+            item[k] = _clean_capabilities(data.get(k))
+        else:
+            item[k] = str(data.get(k) or "").strip()
     item["provider"] = item["provider"] or "custom"
     item["name"] = item["name"] or "未命名配置"
 
@@ -141,7 +170,11 @@ def update_config(cid: str, data: dict) -> bool:
         if c["id"] != cid:
             continue
         for k in EDITABLE:
-            if k in data and data[k] is not None:
+            if k not in data or data[k] is None:
+                continue
+            if k == "capabilities":
+                c[k] = _clean_capabilities(data[k])
+            else:
                 c[k] = str(data[k]).strip()
         c["name"] = c["name"] or "未命名配置"
         c["provider"] = c["provider"] or "custom"

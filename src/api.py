@@ -661,9 +661,9 @@ def update_settings(req: SettingsUpdate):
     # override=True 是必须的：默认模式不会覆盖已存在的环境变量
     load_dotenv(override=True)
 
-    # LLM 实例在 __init__ 里固化了 model / base_url / temperature / api_key，
-    # 配置一变就得重建，否则改了设置却没有任何效果
-    _state["llm"] = LLM()
+    # LLM 实例在 __init__ 里固化了 model / base_url / temperature / api_key /
+    # capabilities，配置一变就得重建——统一走 _rebuild_llm，别处不再各写一遍
+    _rebuild_llm()
 
     return {"status": "ok", "message": "已保存并生效"}
 
@@ -808,6 +808,8 @@ class ConfigCreate(BaseModel):
     base_url: str
     model: str
     note: Optional[str] = None
+    # 能力清单的覆盖项。预设打底，这里只放"这家和预设不一样"的部分
+    capabilities: Optional[dict] = None
     key: Optional[str] = None
 
 
@@ -817,6 +819,7 @@ class ConfigUpdate(BaseModel):
     base_url: Optional[str] = None
     model: Optional[str] = None
     note: Optional[str] = None
+    capabilities: Optional[dict] = None
 
 
 def _with_state(c: dict) -> dict:

@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from openai import OpenAI, APITimeoutError, APIConnectionError, RateLimitError
 from config import setting
 from config_store import get_active, get_key
+from providers import resolve_capabilities
 
 load_dotenv()
 
@@ -39,6 +40,11 @@ class LLM:
         self.max_tokens = setting("llm.max_tokens")
         self.temperature = setting("llm.temperature")
         self.reasoning_effort = setting("llm.reasoning_effort")
+
+        # **这套配置认什么，一处来源。** 预设打底、卡片可覆盖；
+        # 编排层回传 reasoning、带 reasoning_effort、推压缩阈值，
+        # 都从这里读，不再各写各的
+        self.capabilities = resolve_capabilities(active)
 
         api_key = get_key(active["id"])
         self.mock = not api_key
@@ -82,11 +88,13 @@ class LLM:
                 "temperature": self.temperature,
                 "messages": messages,
             }
-            # 只有推理型模型认这个字段。填了才带——没填就带上去，
-            # 遇到不认的服务端会直接 400，而那是用户没要求的请求
-            if self.reasoning_effort:
+            # 只有推理型模型认这个字段。以前是"填了才带"，现在是
+            # "填了**且这套配置认**才带"——能力清单说了算
+            if self.reasoning_effort and self.capabilities.get("reasoning_effort"):
                 kwargs["reasoning_effort"] = self.reasoning_effort
-            if tools:
+            # 不认工具调用的模型，给了 tools 会 400。不给它，
+            # 它至少还能用文字回答
+            if tools and self.capabilities.get("tool_calling", True):
                 kwargs["tools"] = tools
             return self.client.chat.completions.create(**kwargs)
 

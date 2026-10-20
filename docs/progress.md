@@ -5,7 +5,7 @@
 
 ## 当前位置
 
-**编排层完成**（装备着的账清完）。下一步是**模型层**。
+**模型层完成**（能力清单）。下一步是**横切层**。
 
 ## 已经完成的
 
@@ -86,14 +86,31 @@ design 编排层 §四的五条账：
 - **安全拒绝认 `error_type: "security"`**（以前检查 `is_security`，而工具从来不返回这个字段——安全拒绝一直被当成普通失败，还会计入熔断）
 - **`generate_filter_sql` 以前没有安全检查**——导出、删除、恢复、修改的候选筛选全走它
 
-## 下一步：模型层
+### 模型层（已落地）
 
-design 模型层要做的：
+**能力清单** `capabilities`：`tool_calling` / `reasoning` / `reasoning_echo` /
+`reasoning_effort` / `context_window`。
 
-1. **能力清单 `capabilities`** —— `tool_calling` / `reasoning` / `reasoning_echo` / `reasoning_effort` / `context_window`，一处来源处处遵守
-2. **`reasoning_content` 回传前先问 `reasoning_echo`** —— 现在是硬塞，认不得的服务端直接 400
-3. **压缩阈值改成"窗口 × 比例"** —— 现在是硬编码的 `agent.compact_threshold`
-4. **配置切换后 LLM 实例重建** —— 现在设置页保存时会重建，但时机和归属要明确
+| 层 | 怎么用 |
+|---|---|
+| `providers.py` | 预设打底：deepseek / openai / anthropic 写了明确值，其余用保守默认 |
+| `config_store.py` | 卡片可覆盖（白名单收键，类型兜底） |
+| `llm.py` | `resolve_capabilities()`：预设 → 卡片 → 默认 |
+| 编排层 | 回传 reasoning 前问 `reasoning_echo`；压缩阈值 = `context_window × agent.compact_ratio` |
+
+- `reasoning_effort` 从「填了才带」改成「填了**且认**才带」
+- 不认工具调用的模型不发 `tools`——至少还能用文字回答
+- 压缩阈值从硬编码 `500000` 改成 `128000 × 0.7`（跟随模型窗口）
+
+## 下一步：横切层
+
+design 横切层三件：
+
+1. **执行前闸门** —— 所有 SQL 出门前过一遍：标识符白名单、语句类型对意图、系统字段/全表检测
+   - 现在 `guard` 卡在 `nl2sql` 里，只罩得住"模型写 SQL"这条路；服务拼的 SQL、DDL 全绕过去
+   - **还有一个已知误杀**：`guard` 解析失败就拒绝，复杂但合法的 SELECT（CTE、窗口函数）会被拦
+2. **audit 进库** —— 现在追加写文件，不原子。改写成内部表，和改库同一个事务
+3. **设置页重分类** —— 用户偏好留下、内部参数搬进「开发者模式」；取消 normal/advanced 分级
 
 ## 已知缺口（留给后面的层）
 
@@ -122,12 +139,11 @@ design 模型层要做的：
 
 ## 剩下的整条路
 
-1. 模型层（当前）
-2. 横切层（执行前闸门 · audit 进库 · 设置页重分类）
-3. 交互层（确认卡片历史留痕 · 弹窗打磨 · 恢复页 · 数据字典页加关系）
-4. **评测重写**（排在 RAG 之前）
-5. **RAG**（最后一个环节，结束 = 项目结束）
-6. 打包（Inno Setup）
+1. 横切层（当前）
+2. 交互层（确认卡片历史留痕 · 弹窗打磨 · 恢复页 · 数据字典页加关系）
+3. **评测重写**（排在 RAG 之前）
+4. **RAG**（最后一个环节，结束 = 项目结束）
+5. 打包（Inno Setup）
 
 ## 仓库
 

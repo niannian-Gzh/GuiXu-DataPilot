@@ -18,6 +18,20 @@ base_url 一律是 **OpenAI 兼容端点**，不是各家原生 SDK 的地址—
 它会被直接塞进 OpenAI SDK 的 base_url 参数。
 """
 
+# 能力清单的保守默认。没有预设、或者预设没写的项，从这里开始——
+# 宁可按"不会"处理：多带一个不认的参数，服务端直接 400；
+# 少带一个，最多是少一个功能
+DEFAULT_CAPABILITIES = {
+    "tool_calling": True,
+    "reasoning": False,
+    # 能不能把 reasoning_content 回传给服务端。认不得的服务端会 400
+    "reasoning_echo": False,
+    # 认不认 reasoning_effort 这个参数
+    "reasoning_effort": False,
+    "context_window": 32000,
+}
+
+
 PROVIDERS = [
     # ---------------- 国外 ----------------
     {
@@ -27,6 +41,13 @@ PROVIDERS = [
         "models": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4-mini"],
         "env": "OPENAI_API_KEY",
         "note": "原生端点。gpt-6-astra 需要企业工作区在 Trusted Access 里开通，个人层用不了",
+        "capabilities": {
+            "reasoning": True,
+            # 兼容接口不返回 reasoning_content，回传反而可能被拒
+            "reasoning_echo": False,
+            "reasoning_effort": True,
+            "context_window": 128000,
+        },
     },
     {
         "id": "anthropic",
@@ -37,6 +58,13 @@ PROVIDERS = [
         # 这条提示很要紧：兼容层不报错，只是悄悄不生效
         "note": "走 OpenAI 兼容层。官方定位是测试/对比用，不支持 prompt caching "
                 "和 response_format——不报错，但也不生效，生产环境建议用原生接口",
+        "capabilities": {
+            # 兼容层不吐 reasoning_content
+            "reasoning": False,
+            "reasoning_echo": False,
+            "reasoning_effort": False,
+            "context_window": 200000,
+        },
     },
     {
         "id": "gemini",
@@ -84,6 +112,13 @@ PROVIDERS = [
         "models": ["deepseek-flash", "deepseek-v4-pro"],
         "env": "DEEPSEEK_API_KEY",
         "note": "性价比高，中文好（模型名已实测）",
+        "capabilities": {
+            # 实测：返回 reasoning_content，回传也认；reasoning_effort 有效
+            "reasoning": True,
+            "reasoning_echo": True,
+            "reasoning_effort": True,
+            "context_window": 128000,
+        },
     },
     {
         "id": "zhipu",
@@ -191,3 +226,18 @@ def guess_model(provider_id: str) -> str:
     if not p:
         return ""
     return p["models"][0] if p["models"] else ""
+
+
+def resolve_capabilities(cfg: dict) -> dict:
+    """这套配置认什么：**预设打底 → 卡片覆盖 → 保守默认兜底**。
+
+    一处来源，处处遵守——编排层回传 reasoning 前问 `reasoning_echo`，
+    带 `reasoning_effort` 前问同名字段，压缩阈值按 `context_window` 推。
+    以前这些判断散在各处，靠"填了才带"勉强躲 400。
+    """
+    caps = dict(DEFAULT_CAPABILITIES)
+    p = get_provider(cfg.get("provider") or "")
+    if p:
+        caps.update(p.get("capabilities") or {})
+    caps.update(cfg.get("capabilities") or {})
+    return caps

@@ -140,8 +140,14 @@ def run_agent(user_input: str, session, llm, trace,
     read_limit = setting("agent.read_tool_limit")
     write_limit = setting("agent.write_tool_limit")
     tool_result_limit = setting("agent.tool_result_limit")
-    compact_threshold = setting("agent.compact_threshold")
     keep_recent = setting("agent.keep_recent_turns")
+
+    # 压缩阈值 = 模型窗口 × 比例。以前是硬编码 500000，换个小窗口的
+    # 模型直接撞上限——压缩还没触发，请求先 400 了
+    caps = getattr(llm, "capabilities", {}) or {}
+    compact_threshold = int(
+        (caps.get("context_window") or 32000) * setting("agent.compact_ratio")
+    )
 
     start_time = time.time()
     functions = build_tool_functions(llm, trace)
@@ -247,7 +253,9 @@ def run_agent(user_input: str, session, llm, trace,
                     for tc in msg.tool_calls
                 ],
             }
-            if reasoning:
+            # 回传 reasoning 前先问能力清单。不认这个字段的服务端会 400，
+            # 而 reasoning 本身照常推给界面、记进日志——限制的只是回传
+            if reasoning and caps.get("reasoning_echo"):
                 assistant_msg["reasoning_content"] = reasoning
             messages.append(assistant_msg)
 
