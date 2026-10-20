@@ -133,6 +133,20 @@ export const updateSchema = (table, data) =>
    连同那个字段上写好的中文含义。所以调用方拿到 changes 要如实报出来 */
 export const refreshSchema = () => _req('/schema/refresh', 'POST');
 
+/* 关系。库里一行只存一个方向，所以删除时要给全四段——
+   前端从 GET /schema 拿到的每条关系都带着四段，照原样传回来即可 */
+export const addRelation = (data) => _req('/schema/relations', 'POST', data);
+
+export const dropRelation = (r) => _req(
+  '/schema/relations?' + new URLSearchParams({
+    from_table: r.from_table,
+    from_column: r.from_column,
+    to_table: r.to_table,
+    to_column: r.to_column,
+  }).toString(),
+  'DELETE',
+);
+
 /* ---------------- 恢复页 ---------------- */
 
 /* 列表类读失败返回 null（页面提示"读取失败"），不返回空数组——

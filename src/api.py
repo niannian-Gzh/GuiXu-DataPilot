@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from openai import OpenAI
 import pandas as pd
-from runner import connect, query_df
+from runner import connect, query_df, transaction
 from session import ARCHIVE_DIR
 import schema_store
 import storage
@@ -706,22 +706,49 @@ def update_settings(req: SettingsUpdate):
 def get_schema_api():
     """返回所有表的完整视图：表名 + 中文名 + 字段（名字/类型/必填/中文含义）。
 
-    前端消费这个渲染树。只读——改中文映射走 PUT。
+    前端消费这个渲染树。只读——改中文映射走 PUT，改关系走 /schema/relations。
 
-    **返回结构保持旧形状**（`label` / `real_table` / `fields[].label`）：
-    数据源换到 SQLite 不该让前端返工。新数据里多出来的东西
-    （`relations` / `unique` / `pk`）留到交互层改造时一起露出来，
-    那时候前端改一次就够。
+    除字段外还带三样：**主键 / 唯一约束 / 关系**。
+    关系在库里一行只存一个方向，这里摊成"出 / 入"两份——设计要求
+    「一端声明，两端都显示」，只给一个方向的话，用户切到对端表会
+    以为它们没关系。
     """
     con = connect()
     try:
+        rels = con.execute(
+            f"SELECT from_table, from_column, to_table, to_column, cardinality "
+            f"FROM {storage.REL}"
+        ).fetchall()
+
         tables = []
         for name in list_tables(con):
             d = describe(con, name)
+
+            # 自关联（parent_id → 本表.id）只出一条，不左右各画一遍
+            related = []
+            for r in rels:
+                if r[0] == name:
+                    related.append({
+                        "dir": "out",
+                        "from_table": r[0], "from_column": r[1],
+                        "to_table": r[2], "to_column": r[3],
+                        "cardinality": r[4],
+                    })
+                elif r[2] == name:
+                    related.append({
+                        "dir": "in",
+                        "from_table": r[0], "from_column": r[1],
+                        "to_table": r[2], "to_column": r[3],
+                        "cardinality": r[4],
+                    })
+
             tables.append({
                 "name": name,
                 "real_table": name + SOFTDEL_SUFFIX,
                 "label": d["note"],
+                "pk": storage.pk_of(con, name + SOFTDEL_SUFFIX),
+                "uniques": storage.uniques_of(con, name),
+                "relations": related,
                 "fields": [
                     {
                         "name": c["name"],
@@ -735,6 +762,39 @@ def get_schema_api():
         return {"tables": tables}
     finally:
         con.close()
+
+
+class RelationBody(BaseModel):
+    from_table: str
+    from_column: str
+    to_table: str
+    to_column: str
+    cardinality: str = ""
+
+
+@app.post("/schema/relations")
+def add_relation_api(req: RelationBody):
+    """加一条逻辑关联。两端必须真实存在——假的会误导模型去 JOIN。"""
+    try:
+        with transaction() as tx:
+            storage.add_relation(
+                tx, req.from_table, req.from_column,
+                req.to_table, req.to_column, req.cardinality or "",
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+@app.delete("/schema/relations")
+def drop_relation_api(from_table: str, from_column: str,
+                      to_table: str, to_column: str):
+    """按四元组删一条。一行只存一个方向，所以四段都要给。"""
+    with transaction() as tx:
+        removed = storage.drop_relation(
+            tx, from_table, from_column, to_table, to_column,
+        )
+    return {"ok": True, "removed": removed}
 
 
 class FieldLabelUpdate(BaseModel):

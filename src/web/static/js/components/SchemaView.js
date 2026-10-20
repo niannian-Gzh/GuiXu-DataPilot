@@ -51,7 +51,12 @@ export default {
     const textareaEl = Vue.ref(null);
 
     const clone = (tables) =>
-      tables.map((x) => ({ ...x, fields: x.fields.map((f) => ({ ...f })) }));
+      tables.map((x) => ({
+        ...x,
+        fields: x.fields.map((f) => ({ ...f })),
+        uniques: (x.uniques || []).map((u) => [...u]),
+        relations: (x.relations || []).map((r) => ({ ...r })),
+      }));
 
     async function load() {
       const r = await api.getSchema();
@@ -112,6 +117,100 @@ export default {
       const f = tb && tb.fields.find((x) => x.name === editing.value.fieldName);
       if (f) f.label = editing.value.text;
       editing.value = null;
+    }
+
+    /* ---------------- 约束与关系 ----------------
+       主键 / 唯一是库的事实，只显示；关系是语义，可改。
+       关系**不进草稿**：一条关系牵着两张表，而草稿是按表存的；
+       加/删立即落库，中文名的草稿与保存流程一个字不动 */
+
+    const relDraft = Vue.ref(null);   // 正在添加的那条
+    const relSaving = Vue.ref(false);
+
+    const tableOf = (name) => draft.value.find((x) => x.name === name);
+
+    // 中文名优先，没标过的退回字段名——关系行里不该出现空
+    const fieldLabel = (tb, col) => {
+      const f = tb && tb.fields.find((x) => x.name === col);
+      return f ? (f.label || f.name) : col;
+    };
+    const tableLabel = (name) => {
+      const tb = tableOf(name);
+      return tb && tb.label ? tb.label : name;
+    };
+
+    const singleUnique = (tb) => new Set(
+      (tb.uniques || []).filter((u) => u.length === 1).map((u) => u[0]),
+    );
+    const compositeUnique = (tb) => (tb.uniques || []).filter((u) => u.length > 1);
+
+    const relKey = (r) =>
+      [r.from_table, r.from_column, r.to_table, r.to_column].join('|');
+    // 出：本端这一列 → 对端表.列；入：← 对端表.列
+    const relText = (tb, r) => (r.dir === 'in'
+      ? '← ' + tableLabel(r.from_table) + '.' + fieldLabel(tableOf(r.from_table), r.from_column)
+      : fieldLabel(tb, r.from_column) + ' → '
+        + tableLabel(r.to_table) + '.' + fieldLabel(tableOf(r.to_table), r.to_column));
+
+    const fieldsOf = (name) => {
+      const tb = tableOf(name);
+      return tb ? tb.fields : [];
+    };
+
+    function openRel(tb) {
+      if (!tb.fields.length) return;
+      const other = draft.value.find(
+        (x) => x.name !== tb.name && x.fields.length,
+      ) || tb;
+      relDraft.value = {
+        from_table: tb.name,
+        from_column: tb.fields[0].name,
+        to_table: other.name,
+        to_column: other.fields.length ? other.fields[0].name : '',
+        cardinality: '',
+      };
+    }
+
+    const onToTable = () => {
+      const fs = fieldsOf(relDraft.value.to_table);
+      relDraft.value.to_column = fs.length ? fs[0].name : '';
+    };
+
+    /* 加完/删完只重取 relations，**不动 labels**——
+       重载整份会把用户还没保存的中文名一起冲掉 */
+    async function reloadRelations() {
+      const r = await api.getSchema();
+      if (!r.ok) return;
+      const by = {};
+      for (const x of r.tables) by[x.name] = x.relations || [];
+      for (const tb of original.value) tb.relations = by[tb.name] || [];
+      for (const tb of draft.value) tb.relations = by[tb.name] || [];
+    }
+
+    async function saveRel() {
+      const d = relDraft.value;
+      if (!d || relSaving.value) return;
+      if (!d.from_column || !d.to_table || !d.to_column) {
+        store.notify(t.relNeedBoth, false);
+        return;
+      }
+      relSaving.value = true;
+      try {
+        const r = await api.addRelation({ ...d });
+        if (!r.ok) { store.notify(t.relAddFail + r.message, false); return; }
+        relDraft.value = null;
+        await reloadRelations();
+        store.notify(t.relAdded);
+      } finally {
+        relSaving.value = false;
+      }
+    }
+
+    async function dropRel(r) {
+      const x = await api.dropRelation(r);
+      if (!x.ok) { store.notify(t.relDropFail + x.message, false); return; }
+      await reloadRelations();
+      store.notify(t.relRemoved);
     }
 
     // 弹出即聚焦并把光标放到末尾：这个框十有八九是要接着改，
@@ -214,8 +313,11 @@ export default {
       ...store, t, fmt, typeCn,
       original, draft, openMap, loadError, saving, refreshing,
       editing, confirming, leaving, textareaEl,
+      relDraft, relSaving,
       changes, dirtyCount,
       openEditor, confirmEditor, closeEditor,
+      singleUnique, compositeUnique, fieldLabel, tableLabel, relKey, relText,
+      fieldsOf, openRel, onToTable, saveRel, dropRel,
       doSave, doRefresh, leaveNow, load,
     };
   },
@@ -288,7 +390,11 @@ export default {
           <tr v-for="f in tb.fields" :key="f.name">
             <td>{{ f.name }}</td>
             <td class="num" :title="f.type">{{ typeCn(f.type) }}</td>
-            <td>
+            <!-- 主键 / 唯一是库的事实，只读。组合唯一塞不进单元格，
+                 在表下面单独一行 -->
+            <td class="cons">
+              <span class="tag key" v-if="tb.pk === f.name">{{ t.primaryKey }}</span>
+              <span class="tag key" v-if="singleUnique(tb).has(f.name)">{{ t.uniqueKey }}</span>
               <span class="tag" :class="f.nullable ? 'opt' : 'req'">
                 {{ f.nullable ? t.nullable : t.required }}
               </span>
@@ -305,6 +411,74 @@ export default {
           </tr>
         </tbody>
       </table>
+
+      <!-- 组合唯一：几列一起不能重复，一行写清楚 -->
+      <template v-if="compositeUnique(tb).length">
+        <div class="tbl-cons" v-show="openMap[tb.name]">
+          <span class="cons-k">{{ t.compositeUnique }}</span>
+          <span class="cons-v" v-for="(u, ui) in compositeUnique(tb)" :key="ui">
+            {{ u.map((c) => fieldLabel(tb, c)).join(' + ') }}
+          </span>
+        </div>
+      </template>
+
+      <!-- 关系：表与表的事，独立一块，不散在字段行里。
+           一端声明、两端都显示——切到对端表也要看得见 -->
+      <div class="rel" v-show="openMap[tb.name]">
+        <div class="rel-head">
+          <span class="rel-k">{{ t.relations }}</span>
+          <button class="rel-add" @click="openRel(tb)">+ {{ t.relationAdd }}</button>
+        </div>
+
+        <div class="rel-row" v-for="r in tb.relations" :key="relKey(r)">
+          <span class="rel-path" :class="{in: r.dir === 'in'}">{{ relText(tb, r) }}</span>
+          <span class="tag" v-if="r.cardinality">{{ r.cardinality }}</span>
+          <button class="rel-del" @click="dropRel(r)" :title="t.relationRemove">×</button>
+        </div>
+        <div class="rel-empty" v-if="!tb.relations.length">{{ t.noRelations }}</div>
+
+        <!-- 添加面板：先选本端列，再选对端表和列，基数可以不填 -->
+        <div class="rel-form" v-if="relDraft && relDraft.from_table === tb.name">
+          <div class="rel-frow">
+            <span class="rel-fk">{{ t.relFrom }}</span>
+            <select v-model="relDraft.from_column">
+              <option v-for="f in tb.fields" :key="f.name" :value="f.name">
+                {{ f.label || f.name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="rel-frow">
+            <span class="rel-fk">{{ t.relTo }}</span>
+            <select v-model="relDraft.to_table" @change="onToTable">
+              <option v-for="x in draft" :key="x.name" :value="x.name">
+                {{ x.label || x.name }}
+              </option>
+            </select>
+            <select v-model="relDraft.to_column">
+              <option v-for="f in fieldsOf(relDraft.to_table)" :key="f.name" :value="f.name">
+                {{ f.label || f.name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="rel-frow">
+            <span class="rel-fk">{{ t.relCardinality }}</span>
+            <select v-model="relDraft.cardinality">
+              <option value="">{{ t.relNone }}</option>
+              <option v-for="c in ['1:N', 'N:1', '1:1', 'M:N']" :key="c" :value="c">
+                {{ c }}
+              </option>
+            </select>
+            <span class="rel-actions">
+              <button class="btn rel-save" @click="saveRel" :disabled="relSaving">
+                {{ t.relationAdd }}
+              </button>
+              <button class="btn rel-save" @click="relDraft = null">{{ t.cancel }}</button>
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div v-if="!draft.length && !loadError" class="empty-note">
