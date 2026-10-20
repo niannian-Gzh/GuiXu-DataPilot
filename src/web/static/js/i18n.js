@@ -44,6 +44,8 @@ export const I18N = {
     sendHint: '发送 ·',
     newlineHint: '换行',
     cancel: '取消',
+    send: '发送',
+    nextQuestion: '下一题',
 
     /* 产物 */
     artifacts: '产物',

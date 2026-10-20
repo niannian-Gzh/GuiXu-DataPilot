@@ -283,11 +283,16 @@ export async function upload(file) {
  *
  * 返回 true 表示正常结束，false 表示连接中断（调用方据此写错误提示）。
  */
-export async function chat({ question, sessionId, onEvent }) {
+export async function chat({ question, sessionId, onEvent, answers }) {
   const res = await fetch(API + '/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, session_id: sessionId || null }),
+    body: JSON.stringify({
+      question,
+      session_id: sessionId || null,
+      // 多问题 ask 的回答，按问题顺序；普通提问不带
+      answers: answers || null,
+    }),
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
 

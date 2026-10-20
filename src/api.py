@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 import os
 from pathlib import Path
+import sys
 from typing import Optional
 import json
 import math
@@ -8,6 +9,16 @@ import queue
 import shutil
 import threading
 import uuid
+
+# Windows 控制台默认是 GBK，模型给的参数里可能出现任何字符（↔、emoji、
+# 生僻字）。`print` 编不出来就抛 UnicodeEncodeError，顺着调用栈冒到
+# api 的兜底 except，**一行日志把一整轮打翻**。改成编不出来的用 ? 代替：
+# 日志难看一点，对话照常。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except Exception:
+        pass
 from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +29,7 @@ from session import Session
 from agent import run_agent, resume_entry
 from trace import Trace
 from config import (
-    load_config, resolve, resolve_db_path, PROJECT_ROOT, CONFIG_PATH,
+    load_config, resolve_db_path, PROJECT_ROOT, CONFIG_PATH,
     setting, get, get_config, save_config,
 )
 import config_store as store
@@ -178,6 +189,8 @@ def index():
 class ChatRequest(BaseModel):
     question: str
     session_id: Optional[str] = None
+    # 多问题 ask 的回答，按问题顺序。普通提问不传
+    answers: Optional[list] = None
 
 
 class FileInfo(BaseModel):
@@ -397,7 +410,7 @@ def chat(req: ChatRequest):
                 # 不进 user 历史（那条在中断那一轮已经进过了），
                 # 也不发 start——界面上还是同一轮，改时间会把它标错
                 action, payload = pending_service.answer_pending(
-                    req.question, session, _state["llm"],
+                    req.question, session, _state["llm"], answers=req.answers,
                 )
 
                 if action == "resume" and not pending.get("resume"):
@@ -583,22 +596,32 @@ def _current_value(p: dict):
 
 
 def _readonly_info() -> dict:
-    cfg = get_config().get("data", {})
-    table_name = cfg.get("table_name", "")
-    db_url = cfg.get("db_url", "")
+    """「关于」页的只读信息。**只写现在成立的事**。
 
-    total = None
+    旧版这里读的是 PG 时代的 `table_name` / `db_url`，以及启动导入用的
+    `excel_path`——换成 SQLite 单文件之后都没人用了，页面上只剩几行
+    空值和一条断掉的路径。
+    """
+    tables = total = None
     try:
-        df = query_df(f"SELECT COUNT(*) AS n FROM {table_name}")
-        total = int(df.iloc[0, 0])
+        con = connect()
+        try:
+            names = list_tables(con)
+            tables = len(names)
+            total = sum(
+                con.execute(
+                    f"SELECT COUNT(*) FROM {storage.quote(name + SOFTDEL_SUFFIX)}"
+                ).fetchone()[0]
+                for name in names
+            )
+        finally:
+            con.close()
     except Exception:
         pass
 
     return {
-        "数据源": db_url,
-        "数据表": table_name,
-        "在册记录": total,
-        "初始数据源": str(resolve(cfg.get("excel_path", ""))),
+        "库文件": resolve_db_path(),
+        "规模": f"{tables} 张表 · {total} 行" if tables is not None else "—",
         "导出目录": str(EXPORT_DIR),
         "报告目录": str(REPORT_DIR),
         "上传目录": str(UPLOAD_DIR),

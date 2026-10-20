@@ -650,7 +650,7 @@ createApp({
     };
 
     /* ---------------- 流式请求 ---------------- */
-    const runStream = async (question, turn) => {
+    const runStream = async (question, turn, answers = null) => {
       busy.value = true;
       turn.stage = '正在处理…';
 
@@ -659,6 +659,7 @@ createApp({
         await api.chat({
           question,
           sessionId: sessionId.value,
+          answers,
           onEvent: async (ev) => {
             handleEvent(ev, turn);
             await scrollDown();
@@ -704,7 +705,7 @@ createApp({
       send();
     };
 
-    const answerConfirm = async (ti, ci, text) => {
+    const answerConfirm = async (ti, ci, text, answers = null) => {
       const turn = turns.value[ti];
       const card = turn && turn.confirms[ci];
       if (!card || busy.value) return;
@@ -716,8 +717,13 @@ createApp({
       card.cancelled = cancelled;
 
       if (isAsk && !cancelled) {
-        card.answer = text;
-        card.verdict = `已回答：${text}`;
+        // 多问题时 text 只是一句摘要，真正的答案按顺序在 answers 里
+        const vals = Array.isArray(answers) && answers.length ? answers : [text];
+        card.items.forEach((it, i) => {
+          if (vals[i] != null) it.answer = String(vals[i]);
+        });
+        card.answer = vals[0] == null ? '' : String(vals[0]);
+        card.verdict = '已回答';
       } else {
         card.verdict = cancelled ? '任务已被终止' : '正在执行…';
       }
@@ -732,7 +738,7 @@ createApp({
         waiting.forEach((t) => { t.state = 'cancel'; });
       }
 
-      await runStream(text, turn);
+      await runStream(text, turn, answers);
 
       // 非取消：续跑成功即视为这次调用完成。续跑里新挂起的工具
       // 不在 waiting 里（它是这一趟新出现的），状态由新事件决定

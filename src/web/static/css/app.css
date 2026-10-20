@@ -12,7 +12,7 @@
    那些是原型没演到的状态，不是原型淘汰掉的东西，所以补的时候
    一律沿用上面那套令牌和语气，不另起一套。
 
-   判据与理由全在 docs/design-language.md。
+   判据与理由全在 archive/docs/design-language.md。
    ============================================================= */
 
 
@@ -1125,6 +1125,27 @@ td .tag, .tag {
 }
 .ask-opt:hover:not(:disabled) { border-color: var(--acc-line); color: var(--ink); }
 .ask-opt:disabled { opacity: .5; cursor: not-allowed; }
+/* 选中的方向：描边亮起来。**不会点完就跳走**——还有别的题要答 */
+.ask-opt.on {
+  border-color: var(--acc); color: var(--acc-lift);
+  background: var(--acc-dim);
+}
+
+/* 多问题：顶部一排圆点，答过的填实，当前那个画一圈 */
+.ask-dots { display: flex; justify-content: center; gap: 9px; padding: 0 0 12px; }
+.ask-dot {
+  width: 7px; height: 7px; padding: 0; margin: 0; cursor: pointer;
+  background: none; border: 1px solid var(--faint); border-radius: 50%;
+  transition: background .16s var(--ease), border-color .16s var(--ease),
+              box-shadow .16s var(--ease);
+}
+.ask-dot.done { background: var(--muted); border-color: var(--muted); }
+.ask-dot.on {
+  background: var(--acc); border-color: var(--acc);
+  box-shadow: 0 0 0 3px var(--acc-dim);
+}
+/* 题号「2/3」在问题前面，小一号 */
+.ask-idx { margin-right: 8px; font-family: var(--mono); font-size: 11px; color: var(--faint); }
 /* 弹窗里的自由输入占满一行，和 composer 那个一样宽 */
 .ask-input { width: 100%; max-width: none; margin-top: 12px; }
 
@@ -1145,16 +1166,16 @@ td .tag, .tag {
   color: var(--faint); transition: transform .18s ease;
 }
 .confirm.resolved .fold.open { transform: rotate(180deg); }
-/* 已解决的 ask：问题本身。标题只说"已回答"，光有答案看不出在回答什么 */
-.confirm-question {
-  padding: 0 14px 6px; font-size: 12.5px; line-height: 1.75;
-  color: var(--ink); letter-spacing: .03em;
+/* 已解决的 ask：一题一行「问题 → 答案」。标题只说状态，
+   问了什么、答了什么在这块里 */
+.ask-sum {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 0 14px 13px;
 }
-/* 跳过的 ask 没有答案行，问题就是卡片的最后一行——补一点底，
-   别让下一句回答看起来像卡片里的内容 */
-.confirm.resolved.cancelled .confirm-question {
-  color: var(--muted); padding-bottom: 12px;
-}
+.ask-sum-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
+.ask-sum-q { font-size: 12.5px; line-height: 1.75; color: var(--ink); letter-spacing: .03em; }
+.ask-sum-a { font-size: 12px; color: var(--muted); }
+.confirm.resolved.cancelled .ask-sum-q { color: var(--muted); }
 .confirm-head {
   display: flex; align-items: center; gap: 9px;
   padding: 12px 14px; border-bottom: 1px solid var(--hair-soft);
@@ -1170,11 +1191,6 @@ td .tag, .tag {
 .confirm-note { font-size: 11.5px; letter-spacing: .04em; color: var(--faint); line-height: 1.7; }
 .confirm-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 14px; }
 .confirm-actions > .btn { width: auto; padding: 9px 18px; }
-.confirm-verdict {
-  display: flex; align-items: center; gap: 8px;
-  padding: 0 14px 14px; font-size: 11.5px; color: var(--muted);
-}
-.confirm-verdict svg { width: 13px; height: 13px; flex: none; color: var(--ok); }
 
 /* 候选清单：要改哪几行，摊开给用户看 */
 .cands { max-height: 300px; overflow: auto; border-radius: var(--r-btn); background: var(--sunken); }

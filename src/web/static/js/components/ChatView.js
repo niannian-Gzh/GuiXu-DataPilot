@@ -114,9 +114,44 @@ export default {
       if (v) store.answerConfirm(box.ti, box.ci, v);
     };
 
+    /* ---------------- 多问题 ask ----------------
+       一次中断可以问 1-3 个问题，圆点切换，一题答完再下一题 */
+
+    const askItem = (c) =>
+      c.items[c.active] || { question: '', options: [], answer: '', free: '' };
+
+    // 手输优先，其次选中的方向
+    const askValue = (c) => (askItem(c).free || '').trim() || askItem(c).answer;
+
+    // 当前这题有输入、其余题都答过 → 可以发送；否则按钮是"下一题"
+    const askLabel = (c) => (askValue(c)
+      && !c.items.some((it, i) => i !== c.active && !it.answer)
+      ? t.send : t.nextQuestion);
+
+    const pickOption = (c, opt) => {
+      const it = askItem(c);
+      it.answer = opt;
+      it.free = '';
+    };
+
+    const submitAsk = (box) => {
+      const c = box.confirm;
+      const it = askItem(c);
+      const v = ((it.free || '').trim() || it.answer || '').trim();
+      if (!v) return;
+      it.answer = v;
+      it.free = '';
+      // 还有没答的题：跳过去，先让用户看下一题
+      const next = c.items.findIndex((x) => !x.answer);
+      if (next >= 0) { c.active = next; return; }
+      const summary = c.items.map((x) => `${x.question} → ${x.answer}`).join('\n');
+      store.answerConfirm(box.ti, box.ci, summary, c.items.map((x) => x.answer));
+    };
+
     return {
       ...store, i18n: t, today, tries, pickOpen, pickWrap, openPick, pickModel,
       activeConfirm, needsInput, inputHint, submitFree, toggleConfirm,
+      askItem, askValue, askLabel, pickOption, submitAsk,
     };
   },
   template: `
@@ -144,7 +179,7 @@ export default {
 
     <!-- 对话 / 轨迹 / 产物：三个都是【这一个会话】的面，长相不区分。
          「产物」不是页签，它开合右栏——但用户看的是「这一面」，不是机制。
-         见 docs/design-language.md 5.6 -->
+         见 archive/docs/design-language.md 5.6 -->
     <div class="vtabs">
       <button :class="{on: leftTab === 'sessions'}"
               @click="leftTab = 'sessions'">对话</button>
@@ -385,18 +420,13 @@ export default {
                 </svg>
               </div>
 
-              <!-- ask：标题只说"已回答"，问的是什么在这儿 -->
-              <div class="confirm-question" v-if="c.kind === 'ask'">{{ c.question }}</div>
-
-              <!-- 只有 ask 需要这一行：答案在这儿。
-                   确认卡片的终态 head 已经说完了，再来一行"已执行"是重复。
-                   跳过的 ask 也不画：head 已经写着"已跳过"，没有答案可补 -->
-              <div class="confirm-verdict" v-if="c.kind === 'ask' && !c.cancelled">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
-                     stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-                {{ c.verdict }}
+              <!-- ask：标题只说状态，问了什么、答了什么在这儿。
+                   多问题时一行一对，按顺序排；跳过的不写答案 -->
+              <div class="ask-sum" v-if="c.kind === 'ask'">
+                <div class="ask-sum-row" v-for="(it, ii) in c.items" :key="ii">
+                  <span class="ask-sum-q">{{ it.question }}</span>
+                  <span class="ask-sum-a" v-if="!c.cancelled">→ {{ it.answer }}</span>
+                </div>
               </div>
 
               <!-- 展开：当初要动的是哪几条、字段怎么改 -->
@@ -489,7 +519,7 @@ export default {
   <files-panel v-if="turns.length"></files-panel>
 
   <!-- 预览：浮在工作区上的弹窗。遮罩只盖工作区——左栏还亮着、还能点，
-       看一个产出不该把整个应用锁住。见 docs/design-language.md 5.6 -->
+       看一个产出不该把整个应用锁住。见 archive/docs/design-language.md 5.6 -->
   <div class="modal-mask" v-if="viewer" @click.self="viewer = null">
     <div class="modal">
       <div class="modal-head">
@@ -556,17 +586,32 @@ export default {
       </div>
 
       <div class="confirm-body">
-        <!-- ask：问题本身 -->
-        <div class="ask-question" v-if="activeConfirm.confirm.kind === 'ask'">
-          {{ activeConfirm.confirm.question }}
+        <!-- 多问题：顶部一排圆点，答过的填实，点击切换 -->
+        <div class="ask-dots"
+             v-if="activeConfirm.confirm.kind === 'ask' && activeConfirm.confirm.items.length > 1">
+          <button v-for="(it, ii) in activeConfirm.confirm.items" :key="ii"
+                  class="ask-dot"
+                  :class="{on: activeConfirm.confirm.active === ii, done: !!it.answer}"
+                  :title="'第 ' + (ii + 1) + ' 题'"
+                  @click="activeConfirm.confirm.active = ii"></button>
         </div>
 
-        <!-- ask：可选方向。点了直接当回答发出去 -->
+        <!-- ask：当前这一题 -->
+        <div class="ask-question" v-if="activeConfirm.confirm.kind === 'ask'">
+          <span class="ask-idx" v-if="activeConfirm.confirm.items.length > 1">
+            {{ activeConfirm.confirm.active + 1 }}/{{ activeConfirm.confirm.items.length }}
+          </span>
+          {{ askItem(activeConfirm.confirm).question }}
+        </div>
+
+        <!-- ask：可选方向。点了先选中，不直接提交——还有别的题要答 -->
         <div class="ask-options"
-             v-if="activeConfirm.confirm.kind === 'ask' && activeConfirm.confirm.options.length">
-          <button v-for="(o, oi) in activeConfirm.confirm.options" :key="oi"
-                  class="ask-opt" :disabled="busy"
-                  @click="answerConfirm(activeConfirm.ti, activeConfirm.ci, o)">{{ o }}</button>
+             v-if="activeConfirm.confirm.kind === 'ask' && askItem(activeConfirm.confirm).options.length">
+          <button v-for="(o, oi) in askItem(activeConfirm.confirm).options" :key="oi"
+                  class="ask-opt"
+                  :class="{on: askItem(activeConfirm.confirm).answer === o}"
+                  :disabled="busy"
+                  @click="pickOption(activeConfirm.confirm, o)">{{ o }}</button>
         </div>
 
         <!-- 确认卡片：候选清单 -->
@@ -597,8 +642,15 @@ export default {
 
         <div class="confirm-note" v-if="activeConfirm.confirm.note">{{ activeConfirm.confirm.note }}</div>
 
-        <!-- 自由输入：ask 用它回答，手打确认用它敲「删除 166 条」 -->
-        <input v-if="needsInput(activeConfirm.confirm)"
+        <!-- 自由输入：ask 用它逐题回答，手打确认用它敲「删除 166 条」 -->
+        <input v-if="activeConfirm.confirm.kind === 'ask'"
+               class="typed-confirm ask-input"
+               v-model="askItem(activeConfirm.confirm).free"
+               :placeholder="inputHint(activeConfirm.confirm)"
+               :disabled="busy"
+               @keydown.enter.prevent="submitAsk(activeConfirm)">
+
+        <input v-else-if="needsInput(activeConfirm.confirm)"
                class="typed-confirm ask-input"
                v-model="activeConfirm.confirm.free_input"
                :placeholder="inputHint(activeConfirm.confirm)"
@@ -609,11 +661,13 @@ export default {
           <button class="btn" @click="answerConfirm(activeConfirm.ti, activeConfirm.ci, '取消')"
                   :disabled="busy">{{ i18n.cancel }}</button>
 
-          <!-- ask：自由输入 → 发送 -->
+          <!-- ask：一题一题来，全答完才发送 -->
           <button v-if="activeConfirm.confirm.kind === 'ask'"
                   class="btn solid"
-                  :disabled="busy || !activeConfirm.confirm.free_input.trim()"
-                  @click="submitFree(activeConfirm)">发送</button>
+                  :disabled="busy || !askValue(activeConfirm.confirm)"
+                  @click="submitAsk(activeConfirm)">
+            {{ askLabel(activeConfirm.confirm) }}
+          </button>
 
           <!-- 手打确认 -->
           <button v-else-if="activeConfirm.confirm.confirm_mode === 'typed'"

@@ -158,8 +158,9 @@ export const settleConfirm = (c, cancelled, answer = '') => {
   c.resolved = true;
   c.cancelled = !!cancelled;
   c.answer = answer;
+  // ask 的答案逐题画在卡里（见 ChatView 的 ask-sum），这里只留一句状态
   c.verdict = c.kind === 'ask'
-    ? (c.cancelled ? '已跳过' : `已回答：${answer}`)
+    ? (c.cancelled ? '已跳过' : '已回答')
     : (c.cancelled ? '任务已被终止' : '已执行');
 };
 
@@ -204,22 +205,50 @@ export const buildConfirm = (pending, settled = null) => {
   // 它和确认卡片是**同一种中断**——都是「工具挂起，等用户一句话」，
   // 只是 payload 不同（design 工具层 §二）
   if (type === 'ask') {
+    // 一次可以问 1-3 个。旧记录只有 question / options，也归一成一项
+    const src = Array.isArray(pending.questions) && pending.questions.length
+      ? pending.questions
+      : [{
+          question: pending.question || '',
+          options: Array.isArray(pending.options) ? pending.options : [],
+        }];
+
+    // 每题一个槽：选中的方向、手输的原文、最后的答案分开存——
+    // 切换圆点时不丢已经答过的
     const card = {
       kind: 'ask',
       resolved: false,
       verdict: '',
       answer: '',
-      question: pending.question || '',
-      options: Array.isArray(pending.options) ? pending.options.slice(0, 3) : [],
-      free_input: '',
+      items: src.map((q) => ({
+        question: q.question || '',
+        options: Array.isArray(q.options) ? q.options.slice(0, 3) : [],
+        answer: '',
+        free: '',
+      })),
+      active: 0,
       open: false,
       danger: false,
       scope: '提问',
       verb: '发送',
       note: '',
     };
+
     if (settled) {
-      settleConfirm(card, settled.outcome === 'cancelled', settled.answer || '');
+      // 会话里存的是 {questions, answers}；更早的记录只有 question / answer
+      const qs = Array.isArray(settled.questions) && settled.questions.length
+        ? settled.questions
+        : [{ question: settled.question || '' }];
+      const ans = Array.isArray(settled.answers) && settled.answers.length
+        ? settled.answers
+        : (settled.answer ? [{ answer: settled.answer }] : []);
+      card.items = qs.map((q, i) => ({
+        question: q.question || '',
+        options: [],
+        answer: (ans[i] && ans[i].answer) || '',
+        free: '',
+      }));
+      settleConfirm(card, settled.outcome === 'cancelled', '');
     }
     return card;
   }

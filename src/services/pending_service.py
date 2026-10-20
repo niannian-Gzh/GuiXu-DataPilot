@@ -52,7 +52,7 @@ def _cancelled(message: str = "用户取消了操作") -> str:
     )
 
 
-def answer_pending(question: str, session, llm=None):
+def answer_pending(question: str, session, llm=None, answers=None):
     """处理用户对中断的回应。返回 `(action, payload)`。
 
     - `"none"`   —— 不是对中断的回答，交给 agent 正常跑
@@ -96,7 +96,7 @@ def answer_pending(question: str, session, llm=None):
     if ptype == "struct":
         return _handle_struct(question, pending)
     if ptype == "ask":
-        return _handle_ask(question, pending)
+        return _handle_ask(question, pending, answers)
 
     return "none", ""
 
@@ -107,7 +107,7 @@ def answer_pending(question: str, session, llm=None):
 # 只留一个数字的话，展开就只剩空壳
 _CARD_FIELDS = (
     "type", "table", "columns", "records", "affected",
-    "changes", "danger", "question", "options",
+    "changes", "danger", "question", "options", "questions",
 )
 
 
@@ -134,7 +134,14 @@ def settle(pending: dict, tool_result: str) -> dict:
     record = {k: pending[k] for k in _CARD_FIELDS if k in pending}
     record["outcome"] = outcome
     if outcome == "answered":
-        record["answer"] = result.get("answer") or ""
+        # 新续体是 answers 一串；旧记录只有一个 answer
+        got = result.get("answers")
+        if not got:
+            got = [{
+                "question": pending.get("question", ""),
+                "answer": result.get("answer") or "",
+            }]
+        record["answers"] = got
     return record
 
 
@@ -240,14 +247,28 @@ def _handle_struct(question, pending):
     )
 
 
-def _handle_ask(question, pending):
+def _handle_ask(question, pending, answers=None):
     """`ask_user` 的续体：用户说什么，就是工具拿到的什么。
 
     这里不判断内容——选项只是个提示，自由输入永远算数（design 工具层 §二）。
+
+    多问题时答案**带着问题一起回去**：一串光秃秃的字符串，模型没法知道
+    哪句答的是哪问。旧记录只有一个 question，也归一成一条。
     """
-    return "resume", json.dumps(
-        {"ok": True, "answer": question}, ensure_ascii=False,
-    )
+    qs = pending.get("questions") or [{
+        "question": pending.get("question", ""),
+    }]
+    vals = list(answers) if answers else [question]
+    return "resume", json.dumps({
+        "ok": True,
+        "answers": [
+            {
+                "question": q.get("question", ""),
+                "answer": str(vals[i]) if i < len(vals) else "",
+            }
+            for i, q in enumerate(qs)
+        ],
+    }, ensure_ascii=False)
 
 
 def _handle_import(question, pending, llm):

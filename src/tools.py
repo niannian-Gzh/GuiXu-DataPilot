@@ -167,24 +167,36 @@ TOOL_SCHEMAS = [
             "description": (
                 "向用户提问，等回答后再继续。**问题不明确、需要在几个方向里选、"
                 "或缺关键信息时用它，不要猜。**\n"
-                "给了 options 就是让用户选方向（最多 3 个）；不给就是纯澄清。\n"
+                "一次可以问 1-3 个问题；每个问题可以给最多 3 个方向（options），"
+                "不给就是纯澄清。只问一个也传数组。\n"
                 "用户永远可以自由输入——选项只是省事，不是限制。\n"
-                "这个工具会挂起当前流程，用户回答后你会拿到 answer 继续。"
+                "这个工具会挂起当前流程；用户回答后你会拿到 answers，"
+                "按顺序一条一条对应问题。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "question": {
-                        "type": "string",
-                        "description": "要问用户的问题，一句话说清楚缺什么",
-                    },
-                    "options": {
+                    "questions": {
                         "type": "array",
-                        "items": {"type": "string"},
-                        "description": "可选的方向，最多 3 个。不给就是纯澄清",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "question": {
+                                    "type": "string",
+                                    "description": "要问用户的问题，一句话说清楚缺什么",
+                                },
+                                "options": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "可选的方向，最多 3 个。不给就是纯澄清",
+                                },
+                            },
+                            "required": ["question"],
+                        },
+                        "description": "要问的问题，一次 1-3 个。只问一个也传数组",
                     },
                 },
-                "required": ["question"],
+                "required": ["questions"],
             },
         },
     },
@@ -496,21 +508,52 @@ def build_tool_functions(llm, trace):
     def request_import(table_name, file_path):
         return import_service.request_import(file_path, base_ctx.for_table(table_name))
 
-    def ask_user(question, options=None):
+    def ask_user(questions):
         """向用户提问——工具挂起，不碰数据。
+
+        **单问题也传数组**：一个工具一种参数形状，不让模型猜这次是哪种
+        （和 create 合并单条/批量是同一条账）。
 
         它和确认卡片走同一条路：抛 UserInputRequired，用户回答后
         由 pending_service 的续体把它伪装成这次调用的返回。
         区别只在续体：这里是「答案就是结果」，确认卡片是「执行完才算结果」。
         """
+        items = []
+        for q in (questions or []):
+            # 模型偶尔把数组写成字符串数组，统一收成对象，不因此击穿一轮
+            if isinstance(q, str):
+                q = {"question": q}
+            text = str(q.get("question") or "").strip()
+            if not text:
+                continue
+            items.append({
+                "question": text,
+                # options 只是提示，最多 3 个；自由输入永远在
+                "options": [str(o) for o in (q.get("options") or [])][:3],
+            })
+
+        if not items:
+            return json.dumps(
+                {"ok": False, "error": "questions 至少要有一个问题",
+                 "error_type": "invalid_arguments"},
+                ensure_ascii=False,
+            )
+        if len(items) > 3:
+            return json.dumps(
+                {"ok": False, "error": "一次最多问 3 个问题，请拆开或合并",
+                 "error_type": "invalid_arguments"},
+                ensure_ascii=False,
+            )
+
         raise UserInputRequired(
-            question=question,
+            question=items[0]["question"],
             pending_action={
                 "type": "ask",
                 "stage": "confirm",
-                "question": question,
-                # options 只是提示，最多 3 个；自由输入永远在
-                "options": [str(o) for o in (options or [])][:3],
+                "questions": items,
+                # 旧形状留着：老会话里的 pending 只有 question / options
+                "question": items[0]["question"],
+                "options": items[0]["options"],
                 "user_input": base_ctx.trace.data.get("question", ""),
                 "trace_id": base_ctx.trace.id,
             },
