@@ -1,288 +1,251 @@
+"""Excel 导入：扫差异 → 确认 → 写入。
+
+**不认识业务字段。** 三件事都从表定义推：
+
+| 靠什么 | 从哪来 |
+|---|---|
+| Excel 的列 → 表字段 | 表定义的中文名（没标就用字段名） |
+| 判断"这条是新增还是更新" | 表上的**单列唯一约束** |
+| 比哪些列 | Excel 里有、表里也存在的列 |
+
+旧版把软著的 10 个中文列名、9 个比较列、以及"由状态文本派生五个布尔列"
+全写在这里——那是**一张表的结构**，不是导入这件事本身。
+
+## 匹配键为什么只能是唯一列
+
+自增主键不行——Excel 里根本没有那一列。**没有唯一列就没法判断
+"这条是新增还是更新"**，重复导入的判定需要一个依据。所以这种情况
+明确报错，而不是硬猜（猜错的后果是把整批数据导重）。
+
+## 三阶段确认保留
+
+扫描 → 展示差异 → 用户确认口径（新增 / 冲突 / 已删除各自怎么处理）→ 执行。
+追问详情也保留：用户可以问"冲突都有哪些"，系统把全量摊开。
+"""
+
 import json
+
 import pandas as pd
-from services import UserInputRequired
-from display import format_table
+
+import storage
 from audit import log
-from config import setting
-from runner import query_df, transaction
+from services import UserInputRequired, card_columns, card_records
+from runner import query_df, transaction, using
 
 
-
-COLUMN_MAP = {
-    "项目名称": "project_name",
-    "负责人": "owner",
-    "状态": "status_raw",
-    "项目下发时间": "issued_date",
-    "项目下证时间": "certified_date",
-    "分类": "category",
-    "重提项目名": "resubmit_name",
-    "（最新）打回时间": "reject_date",
-    "（打回）提交时间": "resubmit_date",
-    "打回次数": "reject_count",
-}
-
-COMPARE_FIELDS = [
-    "owner", "status_raw", "issued_date", "certified_date",
-    "category", "resubmit_name", "reject_date", "resubmit_date",
-    "reject_count",
-]
+def _match_key(table_name: str) -> str | None:
+    """导入的匹配键：表上的**单列**唯一约束。"""
+    uniq = using(storage.uniques_of, table_name + storage.SOFTDEL_SUFFIX)
+    for cols in uniq:
+        if len(cols) == 1:
+            return cols[0]
+    return None
 
 
-def _normalize_excel(file_path: str) -> pd.DataFrame:
-    df = pd.read_excel(file_path)
-    df.columns = df.columns.str.strip()
-    df = df[list(COLUMN_MAP.keys())].rename(columns=COLUMN_MAP)
+def _map_columns(df: pd.DataFrame, ctx) -> tuple[pd.DataFrame, list[str]]:
+    """Excel 的列名 → 表字段名。
 
-    df["project_name"] = (
-        df["project_name"].astype(str)
-        .str.replace("<br>", "", regex=False)
-        .str.strip()
-    )
+    匹配顺序：字段的中文名 → 字段名本身。对不上的列**丢掉并报告**——
+    悄悄丢列比整批失败好，但用户得知道少了什么。
+    """
+    keys, labels = card_columns(ctx)
+    by_label = {lab: k for k, lab in zip(keys, labels)}
+    by_key = {k: k for k in keys}
 
-    df["is_pending"] = df["status_raw"].str.contains("待提交", na=False)
-    df["is_submitted"] = df["status_raw"].str.contains("已提交", na=False)
-    df["is_rejected"] = df["status_raw"].str.contains("已打回", na=False)
-    df["is_settled"] = df["status_raw"].str.contains("已结算", na=False)
-    df["is_certified"] = df["status_raw"].str.contains("已下证", na=False)
+    mapping, dropped = {}, []
+    for col in df.columns:
+        name = str(col).strip()
+        if name in by_label:
+            mapping[col] = by_label[name]
+        elif name in by_key:
+            mapping[col] = name
+        else:
+            dropped.append(name)
 
-    df["reject_count"] = df["reject_count"].fillna(0).astype(int)
-
-    def _clean_date(v):
-        if v is None:
-            return None
-        try:
-            if pd.isna(v):
-                return None
-        except (TypeError, ValueError):
-            pass
-        s = str(v).strip()
-        if not s or s.lower() in ("nan", "nat", "none"):
-            return None
-        return s[:10]
-
-    for col in ["issued_date", "certified_date", "reject_date", "resubmit_date"]:
-        df[col] = df[col].apply(_clean_date).astype(object)
-
-    return df
+    out = df[list(mapping)].rename(columns=mapping)
+    out.columns = [str(c) for c in out.columns]
+    return out, dropped
 
 
-def _db_value(v):
-    if pd.isna(v) or v is None:
+def _clean(v):
+    """Excel 单元格 → 能写库的值。NaN / NaT 统一成 None。"""
+    if v is None:
         return None
-    return str(v)[:10] if hasattr(v, "year") else str(v)
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(v, "isoformat"):
+        return v.isoformat(sep=" ") if hasattr(v, "hour") else v.isoformat()
+    return v
+
+
+def _row_to_dict(row) -> dict:
+    return {str(k): _clean(v) for k, v in row.items()}
 
 
 def scan(file_path: str, ctx) -> dict:
-    df_excel = _normalize_excel(file_path)
+    """扫一遍差异。返回四种情况 + 被丢弃的列。"""
+    key = _match_key(ctx.table_name)
+    if not key:
+        return {"error": "这张表没有单列唯一约束，导入无法判断哪条是重复的。"
+                         "先在表定义里给一个唯一列（比如订单号）。"}
+
+    raw = pd.read_excel(file_path)
+    raw.columns = raw.columns.astype(str).str.strip()
+    df, dropped = _map_columns(raw, ctx)
+
+    if key not in df.columns:
+        label = key
+        return {"error": f"Excel 里必须有「{label}」这一列——导入靠它判断重复。"}
 
     df_db = query_df(f"SELECT * FROM {ctx.real_table}")
+    db_by_key = {r[key]: r for _, r in df_db.iterrows()}
+    excel_keys = set(df[key])
+    db_keys = set(db_by_key)
 
-    db_by_name = {row["project_name"]: row for _, row in df_db.iterrows()}
-    excel_names = set(df_excel["project_name"])
-    db_names = set(db_by_name.keys())
+    compare = [c for c in df.columns if c != key and c in df_db.columns]
 
-    new_records = []
-    conflicts = []
-    unchanged = []
-    deleted_in_db = []
+    new_records, conflicts, unchanged, deleted_in_db = [], [], [], []
 
-    for _, excel_row in df_excel.iterrows():
-        name = excel_row["project_name"]
-        if name not in db_by_name:
-            new_records.append(_row_to_dict(excel_row))
+    for _, row in df.iterrows():
+        k = row[key]
+        if k not in db_by_key:
+            new_records.append(_row_to_dict(row))
             continue
 
-        db_row = db_by_name[name]
-
+        db_row = db_by_key[k]
         if db_row.get("is_deleted"):
             deleted_in_db.append({
-                "project_name": name,
-                "excel_data": _row_to_dict(excel_row),
+                "key": str(k),
+                "excel_data": _row_to_dict(row),
                 "db_data": _row_to_dict(db_row),
             })
             continue
 
         changes = {}
-        for field in COMPARE_FIELDS:
-            excel_val = _db_value(excel_row.get(field))
-            db_val = _db_value(db_row.get(field))
-            if excel_val != db_val:
+        for field in compare:
+            excel_val, db_val = _clean(row.get(field)), _clean(db_row.get(field))
+            if str(excel_val) != str(db_val):
                 changes[field] = {"db": db_val, "excel": excel_val}
 
         if changes:
             conflicts.append({
-                "project_name": name,
-                "changes": changes,
-                "excel_data": _row_to_dict(excel_row),
+                "key": str(k), "changes": changes, "excel_data": _row_to_dict(row),
             })
         else:
-            unchanged.append(name)
+            unchanged.append(str(k))
 
-    missing_from_excel = [
-        {"project_name": n, "owner": db_by_name[n].get("owner")}
-        for n in (db_names - excel_names)
-        if not db_by_name[n].get("is_deleted")
+    missing = [
+        {"key": str(k), "data": _row_to_dict(db_by_key[k])}
+        for k in (db_keys - excel_keys)
+        if not db_by_key[k].get("is_deleted")
     ]
 
     return {
+        "key_column": key,
+        "dropped_columns": dropped,
+        "compared_columns": compare,
         "new_records": new_records,
         "deleted_in_db": deleted_in_db,
         "conflicts": conflicts,
         "unchanged": unchanged,
-        "missing_from_excel": missing_from_excel,
+        "missing_from_excel": missing,
     }
 
 
 def request_import(file_path: str, ctx) -> str:
     result = scan(file_path, ctx)
+    if result.get("error"):
+        return json.dumps(
+            {"ok": False, "error": result["error"], "error_type": "invalid"},
+            ensure_ascii=False,
+        )
 
-    has_diff = bool(result["new_records"] or result["deleted_in_db"] or result["conflicts"])
+    has_diff = bool(
+        result["new_records"] or result["deleted_in_db"] or result["conflicts"]
+    )
     if not has_diff:
         return json.dumps({
-            "status": "no_change",
-            "message": f"扫描完成，共 {len(result['unchanged'])} 条记录无变化，无需导入。",
+            "ok": True, "status": "no_change",
+            "message": f"扫描完成，{len(result['unchanged'])} 条无变化，无需导入。",
+            "dropped_columns": result["dropped_columns"],
         }, ensure_ascii=False)
 
-    pending = {
-        "type": "import",
-        "stage": "awaiting",
-        "table_name": ctx.table_name,
-        "real_table": ctx.real_table,
-        "scan_result": result,
-        "file_path": file_path,
-        "user_input": ctx.trace.data["question"],
-        "trace_id": ctx.trace.id,
-    }
+    # 卡片：四类差异各一行，用户一眼看清各有多少
+    rows = [
+        ["新增", len(result["new_records"]), "文件里有、库里没有"],
+        ["字段冲突", len(result["conflicts"]), "同一个键，字段对不上"],
+        ["已删除待恢复", len(result["deleted_in_db"]), "库里是删除态、文件里又出现"],
+        ["文件缺失", len(result["missing_from_excel"]), "库里有、文件里没有（不影响）"],
+    ]
+
     raise UserInputRequired(
         question="导入需要用户确认",
-        pending_action=pending,
+        pending_action={
+            "type": "import",
+            "stage": "awaiting",
+            "table": ctx.table_name,
+            "columns": ["类别", "条数", "说明"],
+            "records": rows,
+            "affected": len(result["new_records"]),
+            "danger": False,
+            # —— 内部字段 ——
+            "table_name": ctx.table_name,
+            "real_table": ctx.real_table,
+            "scan_result": result,
+            "file_path": file_path,
+            "user_input": ctx.trace.data["question"],
+            "trace_id": ctx.trace.id,
+        },
     )
 
 
-def format_import_summary(scan_result: dict) -> str:
-    parts = ["扫描完成，发现以下需要确认的情况：\n"]
-    idx = 1
-
-    new_records = scan_result["new_records"]
-    if new_records:
-        shown = new_records[:setting("display.conflict_sample_count")]
-        rows = [{"项目名称": r["project_name"], "负责人": r["owner"], "分类": r["category"]} for r in shown]
-        parts.append(f"## {idx}. 新记录 {len(new_records)} 条\n")
-        parts.append(format_table(rows))
-        if len(new_records) > setting("display.conflict_sample_count"):
-            parts.append(f"\n（共 {len(new_records)} 条，此处仅显示前 {setting("display.conflict_sample_count")} 条）")
-        parts.append("")
-        idx += 1
-
-    deleted = scan_result["deleted_in_db"]
-    if deleted:
-        shown = deleted[:setting("display.conflict_sample_count")]
-        rows = [{"项目名称": r["project_name"]} for r in shown]
-        parts.append(f"## {idx}. 已删除记录 {len(deleted)} 条（数据库中为软删除状态）\n")
-        parts.append(format_table(rows))
-        if len(deleted) > setting("display.conflict_sample_count"):
-            parts.append(f"\n（共 {len(deleted)} 条）")
-        parts.append("")
-        idx += 1
-
-    conflicts = scan_result["conflicts"]
-    if conflicts:
-        shown = conflicts[:setting("display.conflict_sample_count")]
-        rows = []
-        for c in shown:
-            for field, change in c["changes"].items():
-                rows.append({
-                    "项目名称": c["project_name"],
-                    "字段": field,
-                    "数据库当前值": change["db"] or "（空）",
-                    "Excel值": change["excel"] or "（空）",
-                })
-        parts.append(f"## {idx}. 字段冲突 {len(conflicts)} 条\n")
-        parts.append(format_table(rows))
-        if len(conflicts) > setting("display.conflict_sample_count"):
-            parts.append(f"\n（共 {len(conflicts)} 条，此处仅显示前 {setting("display.conflict_sample_count")} 条的字段变化）")
-        parts.append("")
-
-    missing = scan_result["missing_from_excel"]
-    if missing and new_records:
-        shown = missing[:setting("display.conflict_sample_count")]
-        rows = [{"项目名称": r["project_name"]} for r in shown]
-        parts.append(f"## 数据库中以下 {len(missing)} 条记录未出现在 Excel 中\n")
-        parts.append("（如果其中有改名，请一并指出）\n")
-        parts.append(format_table(rows))
-        if len(missing) > setting("display.conflict_sample_count"):
-            parts.append(f"\n（共 {len(missing)} 条）")
-        parts.append("")
-
-    parts.append("---\n")
-    parts.append("请回答：\n")
-    q_idx = 1
-    if new_records:
-        parts.append(f"{q_idx}. 新记录中有没有改名？（格式：旧名 → 新名，或回复\"都是新的\"）")
-        q_idx += 1
-    if deleted:
-        parts.append(f"{q_idx}. 已删除的 {len(deleted)} 条怎么处理？（\"保持删除\" 或 \"重新导入\"）")
-        q_idx += 1
-    if conflicts:
-        parts.append(f"{q_idx}. 冲突的 {len(conflicts)} 条以谁为准？（\"以Excel为准\" 或 \"不更新\"）")
-
-    return "\n".join(parts)
-
-
 def format_detail(scan_result: dict, detail_type: str) -> str:
+    """把某一类差异全量摊开。给"追问详情"用。"""
+    key = scan_result.get("key_column", "键")
     if detail_type == "conflicts":
-        conflicts = scan_result["conflicts"]
-        if not conflicts:
-            return "没有冲突记录。"
-        rows = []
-        for c in conflicts:
-            for field, change in c["changes"].items():
-                rows.append({
-                    "项目名称": c["project_name"],
-                    "字段": field,
-                    "数据库当前值": change["db"] or "（空）",
-                    "Excel值": change["excel"] or "（空）",
-                })
-        return f"**全部冲突记录（共 {len(conflicts)} 条）：**\n\n" + format_table(rows)
+        items = scan_result["conflicts"]
+        lines = [f"**全部冲突（共 {len(items)} 条）**", ""]
+        for c in items:
+            lines.append(f"- `{c['key']}`")
+            for field, d in c["changes"].items():
+                lines.append(f"    {field}：库内 `{d['db']}` → Excel `{d['excel']}`")
+        return "\n".join(lines)
 
     if detail_type == "new":
-        records = scan_result["new_records"]
-        if not records:
-            return "没有新记录。"
-        rows = [{"项目名称": r["project_name"], "负责人": r["owner"], "分类": r["category"]} for r in records]
-        return f"**全部新记录（共 {len(records)} 条）：**\n\n" + format_table(rows)
+        items = scan_result["new_records"]
+        cols = scan_result.get("compared_columns", [])[:3]
+        lines = [f"**全部新记录（共 {len(items)} 条）**", ""]
+        for r in items:
+            preview = "，".join(f"{c}={r.get(c)}" for c in cols)
+            lines.append(f"- `{r.get(key, '')}`  {preview}")
+        return "\n".join(lines)
 
     if detail_type == "deleted":
-        records = scan_result["deleted_in_db"]
-        if not records:
-            return "没有已删除记录。"
-        rows = [{"项目名称": r["project_name"]} for r in records]
-        return f"**全部已删除记录（共 {len(records)} 条）：**\n\n" + format_table(rows)
+        items = scan_result["deleted_in_db"]
+        return "\n".join(
+            [f"**全部已删除（共 {len(items)} 条）**", ""]
+            + [f"- `{d['key']}`" for d in items]
+        )
 
-    if detail_type == "missing":
-        records = scan_result["missing_from_excel"]
-        if not records:
-            return "没有缺失记录。"
-        rows = [{"项目名称": r["project_name"]} for r in records]
-        return f"**数据库中存在但 Excel 中没有的记录（共 {len(records)} 条）：**\n\n" + format_table(rows)
-
-    return "未识别的查询类型。"
+    items = scan_result["missing_from_excel"]
+    return "\n".join(
+        [f"**库里有、Excel 没有（共 {len(items)} 条）**", ""]
+        + [f"- `{m['key']}`" for m in items]
+    )
 
 
 def parse_user_answer(user_input: str, scan_result: dict, llm) -> dict:
-    new_records = scan_result["new_records"]
-    deleted = scan_result["deleted_in_db"]
-    conflicts = scan_result["conflicts"]
-    missing = scan_result["missing_from_excel"]
-
+    """把用户的确认话解析成口径。"""
+    key = scan_result.get("key_column", "键")
     context = {
-        "新记录": [r["project_name"] for r in new_records][:30],
-        "数据库有但Excel没有": [r["project_name"] for r in missing][:30],
-        "已删除记录": [r["project_name"] for r in deleted][:30],
-        "冲突记录": [r["project_name"] for r in conflicts][:30],
-        "是否有新记录": bool(new_records),
-        "是否有已删除": bool(deleted),
-        "是否有冲突": bool(conflicts),
+        "键列": key,
+        "新记录": [r.get(key) for r in scan_result["new_records"]][:30],
+        "数据库有但Excel没有": [r["key"] for r in scan_result["missing_from_excel"]][:30],
+        "已删除记录": [r["key"] for r in scan_result["deleted_in_db"]][:30],
+        "冲突记录": [r["key"] for r in scan_result["conflicts"]][:30],
     }
 
     prompt = f"""用户正在回答导入确认问题。请解析用户输入，返回 JSON。
@@ -296,13 +259,13 @@ def parse_user_answer(user_input: str, scan_result: dict, llm) -> dict:
 
 追问详情：
 {{"action": "show_detail", "detail_type": "conflicts"}}
-detail_type 取值：conflicts（全部冲突）/ new（全部新记录）/ deleted（全部已删除）/ missing（数据库有Excel没有）
+detail_type 取值：conflicts / new / deleted / missing
 
 做出决策：
-{{"action": "submit", "rename_map": {{"旧名": "新名"}}, "deleted_action": "keep", "conflict_action": "excel"}}
-- rename_map：改名映射，没有改名时为空对象 {{}}
+{{"action": "submit", "rename_map": {{"旧键值": "新键值"}},
+  "deleted_action": "keep", "conflict_action": "excel"}}
 - deleted_action："keep"（保持删除）或 "restore"（重新导入）
-- conflict_action："excel"（以Excel为准）或 "db"（不更新）
+- conflict_action："excel"（以 Excel 为准）或 "db"（不更新）
 
 取消：
 {{"action": "cancel"}}
@@ -311,111 +274,80 @@ detail_type 取值：conflicts（全部冲突）/ new（全部新记录）/ dele
 
     raw = llm.chat("你是一个解析助手", prompt).strip()
     if raw.startswith("```"):
-        lines = [l for l in raw.split("\n") if not l.startswith("```")]
-        raw = "\n".join(lines).strip()
-
+        raw = "\n".join(l for l in raw.split("\n") if not l.startswith("```")).strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         return {"action": "unknown"}
 
 
-def _update_all_fields(con, real_table, name, data):
-    con.execute(f"""
-        UPDATE {real_table} SET
-            owner = ?, status_raw = ?, issued_date = ?,
-            certified_date = ?, category = ?,
-            resubmit_name = ?, reject_date = ?, resubmit_date = ?,
-            reject_count = ?,
-            is_pending = ?, is_submitted = ?, is_rejected = ?,
-            is_settled = ?, is_certified = ?
-        WHERE project_name = ?
-    """, [
-        data["owner"], data["status_raw"], data["issued_date"],
-        data["certified_date"], data["category"],
-        data["resubmit_name"], data["reject_date"], data["resubmit_date"],
-        data["reject_count"],
-        data["is_pending"], data["is_submitted"], data["is_rejected"],
-        data["is_settled"], data["is_certified"],
-        name,
-    ])
-
-
-def _row_to_dict(row) -> dict:
-    """把 Series 转成 dict，NaN / NaT 统一转 None。"""
-    result = {}
-    for k, v in row.items():
-        if v is None:
-            result[k] = None
+def _write_rows(con, table_name: str, rows: list[dict]) -> None:
+    """按每行自己的键集合生成 INSERT——列不写死。"""
+    for r in rows:
+        cols = [c for c in r if r[c] is not None]
+        if not cols:
             continue
-        try:
-            if pd.isna(v):
-                result[k] = None
-                continue
-        except (TypeError, ValueError):
-            pass
-        result[k] = v
-    return result
+        sql = (
+            f"INSERT INTO {storage.quote(table_name)} "
+            f"({', '.join(storage.quote(c) for c in cols)}) "
+            f"VALUES ({', '.join('?' * len(cols))})"
+        )
+        con.execute(sql, [r[c] for c in cols])
+
+
+def _update_row(con, table_name: str, key: str, key_value, data: dict) -> None:
+    """按匹配键更新——SET 的列按 data 的键动态生成。"""
+    cols = [c for c in data if c != key and data[c] is not None]
+    if not cols:
+        return
+    sets = ", ".join(f"{storage.quote(c)} = ?" for c in cols)
+    con.execute(
+        f"UPDATE {storage.quote(table_name)} SET {sets} "
+        f"WHERE {storage.quote(key)} = ?",
+        [data[c] for c in cols] + [key_value],
+    )
 
 
 def execute_import(scan_result, rename_map, deleted_action, conflict_action,
-real_table, trace_id, user_input):
-    stats = {"renamed": 0, "restored": 0, "inserted": 0, "updated": 0}
+                   table_name, trace_id, user_input):
+    """执行导入。整批一个事务——要么全进，要么全不进。"""
+    key = scan_result["key_column"]
+    rename_map = rename_map or {}
 
+    def _rename(record):
+        k = record.get(key)
+        if k in rename_map:
+            record = dict(record)
+            record[key] = rename_map[k]
+        return record
+
+    inserted = updated = restored = 0
     with transaction() as tx:
-        # 1. 改名
-        for old_name, new_name in rename_map.items():
-            tx.execute(
-                f"UPDATE {real_table} SET project_name = ? WHERE project_name = ?",
-                [new_name, old_name],
-            )
-            stats["renamed"] += 1
+        for r in scan_result["new_records"]:
+            _write_rows(tx, table_name, [_rename(r)])
+            inserted += 1
 
-        # 2. 恢复软删除
+        for c in scan_result["conflicts"]:
+            if conflict_action == "excel":
+                _update_row(tx, table_name, key, c["key"], c["excel_data"])
+                updated += 1
+
         if deleted_action == "restore":
-            for rec in scan_result["deleted_in_db"]:
-                tx.execute(f"""
-                    UPDATE {real_table} SET
-                        is_deleted = false, deleted_at = NULL,
-                        deleted_by = NULL, delete_trace_id = NULL
-                    WHERE project_name = ?
-                """, [rec["project_name"]])
-                _update_all_fields(tx, real_table, rec["project_name"], rec["excel_data"])
-                stats["restored"] += 1
-
-        # 3. 新增
-        rename_targets = set(rename_map.values())
-        for rec in scan_result["new_records"]:
-            if rec["project_name"] in rename_targets:
-                continue
-
-            tx.execute(f"""
-                INSERT INTO {real_table} (
-                    project_name, owner, status_raw, issued_date, certified_date,
-                    category, resubmit_name, reject_date, resubmit_date, reject_count,
-                    is_pending, is_submitted, is_rejected, is_settled, is_certified,
-                    is_deleted, deleted_at, deleted_by, delete_trace_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, [
-                rec["project_name"], rec["owner"], rec["status_raw"],
-                rec["issued_date"], rec["certified_date"], rec["category"],
-                rec["resubmit_name"], rec["reject_date"], rec["resubmit_date"],
-                rec["reject_count"],
-                rec["is_pending"], rec["is_submitted"], rec["is_rejected"],
-                rec["is_settled"], rec["is_certified"],
-                False, None, None, None,
-            ])
-            stats["inserted"] += 1
-
-        # 4. 冲突
-        if conflict_action == "excel":
-            for rec in scan_result["conflicts"]:
-                _update_all_fields(tx, real_table, rec["project_name"], rec["excel_data"])
-                stats["updated"] += 1
+            for d in scan_result["deleted_in_db"]:
+                tx.execute(
+                    f"UPDATE {storage.quote(table_name + storage.SOFTDEL_SUFFIX)} "
+                    f"SET is_deleted = 0, deleted_at = NULL "
+                    f"WHERE {storage.quote(key)} = ?",
+                    [d["key"]],
+                )
+                restored += 1
 
     log("import", {
-        "trace_id": trace_id,
-        "user_input": user_input,
-        "stats": stats,
+        "trace_id": trace_id, "user_input": user_input, "table": table_name,
+        "inserted": inserted, "updated": updated, "restored": restored,
     })
-    return stats
+    return json.dumps({
+        "ok": True, "table": table_name,
+        "inserted": inserted, "updated": updated, "restored": restored,
+        "affected": inserted + updated + restored,
+    }, ensure_ascii=False)

@@ -197,12 +197,14 @@ def _handle_transform(question, session, pending):
         valid = delete_service.is_bulk_confirm(question, n)
 
     if valid:
-        count = transform_service.execute_transform(
-            pending, pending["real_table"],
+        result = json.loads(transform_service.execute_transform(
+            pending, pending["table_name"],
             pending["trace_id"], pending["user_input"],
-        )
+        ))
         session.clear_pending()
-        return True, f"已修改 {count} 条记录。"
+        if not result.get("ok"):
+            return True, f"修改失败：{result.get('error')}"
+        return True, f"已在「{pending['table']}」修改 {result['affected']} 条记录。"
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
@@ -243,21 +245,18 @@ def _handle_import(question, session, pending, llm):
         deleted_action = parsed.get("deleted_action", "keep")
         conflict_action = parsed.get("conflict_action", "db")
 
-        stats = import_service.execute_import(
+        result = json.loads(import_service.execute_import(
             scan_result, rename_map, deleted_action, conflict_action,
-pending["real_table"], pending["trace_id"], pending["user_input"],
-        )
+            pending["table_name"], pending["trace_id"], pending["user_input"],
+        ))
         session.clear_pending()
+        if not result.get("ok"):
+            return True, f"导入失败：{result.get('error')}"
 
-        parts = ["导入完成。\n"]
-        if stats["renamed"]:
-            parts.append(f"- 改名：{stats['renamed']} 条")
-        if stats["restored"]:
-            parts.append(f"- 恢复删除：{stats['restored']} 条")
-        if stats["inserted"]:
-            parts.append(f"- 新增：{stats['inserted']} 条")
-        if stats["updated"]:
-            parts.append(f"- 更新：{stats['updated']} 条")
+        parts = ["导入完成。"]
+        for label, key in (("新增", "inserted"), ("更新", "updated"), ("恢复删除", "restored")):
+            if result.get(key):
+                parts.append(f"- {label}：{result[key]} 条")
         return True, "\n".join(parts)
 
     return True, "抱歉，我没理解你的回答。请回答之前的问题，或回复「取消」。"

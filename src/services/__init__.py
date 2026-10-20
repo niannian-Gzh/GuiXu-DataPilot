@@ -75,3 +75,22 @@ def card_records(ctx, rows: list[dict]) -> tuple[list[str], list[list]]:
     """
     keys, labels = card_columns(ctx)
     return labels, [[r.get(k) for k in keys] for r in rows]
+
+
+def jsonable(v):
+    """DataFrame 里的值转成 JSON 能吃的。
+
+    numpy 标量（int64 / float64）和 pandas Timestamp 都过不了
+    `json.dumps`——日期统一成 ISO 字符串，跟库里存的格式一致。
+    放在这里是因为查询、规则重塑、导入三个出口都要用。
+    """
+    import datetime
+    import pandas as pd
+
+    if v is None:
+        return None
+    if isinstance(v, (str, bool, int, float)):
+        return v
+    if isinstance(v, (pd.Timestamp, datetime.date, datetime.datetime)):
+        return v.isoformat(sep=" ") if isinstance(v, pd.Timestamp) else v.isoformat()
+    return v.item() if hasattr(v, "item") else str(v)

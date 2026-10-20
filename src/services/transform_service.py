@@ -3,8 +3,7 @@ from runner import query_df, transaction
 from nl2sql import generate_transform_sql
 from guard import check_transform_safety
 from audit import log
-from display import format_table
-from services import UserInputRequired
+from services import UserInputRequired, jsonable
 from config import setting
 
 
@@ -86,20 +85,27 @@ def request_transform(description: str, ctx) -> str:
             ensure_ascii=False,
         )
 
-    limit = PREVIEW_LIMIT
-    records = preview_df.head(limit).to_dict("records")
+    head = preview_df.head(PREVIEW_LIMIT)
+
+    # 卡片的列名走 `_label_for_column`——它会把 `x_before` / `x_after`
+    # 还原成「X（改前）」「X（改后）」，其余列取表定义里的中文名
+    labels = [_label_for_column(c, ctx.table_name) for c in head.columns]
+    card_rows = [[jsonable(v) for v in row] for row in head.values.tolist()]
 
     pending = {
         "type": "transform",
         "stage": "confirm",
+        # —— 卡片字段 ——
+        "table": ctx.table_name,
+        "columns": labels,
+        "records": card_rows,
+        "affected": len(preview_df),
+        "danger": is_full_table,
+        # —— 内部字段 ——
         "table_name": ctx.table_name,
         "real_table": ctx.real_table,
         "update_sql": update_sql,
         "preview_sql": preview_sql,
-        "columns": list(preview_df.columns),
-        "rows": records,
-        "total": len(preview_df),
-        "is_full_table": is_full_table,
         "user_input": ctx.trace.data["question"],
         "trace_id": ctx.trace.id,
     }
@@ -111,14 +117,14 @@ def request_transform(description: str, ctx) -> str:
 
 
 def execute_transform(pending: dict, table_name: str,
-                     trace_id: str, user_input: str) -> int:
-    """执行变换。事务包裹，失败自动回滚。
+                     trace_id: str, user_input: str) -> str:
+    """执行变换。事务包裹，失败自动回滚。返回 JSON。
 
-    影响行数用 pending["total"]——那是预览 SELECT 的行数，
-    和 UPDATE 的 WHERE 条件一致，等于真实受影响行数。
+    规则型操作给 `operation`（"干了什么"），不给 `changes`——
+    明细型（update）才逐条给改前改后。design 工具层的分法。
     """
     update_sql = pending["update_sql"]
-    count = pending["total"]
+    affected = pending["affected"]
 
     with transaction() as tx:
         tx.execute(update_sql)
@@ -126,7 +132,13 @@ def execute_transform(pending: dict, table_name: str,
     log("transform", {
         "trace_id": trace_id,
         "user_input": user_input,
+        "table": table_name,
         "update_sql": update_sql,
-        "affected_count": count,
+        "affected_count": affected,
     })
-    return count
+    return json.dumps({
+        "ok": True,
+        "table": table_name,
+        "affected": affected,
+        "operation": user_input,
+    }, ensure_ascii=False)
