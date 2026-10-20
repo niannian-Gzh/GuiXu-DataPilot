@@ -24,7 +24,7 @@ from config import (
 import config_store as store
 from providers import PROVIDERS, get_provider, guess_model
 from settings_spec import PARAMS, GROUPS, param_by_key, defaults as spec_defaults
-from cleanup import cleanup
+from cleanup import cleanup, cleanup_snapshots
 from services import UserInputRequired
 from services import pending_service
 from fastapi.staticfiles import StaticFiles
@@ -105,6 +105,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[存储] 启动检查失败：{e}")
     cleanup()
+    # 快照清理有自己的开关和保留期，和软删行分开走
+    try:
+        cleanup_snapshots()
+    except Exception as e:
+        print(f"[清理] 快照清理失败：{e}")
     yield
     _sessions.clear()
 

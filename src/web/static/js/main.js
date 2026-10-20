@@ -48,33 +48,33 @@ createApp({
     const saving = ref(false);
     const saveMsg = ref(null);
 
-    /* 设置页的导航。settings_spec 里那 4 组是按「后端模块」分的，
-       这里是按「用户想改什么」分的——两套划分本来就不是一回事，
-       硬凑成一套只会让某一方别扭，所以在前端做一次映射 */
-    const NAV_GROUPS = [
-      { id: 'model',      name: '模型' },
-      { id: 'layout',     name: '布局' },
-      { id: 'prefs',      name: '交互偏好' },
-      { id: 'advanced',   name: '高级' },
-      { id: 'data',       name: '数据' },
-      { id: 'about',      name: '关于' },
+    /* 设置页的导航。分组按「用户会怎么找」——
+       布局和关于不走参数表，所以只在这边有 */
+    const BASE_GROUPS = [
+      { id: 'model',   name: '模型' },
+      { id: 'layout',  name: '布局' },
+      { id: 'display', name: '展示与确认' },
+      { id: 'keep',    name: '数据保留' },
+      { id: 'upload',  name: '上传' },
+      { id: 'about',   name: '关于' },
     ];
 
-    /* 分组 -> 参数键。外观/布局/数据/关于不走后端参数表，所以不列；
-       高级组按 level 现取，不在这儿再抄一遍清单 */
+    /* 分组 -> 参数键。布局/关于不走后端参数表，所以不列。
+       开发者组按 group 现取，不在这儿再抄一遍清单 */
     const GROUP_KEYS = {
-      model: ['llm.max_tokens', 'llm.temperature'],
-      prefs: [
-        'safety.retention_days',
+      model: ['llm.max_tokens', 'llm.temperature', 'llm.reasoning_effort'],
+      display: [
         'display.bulk_threshold',
-        'display.max_llm_rows',
         'display.display_all_threshold',
         'display.display_sample_count',
         'display.conflict_sample_count',
-        'display.preview_rows',
-        'agent.keep_recent_turns',
-        'agent.tool_result_limit',
       ],
+      keep: [
+        'safety.retention_days',
+        'safety.snapshot_retention_days',
+        'safety.snapshot_auto_clean',
+      ],
+      upload: ['display.preview_rows'],
     };
     const dragging = ref(false);
     const fileInput = ref(null);
@@ -146,19 +146,27 @@ createApp({
 
 
     /* ---------------- 设置 ---------------- */
-    const allGroups = computed(() => NAV_GROUPS);
+    /* 开发者页签**默认不出现**——它不是一个给用户找东西的地方，
+       入口是导航栏右侧那个低调的开关 */
+    const allGroups = computed(() => {
+      const groups = [...BASE_GROUPS];
+      if (advanced.value) {
+        groups.splice(groups.length - 1, 0, { id: 'developer', name: '开发者' });
+      }
+      return groups;
+    });
 
     // 这几组的内容模板直接写，不来自后端参数表
     const isLocalGroup = computed(() =>
-      ['layout', 'data', 'about'].includes(activeGroup.value));
+      ['layout', 'about'].includes(activeGroup.value));
 
     /** 某个分组该显示哪些参数 */
     const paramsOfGroup = (gid) => {
       const params = settings.value.params || [];
-      if (gid === 'advanced') {
-        // 高级组就是全部 advanced 参数，按 level 现取——
-        // 以后新增一个高级参数，不用回来补清单
-        return params.filter((p) => p.level === 'advanced');
+      if (gid === 'developer') {
+        // 开发者组 = 所有 group: developer 的参数，现取；
+        // 以后新增一个内部参数，不用回来补清单
+        return params.filter((p) => p.group === 'developer');
       }
       const keys = GROUP_KEYS[gid] || [];
       return params.filter((p) => keys.includes(p.key));

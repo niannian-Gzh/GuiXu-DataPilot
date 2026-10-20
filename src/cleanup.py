@@ -1,4 +1,4 @@
-"""清理过期的软删数据。启动时调用一次。
+"""清理过期的软删数据和快照。启动时调用一次。
 
 **跨所有表。** 旧版把 projects 的列名写死在里面
 （`project_name` / `delete_trace_id`），换一张表就崩——
@@ -8,21 +8,25 @@ SQL 也换了：旧版用 `NOW() - INTERVAL '7 days'`，那是 PG 的语法。
 SQLite 写 `datetime('now', '-7 days')`，或者直接拿算好的字符串比——
 这里用后者，因为 `deleted_at` 存的就是本地时间字符串，
 两边格式一致才能比。
+
+**两种清理的保留期不同**：软删行 7 天，快照 30 天——快照更重，
+能回头的时间也该更长。快照那一头还有开关，可以整个关掉。
 """
 
 from datetime import datetime, timedelta
 
-from audit import log
+from audit import record
 from config import setting
-from runner import connect
+from runner import connect, transaction
+from snapshot import cleanup as snapshot_cleanup
 from storage import SOFTDEL_SUFFIX, list_tables, quote
 
 
 def cleanup() -> int:
     """物理删掉超过保留期的软删行。返回删了几条。
 
-    **自己拿一个连接走完全程**：`storage` 的函数要连接（它是纯函数，
-    不管连接的生命周期），而这里要跨表循环，一路开新连接没必要。
+    **一个事务走完全程**：删除和审计要么一起成，要么一起不成。
+    旧版是先写文件审计、再单独删——中间崩了就是假账。
 
     **只删 `deleted_at` 有值的**——那是真的被删过。没有时间的
     （比如手工把 is_deleted 改成 1，或者补裸表时带进来的历史状态）
@@ -35,33 +39,47 @@ def cleanup() -> int:
     condition = "is_deleted = 1 AND deleted_at IS NOT NULL AND deleted_at < ?"
 
     total = 0
-    con = connect()
-    try:
-        for table in list_tables(con):
+    with transaction() as tx:
+        for table in list_tables(tx):
             all_name = quote(table + SOFTDEL_SUFFIX)
-            n = con.execute(
+            n = tx.execute(
                 f"SELECT count(*) FROM {all_name} WHERE {condition}", [cutoff]
             ).fetchone()[0]
             if not n:
                 continue
 
-            # 先记审计，再删——顺序反了就查不出"谁被清掉了"
-            log("cleanup", {
+            tx.execute(f"DELETE FROM {all_name} WHERE {condition}", [cutoff])
+            record(tx, "cleanup", {
                 "trigger": "startup",
                 "table": table,
                 "retention_days": days,
                 "deleted_count": int(n),
             })
-
-            con.execute(f"DELETE FROM {all_name} WHERE {condition}", [cutoff])
             total += n
-    finally:
-        con.close()
 
     if total:
         print(f"[清理] 已物理删除 {total} 条过期数据")
+
     return int(total)
+
+
+def cleanup_snapshots() -> int:
+    """按保留期删快照。开关关掉时直接返回 0。"""
+    if setting("safety.snapshot_auto_clean") != "on":
+        return 0
+
+    days = setting("safety.snapshot_retention_days")
+    con = connect()
+    try:
+        n = snapshot_cleanup(con, days=days)
+    finally:
+        con.close()
+
+    if n:
+        print(f"[清理] 已删除 {n} 份过期快照")
+    return int(n)
 
 
 if __name__ == "__main__":
     cleanup()
+    cleanup_snapshots()

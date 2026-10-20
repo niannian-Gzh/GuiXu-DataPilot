@@ -270,7 +270,7 @@ export default {
         </button>
         <span style="flex:1"></span>
         <button class="t-adv" :class="{on: advanced}" @click="advanced = !advanced">
-          {{ advanced ? '高级模式已开' : '高级模式' }}
+          {{ advanced ? '开发者模式已开' : '开发者模式' }}
         </button>
       </div>
     </div>
@@ -386,9 +386,9 @@ export default {
         </div>
       </section>
 
-      <!-- ---------- 交互偏好 / 高级 ---------- -->
+      <!-- ---------- 参数表驱动的几组 ---------- -->
       <section class="set-group"
-               v-else-if="activeGroup === 'prefs' || activeGroup === 'advanced'">
+               v-else-if="['display','keep','upload','developer'].includes(activeGroup)">
         <h3 class="set-h">{{ activeGroupDesc }}</h3>
 
         <div class="set-row" v-for="p in activeGroupParams" :key="p.key">
@@ -402,7 +402,7 @@ export default {
             </div>
             <div class="set-hint">{{ p.hint }}</div>
 
-            <div class="set-risk" v-if="p.risk && advanced">
+            <div class="set-risk" v-if="p.risk">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
                 <path d="M8 1.8 1.5 13h13L8 1.8Z"/>
                 <path d="M8 6v3M8 11.4h.01"/>
@@ -412,16 +412,7 @@ export default {
           </div>
 
           <div class="set-f">
-            <!-- 高级项默认锁着，当前值照常可见 -->
-            <div v-if="p.level === 'advanced' && !advanced" class="set-locked">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
-                <rect x="3" y="7" width="10" height="6.5" rx="1.4"/>
-                <path d="M5.6 7V5a2.4 2.4 0 0 1 4.8 0v2"/>
-              </svg>
-              {{ p.value }}
-            </div>
-
-            <div v-else class="set-input"
+            <div class="set-input"
                  :style="{width: (p.min != null || p.max != null) ? '230px' : '270px'}">
               <!-- 取值是封闭集合的参数用下拉，别让用户手打——
                    拼错一个值不报错，只是被静默忽略 -->
@@ -452,80 +443,6 @@ export default {
       </section>
 
       <!-- ---------- 数据 ---------- -->
-      <template v-else-if="activeGroup === 'data'">
-        <section class="set-group">
-          <h3 class="set-h">数据</h3>
-
-          <div class="set-row">
-            <div class="set-l">
-              <div class="set-label">{{ t.exportFiles }}</div>
-              <div class="set-hint">
-                data/exports 与 data/reports 下的全部文件
-                <span v-if="fileCount !== null"> · 共 <b>{{ fileCount }}</b> 个</span>
-              </div>
-            </div>
-            <div class="set-f wrap" v-if="confirmKind !== 'files'">
-              <button class="btn danger" @click="confirmKind = 'files'">{{ t.clearAllFiles }}</button>
-            </div>
-          </div>
-
-          <!-- 确认条就地长出来，不用浏览器原生弹窗——那个会阻断操作，
-               样式脱离界面，按钮文案还跟随系统语言 -->
-          <div class="set-row" v-if="confirmKind === 'files'">
-            <div class="set-l">
-              <div class="confirm-inline">
-                <span class="warn">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
-                    <path d="M8 1.8 1.5 13h13L8 1.8Z"/>
-                    <path d="M8 6v3M8 11.4h.01"/>
-                  </svg>
-                  将永久删除 <b>{{ fileCount ?? '全部' }}</b> 个文件，不可撤销
-                </span>
-                <button class="btn" @click="confirmKind = null">{{ t.cancel }}</button>
-                <button class="btn danger" @click="doClearFiles">{{ t.confirmDelete }}</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="set-row">
-            <div class="set-l">
-              <div class="set-label">{{ t.historySessions }}</div>
-              <div class="set-hint">
-                logs/sessions 下的全部会话记录
-                <span v-if="sessions.length"> · 共 <b>{{ sessions.length }}</b> 个</span>
-              </div>
-            </div>
-            <div class="set-f wrap" v-if="confirmKind !== 'sessions'">
-              <button class="btn danger" @click="confirmKind = 'sessions'">{{ t.deleteAllSessions }}</button>
-            </div>
-          </div>
-
-          <div class="set-row" v-if="confirmKind === 'sessions'">
-            <div class="set-l">
-              <div class="confirm-inline">
-                <span class="warn">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
-                    <path d="M8 1.8 1.5 13h13L8 1.8Z"/>
-                    <path d="M8 6v3M8 11.4h.01"/>
-                  </svg>
-                  将永久删除 <b>{{ sessions.length }}</b> 个会话，含全部对话记录
-                </span>
-                <button class="btn" @click="confirmKind = null">{{ t.cancel }}</button>
-                <button class="btn danger" @click="doClearSessions">{{ t.confirmDelete }}</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="set-row">
-            <div class="set-l">
-              <div class="set-hint">
-                上面两项都不可撤销，清空后不进回收站
-                —— 回收站管的是数据库里的项目记录，不是这里。
-              </div>
-            </div>
-          </div>
-        </section>
-      </template>
 
       <!-- ---------- 关于 ---------- -->
       <template v-else>
@@ -560,13 +477,86 @@ export default {
           <div class="set-row">
             <div class="set-l">
               <div class="set-hint">
-                这些不是偏好设置。数据库路径改错会让 DuckDB 静默新建一个空库，
-                看起来像数据全丢了——所以只给看不给改
+                这些不是偏好设置。数据库路径指向一个文件，
+                改了等于换一个库——所以只给看不给改
               </div>
             </div>
           </div>
         </section>
       </template>
+
+      <!-- 数据保留：保留期参数在上面渲染，这里接手「手动清空」。
+           它不在 v-else-if 链里——keep 组已经被参数区接住了 -->
+      <section class="set-group" v-if="activeGroup === 'keep'">
+        <h3 class="set-h">手动清理</h3>
+
+        <div class="set-row">
+          <div class="set-l">
+            <div class="set-label">{{ t.exportFiles }}</div>
+            <div class="set-hint">
+              data/exports 与 data/reports 下的全部文件
+              <span v-if="fileCount !== null"> · 共 <b>{{ fileCount }}</b> 个</span>
+            </div>
+          </div>
+          <div class="set-f wrap" v-if="confirmKind !== 'files'">
+            <button class="btn danger" @click="confirmKind = 'files'">{{ t.clearAllFiles }}</button>
+          </div>
+        </div>
+
+        <div class="set-row" v-if="confirmKind === 'files'">
+          <div class="set-l">
+            <div class="confirm-inline">
+              <span class="warn">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <path d="M8 1.8 1.5 13h13L8 1.8Z"/>
+                  <path d="M8 6v3M8 11.4h.01"/>
+                </svg>
+                将永久删除 <b>{{ fileCount ?? '全部' }}</b> 个文件，不可撤销
+              </span>
+              <button class="btn" @click="confirmKind = null">{{ t.cancel }}</button>
+              <button class="btn danger" @click="doClearFiles">{{ t.confirmDelete }}</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="set-row">
+          <div class="set-l">
+            <div class="set-label">{{ t.historySessions }}</div>
+            <div class="set-hint">
+              logs/sessions 下的全部会话记录
+              <span v-if="sessions.length"> · 共 <b>{{ sessions.length }}</b> 个</span>
+            </div>
+          </div>
+          <div class="set-f wrap" v-if="confirmKind !== 'sessions'">
+            <button class="btn danger" @click="confirmKind = 'sessions'">{{ t.deleteAllSessions }}</button>
+          </div>
+        </div>
+
+        <div class="set-row" v-if="confirmKind === 'sessions'">
+          <div class="set-l">
+            <div class="confirm-inline">
+              <span class="warn">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <path d="M8 1.8 1.5 13h13L8 1.8Z"/>
+                  <path d="M8 6v3M8 11.4h.01"/>
+                </svg>
+                将永久删除 <b>{{ sessions.length }}</b> 个会话，含全部对话记录
+              </span>
+              <button class="btn" @click="confirmKind = null">{{ t.cancel }}</button>
+              <button class="btn danger" @click="doClearSessions">{{ t.confirmDelete }}</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="set-row">
+          <div class="set-l">
+            <div class="set-hint">
+              上面两项都不可撤销，清空后不进回收站
+              —— 回收站管的是数据库里的记录，不是这里。
+            </div>
+          </div>
+        </div>
+      </section>
 
     </div>
   </template>
