@@ -5,7 +5,7 @@ import math
 import pandas as pd
 
 from guard import SecurityError
-from nl2sql import generate_sql_with_retry
+from nl2sql import generate_sql
 from execute import execute_sql
 from runner import query_df
 
@@ -46,9 +46,9 @@ def run(question: str, ctx) -> str:
     现在给的是 columns / rows，模型手里有数据，怎么用是它的事。
     """
     try:
-        sql, _ = generate_sql_with_retry(
-            question, ctx.llm, ctx.schema, ctx.table_name, max_retries=2
-        )
+        # **不在这里自修正。** SQL 执行失败就如实返回，让模型自己决定
+        # 换 SQL 还是换问法——工具内部悄悄重试，模型永远不知道刚才错在哪
+        sql = generate_sql(question, ctx.llm, ctx.schema, ctx.table_name)
         df = execute_sql(sql)
 
         result = {

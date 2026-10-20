@@ -1,14 +1,9 @@
-from storage import describe
-import yaml
 from datetime import date
 from llm import LLM
-from execute import execute_sql
 from guard import check_sql_safety, SecurityError
-import logging
-from config import load_config, resolve_db_path
 
 
-SYSTEM_PROMPT = """你是一个SQL生成助手。用户会用自然语言提问，你需要生成一条DuckDB兼容的SQL查询语句。
+SYSTEM_PROMPT = """你是一个 SQL 生成助手。用户会用自然语言提问，你需要生成一条 **SQLite** 兼容的 SQL 查询语句。
 
 规则：
 1. 只返回SQL语句本身，不要解释、不要markdown代码块、不要结尾分号
@@ -21,20 +16,6 @@ SYSTEM_PROMPT = """你是一个SQL生成助手。用户会用自然语言提问�
 表结构：
 {schema}
 """
-
-FIX_PROMPT = """你上次生成的SQL执行失败了，请修正。
-
-原始问题：{question}
-
-上次生成的SQL：
-{sql}
-
-数据库报错：
-{error}
-
-请返回修正后的SQL。只返回SQL，不要解释。"""
-
-
 
 def get_schema(table_name: str) -> str:
     """拼装表结构描述：字段名 + 类型 + 必填/可空 + 中文含义。
@@ -80,40 +61,19 @@ def _build_system(schema: str, table_name: str) -> str:
     )
 
 
-def generate_sql(question: str, llm: LLM, schema: str, table_name: str) -> str:
-    return _clean_sql(llm.chat(_build_system(schema, table_name), question))
-
-
-def fix_sql(question: str, bad_sql: str, error: str, llm: LLM, schema: str, table_name: str) -> str:
-    prompt = FIX_PROMPT.format(question=question, sql=bad_sql, error=error)
-    return _clean_sql(llm.chat(_build_system(schema, table_name), prompt))
-
-
-def generate_sql_with_retry(
-    question: str, llm: LLM, schema: str, table_name: str, max_retries: int = 2
-):
-    """返回 (sql, 重试次数)。写操作直接拒绝，不走自修正。"""
-    sql = generate_sql(question, llm, schema, table_name)
-
-    # 安全检查：写操作直接拒绝，不进入重试
+def _ensure_read_only(sql: str):
+    """生成即检查。**所有走模型的 SQL 都从这里出去**，检查放在
+    出口比放在某个调用方可靠——`generate_filter_sql` 以前就是漏的。
+    """
     ok, reason = check_sql_safety(sql)
     if not ok:
         raise SecurityError(f"{reason}。生成的 SQL：{sql}")
 
-    for attempt in range(max_retries + 1):
-        try:
-            execute_sql(sql)
-            return sql, attempt
-        except Exception as e:
-            if attempt == max_retries:
-                raise RuntimeError(f"重试 {max_retries} 次后仍失败。最后一次报错：{e}")
-            logging.warning(f"[重试 {attempt + 1}] SQL 执行失败：{e}")
-            sql = fix_sql(question, sql, str(e), llm, schema, table_name)
 
-            # 修正后再次安全检查（防止 fix_sql 生成写操作）
-            ok, reason = check_sql_safety(sql)
-            if not ok:
-                raise SecurityError(f"修正后的 SQL 仍不安全：{reason}")
+def generate_sql(question: str, llm: LLM, schema: str, table_name: str) -> str:
+    sql = _clean_sql(llm.chat(_build_system(schema, table_name), question))
+    _ensure_read_only(sql)
+    return sql
 
 
 if __name__ == "__main__":
@@ -129,11 +89,10 @@ if __name__ == "__main__":
     llm = LLM()
     schema = get_schema(table)
     question = "打回次数最多的项目是哪个"
-    sql, retries = generate_sql_with_retry(question, llm, schema, table, max_retries=2)
+    sql = generate_sql(question, llm, schema, table)
     print(f"表：{table}")
     print(f"问题：{question}")
     print(f"SQL：{sql}")
-    print(f"重试：{retries} 次")
 
 
 FILTER_SYSTEM_PROMPT = """你是筛选助手。用户用自然语言描述筛选条件，你需要生成SQL。
@@ -161,7 +120,10 @@ def generate_filter_sql(filter_question: str, llm: LLM, schema: str, table_name:
         schema=schema,
         today=date.today().isoformat(),
     )
-    return _clean_sql(llm.chat(system, filter_question))
+    sql = _clean_sql(llm.chat(system, filter_question))
+    # 这条以前**没有安全检查**——导出、删除、恢复、修改的候选筛选全走它
+    _ensure_read_only(sql)
+    return sql
 
 
 TRANSFORM_SYSTEM_PROMPT = """你是数据变换助手。用户描述一个变换规则，你把它翻译成 SQL。

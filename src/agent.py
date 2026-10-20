@@ -29,7 +29,7 @@ SYSTEM_PROMPT = """你是归墟（GuiXu），一个数据处理 Agent。工具�
    不要只在回答里反问——那样这一轮就结束了，用户回答后你接不上；
    ask_user 会挂起流程，用户答完你能拿着答案继续做。
 5. 信任工具结果，不要反复重试同一个操作。
-6. 如果工具返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。
+6. 如果工具返回 error_type: "security"，说明这是安全拒绝，不要重试，直接告知用户。
 
 用简洁的中文回答，思考过程也必须用中文。
 
@@ -41,18 +41,28 @@ SYSTEM_PROMPT = """你是归墟（GuiXu），一个数据处理 Agent。工具�
 
 
 def _is_success(result_str: str) -> bool:
+    """**只看 `ok`。** 不能靠"有没有 error 这个键"去猜——
+    那样 `{"status": "not_found"}` 这种没有 error 的返回会被判成成功，
+    模型于是以为事情办成了。工具层现在统一带 `ok`，这里照它读。
+    """
     try:
         data = json.loads(result_str)
-        return "error" not in data
-    except json.JSONDecodeError:
+        return data.get("ok") is True
+    except (json.JSONDecodeError, AttributeError):
         return False
 
 
 def _is_security_error(result_str: str) -> bool:
+    """安全拒绝。工具层记在 `error_type` 里，不再是早年的 `is_security`。
+
+    提示词里那句"如果返回 is_security: true"是旧版留下的，工具从来没
+    返回过这个字段——安全拒绝一直被当成普通失败，既会计入熔断，
+    又会让模型以为是自己写错了 SQL。
+    """
     try:
         data = json.loads(result_str)
-        return bool(data.get("is_security", False))
-    except json.JSONDecodeError:
+        return data.get("error_type") == "security" or bool(data.get("is_security"))
+    except (json.JSONDecodeError, AttributeError):
         return False
 
 
@@ -130,13 +140,8 @@ def run_agent(user_input: str, session, llm, trace,
     read_limit = setting("agent.read_tool_limit")
     write_limit = setting("agent.write_tool_limit")
     tool_result_limit = setting("agent.tool_result_limit")
-
-    # 压缩检查
-    if session.should_compact(setting("agent.compact_threshold")):
-        print(f"  [上下文压缩] 归档并压缩历史对话")
-        _emit(emit, "compact", message="上下文接近上限，正在归档并压缩历史对话")
-        session.archive(reason="token_threshold")
-        session.compact(llm, keep_recent=setting("agent.keep_recent_turns"))
+    compact_threshold = setting("agent.compact_threshold")
+    keep_recent = setting("agent.keep_recent_turns")
 
     start_time = time.time()
     functions = build_tool_functions(llm, trace)
@@ -145,10 +150,11 @@ def run_agent(user_input: str, session, llm, trace,
     # design 工具层：查看表结构不是工具，是上下文（Agent 总是看得见）。
     # 空库时 render 会明说"数据库当前没有任何表"，模型不会自己编表名。
     tables_list = using(render)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(
+    system_msg = {"role": "system", "content": SYSTEM_PROMPT.format(
         today=date.today().isoformat(),
         tables=tables_list,
-    )}]
+    )}
+    messages = [system_msg]
     # 用户那条由 api 在轮次开始时 add_user，get_history() 已经带出来了。
     # **这里不再 append**——以前两处各加一次，同一个问题每轮发两遍
     messages.extend(session.get_history())
@@ -188,10 +194,35 @@ def run_agent(user_input: str, session, llm, trace,
     tool_log = list(resume.get("tool_log") or []) if resume else []
     reasoning_log = list(resume.get("reasoning_log") or []) if resume else []
 
+    def _end(text: str) -> str:
+        """这一轮结束——**不管怎么结束，都要回写历史。**
+
+        超时、熔断、到上限以前都是直接返回一句话，历史里什么都没有。
+        用户看到"处理超时了"，下一轮再问，模型完全不知道自己刚才
+        做过什么——"答了却不记得"。
+        """
+        session.add_assistant(text, tools=tool_log, reasonings=reasoning_log)
+        return _finish(emit, text)
+
     for i in range(max_iterations):
         round_no = start_round + i + 1
+
+        # 压缩检查放进循环：单轮巨任务（一路调十几个工具）也可能把
+        # 上下文撑爆，只在循环外查一次等于放过它们
+        if session.should_compact(compact_threshold):
+            print("  [上下文压缩] 归档并压缩历史对话")
+            _emit(emit, "compact", message="上下文接近上限，正在归档并压缩历史对话")
+            session.archive(reason="token_threshold")
+            session.compact(llm, keep_recent=keep_recent)
+            # 前缀变了，断点的起点跟着挪——否则中断时切出来的片段里
+            # 会混进已经摘要过的旧消息
+            prefix = [system_msg, *session.get_history()]
+            messages[:base_len] = prefix
+            base_len = len(prefix)
+            segment_start = base_len
+
         if time.time() - start_time > loop_timeout:
-            return _finish(emit, f"处理超时（超过 {loop_timeout} 秒），请简化请求或稍后重试。")
+            return _end(f"处理超时（超过 {loop_timeout} 秒），请简化请求或稍后重试。")
 
         _emit(emit, "think", round=round_no)
         msg, usage, reasoning = llm.chat_messages(messages, tools=TOOL_SCHEMAS)
@@ -228,29 +259,39 @@ def run_agent(user_input: str, session, llm, trace,
                 try:
                     args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
-                    args = {}
+                    # 参数不是合法 JSON：明确告诉模型，而不是让它拿空参数
+                    # 去撞"缺少必填字段"，那会把它引向一个错误的方向
+                    args = None
 
-                _emit(emit, "tool_call", round=round_no, call_id=tc.id, name=name, args=args)
+                _emit(emit, "tool_call", round=round_no, call_id=tc.id, name=name,
+                      args=args or {})
 
                 tool_start = time.time()
-                try:
-                    result = dispatch(name, args, functions)
-                except UserInputRequired as e:
-                    # 工具要求先问用户。把这一轮的对话片段存成断点——
-                    # 用户回答后由 run_agent(resume=...) 从这个位置接上，
-                    # 回答会伪装成这次工具调用的返回
-                    e.pending_action.setdefault("user_input", user_input)
-                    e.pending_action.setdefault("trace_id", trace.id)
-                    e.pending_action["resume"] = {
-                        "messages": messages[segment_start:],
-                        "call": {"id": tc.id, "name": name},
-                        # 同一批里排在它后面的工具，续跑时补一条「未执行」
-                        "skipped": [c.id for c in msg.tool_calls[ci + 1:]],
-                        "tool_log": tool_log,
-                        "reasoning_log": reasoning_log,
-                        "round": round_no,
-                    }
-                    raise
+                if args is None:
+                    result = json.dumps({
+                        "ok": False,
+                        "error": "arguments 不是合法的 JSON",
+                        "error_type": "invalid_arguments",
+                    }, ensure_ascii=False)
+                else:
+                    try:
+                        result = dispatch(name, args, functions)
+                    except UserInputRequired as e:
+                        # 工具要求先问用户。把这一轮的对话片段存成断点——
+                        # 用户回答后由 run_agent(resume=...) 从这个位置接上，
+                        # 回答会伪装成这次工具调用的返回
+                        e.pending_action.setdefault("user_input", user_input)
+                        e.pending_action.setdefault("trace_id", trace.id)
+                        e.pending_action["resume"] = {
+                            "messages": messages[segment_start:],
+                            "call": {"id": tc.id, "name": name},
+                            # 同一批里排在它后面的工具，续跑时补一条「未执行」
+                            "skipped": [c.id for c in msg.tool_calls[ci + 1:]],
+                            "tool_log": tool_log,
+                            "reasoning_log": reasoning_log,
+                            "round": round_no,
+                        }
+                        raise
                 elapsed_ms = int((time.time() - tool_start) * 1000)
 
                 _emit(emit, "tool_result",
@@ -263,7 +304,7 @@ def run_agent(user_input: str, session, llm, trace,
                 tool_log.append({
                     "round": round_no,  # 回放时靠它把思考插回原位，否则顺序对不上
                     "name": name,
-                    "args": args,       # 全量。以前按位置截前 3，会把 table_name 切掉
+                    "args": args or {},  # 全量。以前按位置截前 3，会把 table_name 切掉
                     "ok": _is_success(result),
                     "security": _is_security_error(result),
                     "ms": elapsed_ms,
@@ -272,34 +313,37 @@ def run_agent(user_input: str, session, llm, trace,
                     **_tool_evidence(result),
                 })
 
+                # 熔断按 (工具名 + **规范化参数**) 计数。不能直接用原始
+                # arguments 字符串——同样的调用换个键序就是另一个 key，
+                # 模型把参数重新序列化一遍就绕过了熔断
+                call_key = f"{name}::{json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)}"
+
                 if _is_success(result):
                     # 思维熔断：按 (工具名 + 参数) 计数。
                     # 按工具名累计会误杀探索——LLM 换了参数的调用是"新操作"，
                     # 不是绕圈。只有完全相同的调用反复才是真卡住。
-                    call_key = f"{name}::{tc.function.arguments}"
                     success_counts[call_key] = success_counts.get(call_key, 0) + 1
                     if success_counts[call_key] > limit:
-                        return _finish(emit, (
+                        return _end(
                             f"抱歉，我在处理这个请求时反复尝试了多次，未能完成。\n\n"
                             f"> 工具「{name}」以相同参数已成功调用 {success_counts[call_key]} 次，"
                             f"结果始终不理想\n\n"
                             f"**建议**：请确认你的请求是否明确，或换一种说法再试。"
-                        ))
+                        )
                 elif _is_security_error(result):
                     # 安全拒绝：不计数，交由 agent 处理
                     pass
                 else:
                     # 异常熔断：失败也按 (工具名 + 参数) 计数——
                     # 参数不同说明 LLM 在换策略，不该算作重试
-                    fail_key = f"{name}::{tc.function.arguments}"
-                    failure_counts[fail_key] = failure_counts.get(fail_key, 0) + 1
-                    if failure_counts[fail_key] > limit:
-                        return _finish(emit, (
+                    failure_counts[call_key] = failure_counts.get(call_key, 0) + 1
+                    if failure_counts[call_key] > limit:
+                        return _end(
                             f"抱歉，工具「{name}」以相同参数已连续失败 "
-                            f"{failure_counts[fail_key]} 次，无法完成请求。\n\n"
+                            f"{failure_counts[call_key]} 次，无法完成请求。\n\n"
                             f"> 最后一次错误：{result[:200]}\n\n"
                             f"**建议**：请检查请求是否合理，或稍后重试。"
-                        ))
+                        )
 
                 messages.append({
                     "role": "tool",
@@ -308,10 +352,8 @@ def run_agent(user_input: str, session, llm, trace,
                 })
             continue
 
-        answer = msg.content or ""
         # 只加助手那条：用户那条在 api.chat() 的一轮开始处就加了，
         # 那样「问」和「答」两个时间戳才分得开
-        session.add_assistant(answer, tools=tool_log, reasonings=reasoning_log)
-        return _finish(emit, answer)
+        return _end(msg.content or "")
 
-    return _finish(emit, "[达到最大循环次数，强制结束]")
+    return _end("[达到最大循环次数，强制结束]")

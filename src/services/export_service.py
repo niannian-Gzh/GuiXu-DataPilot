@@ -31,10 +31,14 @@ def run(filter_question: str, ctx) -> str:
         sql = generate_filter_sql(filter_question, ctx.llm, ctx.schema, ctx.table_name)
         df = execute_sql(sql)
     except Exception as e:
-        return json.dumps({"error": f"导出失败：{e}"}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": f"导出失败：{e}", "error_type": "unknown"},
+            ensure_ascii=False,
+        )
 
     if len(df) == 0:
         return json.dumps({
+            "ok": True,
             "status": "empty",
             "message": "没有找到符合条件的记录，未生成文件。",
         }, ensure_ascii=False)
@@ -81,6 +85,7 @@ def run(filter_question: str, ctx) -> str:
     })
 
     return json.dumps({
+        "ok": True,
         "status": "ok",
         "file_path": str(file_path.relative_to(PROJECT_ROOT)),
         "row_count": len(df),

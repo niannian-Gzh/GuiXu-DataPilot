@@ -1,6 +1,7 @@
 import json
 
 import snapshot
+from guard import SecurityError
 from runner import using
 from nl2sql import get_schema, render_schema
 from schema_store import get_all_tables_schema
@@ -52,7 +53,7 @@ TOOL_SCHEMAS = [
                 "filter_question 是模糊筛选条件，系统会做模糊搜索并展示候选，"
                 "请用户确认后执行删除。"
                 "例：'家装项目'、'所有 web 类项目'、'所有项目'。"
-                "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。"
+                "【返回特征】如果返回 error_type 为 security，说明这是安全拒绝，不要重试，直接告知用户。"
             ),
             "parameters": {
                 "type": "object",
@@ -73,7 +74,7 @@ TOOL_SCHEMAS = [
                 "filter_question 是模糊筛选条件，系统会在已删除的记录里搜索、"
                 "展示候选，请用户确认后恢复。"
                 "【何时用】用户说'恢复'、'撤销删除'、'把刚才删的找回来'、'还原'时。"
-                "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。"
+                "【返回特征】如果返回 error_type 为 security，说明这是安全拒绝，不要重试，直接告知用户。"
             ),
             "parameters": {
                 "type": "object",
@@ -126,7 +127,7 @@ TOOL_SCHEMAS = [
                 "请求修改符合条件的记录。"
                 "filter_question 是模糊筛选条件，系统会搜索匹配记录、"
                 "展示改前改后对比、请用户确认。"
-                "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。"
+                "【返回特征】如果返回 error_type 为 security，说明这是安全拒绝，不要重试，直接告知用户。"
             ),
             "parameters": {
                 "type": "object",
@@ -147,7 +148,7 @@ TOOL_SCHEMAS = [
                 "请求从 Excel 文件导入数据到指定表。会扫描文件与数据库的差异，"
                 "可能包括：新记录、字段冲突、已删除记录。"
                 "系统会展示差异并请求用户确认后执行导入。"
-                "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。"
+                "【返回特征】如果返回 error_type 为 security，说明这是安全拒绝，不要重试，直接告知用户。"
             ),
             "parameters": {
                 "type": "object",
@@ -586,7 +587,46 @@ def build_tool_functions(llm, trace):
 
 
 def dispatch(name: str, args: dict, functions: dict) -> str:
+    """按名字调工具。
+
+    **参数错了不能击穿整轮。** 模型多给一个字段、少给一个必填、或者
+    把对象写成字符串，`func(**args)` 都会抛 TypeError，一路冒到 api
+    变成"出错了"——用户只看到一句话，而模型失去了换一种调用方式的机会。
+    在这里拦下来，用和工具返回同一套形状告诉它哪里不对。
+
+    `UserInputRequired` 必须继续冒泡——那是中断，不是错误。
+    """
     func = functions.get(name)
     if not func:
-        return json.dumps({"error": f"未知工具：{name}"}, ensure_ascii=False)
-    return func(**args)
+        return json.dumps(
+            {"ok": False, "error": f"未知工具：{name}", "error_type": "invalid"},
+            ensure_ascii=False,
+        )
+    if not isinstance(args, dict):
+        return json.dumps(
+            {"ok": False, "error": "参数必须是一个对象",
+             "error_type": "invalid_arguments"},
+            ensure_ascii=False,
+        )
+    try:
+        return func(**args)
+    except UserInputRequired:
+        raise
+    except SecurityError as e:
+        # 安全拒绝也是**工具返回的一种**，不是异常：模型看懂之后
+        # 可以换一条路，整轮不用崩
+        return json.dumps(
+            {"ok": False, "error": f"安全拒绝：{e}", "error_type": "security"},
+            ensure_ascii=False,
+        )
+    except TypeError as e:
+        # 只把"参数形状不对"认成模型的问题；工具内部写错的 TypeError
+        # 继续冒泡——那不是模型能修的，藏起来只会让 bug 更难找
+        msg = str(e)
+        if "argument" in msg or "keyword" in msg:
+            return json.dumps(
+                {"ok": False, "error": f"参数不对：{msg}",
+                 "error_type": "invalid_arguments"},
+                ensure_ascii=False,
+            )
+        raise

@@ -58,7 +58,7 @@ def request_transform(description: str, ctx) -> str:
         )
     except Exception as e:
         return json.dumps(
-            {"error": f"生成变换 SQL 失败：{e}"},
+            {"ok": False, "error": f"生成变换 SQL 失败：{e}", "error_type": "unknown"},
             ensure_ascii=False,
         )
 
@@ -66,7 +66,7 @@ def request_transform(description: str, ctx) -> str:
     ok, reason, is_full_table = check_transform_safety(update_sql)
     if not ok:
         return json.dumps(
-            {"error": f"变换被拒绝：{reason}", "is_security": True},
+            {"ok": False, "error": f"变换被拒绝：{reason}", "error_type": "security"},
             ensure_ascii=False,
         )
 
@@ -75,13 +75,13 @@ def request_transform(description: str, ctx) -> str:
         preview_df = query_df(preview_sql, timeout=setting("safety.query_timeout"))
     except Exception as e:
         return json.dumps(
-            {"error": f"预览失败：{e}"},
+            {"ok": False, "error": f"预览失败：{e}", "error_type": "unknown"},
             ensure_ascii=False,
         )
 
     if len(preview_df) == 0:
         return json.dumps(
-            {"status": "no_match", "message": "没有匹配的记录，未做任何修改"},
+            {"ok": True, "status": "empty", "message": "没有匹配的记录，未做任何修改"},
             ensure_ascii=False,
         )
 

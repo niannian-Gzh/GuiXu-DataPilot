@@ -16,7 +16,8 @@ def request_delete(filter_question: str, ctx) -> str:
     candidates = find_candidates(filter_question, ctx)
     if not candidates:
         return json.dumps(
-            {"status": "not_found", "message": "没有找到匹配的记录"},
+            # 没找到是**空结果**，不是失败——和 query 的 status: empty 同义
+            {"ok": True, "status": "empty", "message": "没有找到匹配的记录"},
             ensure_ascii=False,
         )
     labels, records = card_records(ctx, candidates)

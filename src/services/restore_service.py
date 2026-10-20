@@ -30,7 +30,7 @@ def request_restore(filter_question: str, ctx) -> str:
     candidates = find_deleted(filter_question, ctx)
     if not candidates:
         return json.dumps(
-            {"status": "not_found", "message": "没有找到可恢复的记录"},
+            {"ok": True, "status": "empty", "message": "没有找到可恢复的记录"},
             ensure_ascii=False,
         )
     labels, rows = card_records(ctx, candidates)
