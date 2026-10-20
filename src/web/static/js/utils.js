@@ -138,6 +138,10 @@ export const thinkGist = (text) =>
 
 export const confirmColumns = (c) => (c.rows && c.rows.length ? Object.keys(c.rows[0]) : []);
 export const confirmTitle = (c) => {
+  if (c.kind === 'ask') {
+    if (!c.resolved) return '等你回答';
+    return c.cancelled ? '已跳过' : '已回答';
+  }
   if (!c.resolved) return c.scope + ' · 等待确认';
   return c.scope + ' · ' + (c.cancelled ? '已终止' : '已执行');
 };
@@ -179,12 +183,33 @@ export const buildConfirm = (pending) => {
   const type = pending.type;
   const n = pending.affected ?? (pending.records ? pending.records.length : 0);
 
+  // ask_user：只有问题和可选的方向，没有候选表。
+  // 它和确认卡片是**同一种中断**——都是「工具挂起，等用户一句话」，
+  // 只是 payload 不同（design 工具层 §二）
+  if (type === 'ask') {
+    return {
+      kind: 'ask',
+      resolved: false,
+      verdict: '',
+      answer: '',
+      question: pending.question || '',
+      options: Array.isArray(pending.options) ? pending.options.slice(0, 3) : [],
+      free_input: '',
+      danger: false,
+      scope: '提问',
+      verb: '发送',
+      note: '',
+    };
+  }
+
   const c = {
+    kind: 'confirm',
     resolved: false,
     verdict: '',
     rows: [],
     diffs: null,
-    typed_input: '',
+    // ask 和手打确认共用这个自由输入框，只是提示语不同
+    free_input: '',
     confirm_mode: pending.confirm_mode || 'simple',
     confirm_hint: pending.confirm_hint || '确认',
     danger: !!pending.danger,

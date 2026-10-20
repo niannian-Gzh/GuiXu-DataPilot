@@ -146,7 +146,10 @@ class Session:
             "message_count": len(self.messages),
             "summary": self.summary,
             "messages": self.messages,
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+            # 挂起的中断也一起落盘：它带着断点（这一轮已经发生过的
+            # 消息片段），重启后仍能从断在哪继续
+            "pending": self.pending_action,
+        }, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         return path
 
     @classmethod
@@ -162,6 +165,9 @@ class Session:
             return session
         session.messages = data.get("messages", [])
         session.summary = data.get("summary")
+        # 断点跟着会话一起回来。没有它，重启后 pending 虽然还在，
+        # 但模型已经不知道自己断在哪个工具调用上了
+        session.pending_action = data.get("pending")
         return session
 
     @staticmethod

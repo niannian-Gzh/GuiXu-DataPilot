@@ -974,9 +974,40 @@ td .tag, .tag {
 .sql { color: var(--muted); }
 .sql .kw { color: var(--acc-lift); }
 
-/* ---------- 12.6 确认卡 ---------- */
-/* 改动前停下来问一次。它是「待办」，所以给它一个面，
-   让它从对话流里站出来——这是全站少数几处允许抢注意力的地方 */
+/* ---------- 12.6 确认卡 / 中断弹窗 ---------- */
+/* 未解决的中断不挂在对话流里，它占输入区的位置（grid row 3）。
+   "要你回应的东西永远在底部"——位置固定，用户不用在对话里找。
+   两种长相共用一个容器：ask_user 是问题 + 方向，确认卡片是候选 + 按钮 */
+.ask-dock { grid-column: 1 / -1; grid-row: 3; padding: 10px 20px 16px; }
+.ask-panel {
+  max-width: min(760px, 86%); margin: 0 auto;
+  background: var(--raise); border: 1px solid var(--hair);
+  border-radius: var(--r-box); overflow: hidden;
+  animation: ask-in .16s var(--ease);
+}
+.ask-panel.danger { border-color: var(--err); }
+@keyframes ask-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+.ask-question {
+  font-size: 14px; line-height: 1.75; color: var(--ink);
+  padding: 2px 0 14px;
+}
+.ask-options { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.ask-opt {
+  padding: 9px 16px; border: 1.5px solid var(--hair);
+  background: var(--sunken); border-radius: var(--r-btn);
+  color: var(--ink-soft); font: inherit; font-size: 12.5px;
+  cursor: pointer; transition: border-color .16s var(--ease), color .16s var(--ease);
+}
+.ask-opt:hover:not(:disabled) { border-color: var(--acc-line); color: var(--ink); }
+.ask-opt:disabled { opacity: .5; cursor: not-allowed; }
+/* 弹窗里的自由输入占满一行，和 composer 那个一样宽 */
+.ask-input { width: 100%; max-width: none; margin-top: 12px; }
+
+/* 已解决的中断留在对话流里，一行缩略。它是"发生过什么"的记录，
+   不再是"要你做什么" */
 .confirm {
   margin: 15px 0 0; background: var(--raise);
   border-radius: var(--r-box); overflow: hidden;

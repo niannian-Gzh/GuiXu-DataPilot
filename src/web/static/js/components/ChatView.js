@@ -82,7 +82,33 @@ export default {
     Vue.onMounted(() => document.addEventListener('click', onDocClick));
     Vue.onUnmounted(() => document.removeEventListener('click', onDocClick));
 
-    return { ...store, i18n: t, today, tries, pickOpen, pickWrap, openPick, pickModel };
+    /* 当前未解决的中断。中断是串行的——中断了就停，不会攒，
+       所以最多一个。从 turns 派生，不另存一份状态：另存就要在
+       新建会话、刷新、续跑三处都记得同步，迟早漏一处 */
+    const activeConfirm = Vue.computed(() => {
+      const list = store.turns.value;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const c = list[i].confirm;
+        if (c && !c.resolved) return { ti: i, confirm: c };
+      }
+      return null;
+    });
+
+    // ask 和手打确认都要输入框；普通确认卡片只要两个按钮
+    const needsInput = (c) => c.kind === 'ask' || c.confirm_mode === 'typed';
+    const inputHint = (c) => (c.kind === 'ask'
+      ? '或者，直接说……'
+      : `请输入「${c.confirm_hint}」`);
+
+    const submitFree = (box) => {
+      const v = (box.confirm.free_input || '').trim();
+      if (v) store.answerConfirm(box.ti, v);
+    };
+
+    return {
+      ...store, i18n: t, today, tries, pickOpen, pickWrap, openPick, pickModel,
+      activeConfirm, needsInput, inputHint, submitFree,
+    };
   },
   template: `
 <main class="stage">
@@ -318,10 +344,11 @@ export default {
             </template>
           </div>
 
-          <!-- 确认卡。改动前停下来问一次——它是全站少数几处
-               允许抢注意力的地方，因为不确认就可能改错数据 -->
-          <div v-if="t.confirm" class="confirm"
-               :class="{resolved: t.confirm.resolved, cancelled: t.confirm.cancelled}">
+          <!-- 已解决的中断在对话流里留一行缩略——它是"发生过什么"的记录。
+               **未解决的不在这儿**：所有要你回应的东西都在底部弹窗，
+               位置固定，不用在对话流里找（design 交互层 §二） -->
+          <div v-if="t.confirm && t.confirm.resolved" class="confirm resolved"
+               :class="{cancelled: t.confirm.cancelled}">
             <div class="confirm-head">
               <span class="dot">
                 <svg v-if="t.confirm.cancelled" viewBox="0 0 24 24" fill="none"
@@ -401,7 +428,10 @@ export default {
               </div>
             </div>
 
-            <div class="confirm-verdict" v-if="t.confirm.resolved">
+            <!-- 只有 ask 需要这一行：head 只说"已回答"，答案在这儿。
+                 确认卡片的终态 head 已经说完了，再来一行"已执行"是重复 -->
+            <div class="confirm-verdict"
+                 v-if="t.confirm.resolved && t.confirm.kind === 'ask'">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
                    stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12"></polyline>
@@ -437,8 +467,9 @@ export default {
           </div>
 
           <!-- 回答（确认卡的结论已在卡片里，不再重复一遍） -->
-          <div class="prose" v-if="t.answer && !(t.confirm && t.confirm.resolved)"
-               v-html="md(t.answer)"></div>
+          <!-- 续跑后模型的回答也是正文，照常渲染。
+               卡片那头只留一行终态，两者不重复 -->
+          <div class="prose" v-if="t.answer" v-html="md(t.answer)"></div>
 
           <!-- 等待中 -->
           <div v-if="ti === turns.length - 1 && busy && !t.answer" class="thinking">
@@ -505,7 +536,106 @@ export default {
     </div>
   </div>
 
-  <div class="composer">
+  <!-- 底部弹窗：所有未解决的中断都在这里 —— ask_user 的问题、确认卡片的候选。
+       两种长相，同一个容器（design 交互层 §二）。
+
+       它占的是 composer 的位置，不是浮在上面：中断时输入区收起，
+       屏幕上只有一个能打字的地方，用户不用判断"该在哪个框里回答" -->
+  <div class="ask-dock" v-if="activeConfirm">
+    <div class="ask-panel" :class="{danger: activeConfirm.confirm.danger}">
+      <div class="confirm-head">
+        <span class="dot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3a9 9 0 1 0 9 9"/>
+            <path d="M12 8v4"/>
+            <circle cx="12" cy="16" r=".8" fill="currentColor" stroke="none"/>
+          </svg>
+        </span>
+        {{ confirmTitle(activeConfirm.confirm) }}
+        <span class="tag" v-if="activeConfirm.confirm.scope">{{ activeConfirm.confirm.scope }}</span>
+      </div>
+
+      <div class="confirm-body">
+        <!-- ask：问题本身 -->
+        <div class="ask-question" v-if="activeConfirm.confirm.kind === 'ask'">
+          {{ activeConfirm.confirm.question }}
+        </div>
+
+        <!-- ask：可选方向。点了直接当回答发出去 -->
+        <div class="ask-options"
+             v-if="activeConfirm.confirm.kind === 'ask' && activeConfirm.confirm.options.length">
+          <button v-for="(o, oi) in activeConfirm.confirm.options" :key="oi"
+                  class="ask-opt" :disabled="busy"
+                  @click="answerConfirm(activeConfirm.ti, o)">{{ o }}</button>
+        </div>
+
+        <!-- 确认卡片：候选清单 -->
+        <div class="cands" v-if="activeConfirm.confirm.rows && activeConfirm.confirm.rows.length">
+          <table>
+            <thead>
+              <tr><th v-for="c in confirmColumns(activeConfirm.confirm)" :key="c">{{ c }}</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(r, ri) in activeConfirm.confirm.rows" :key="ri">
+                <td v-for="c in confirmColumns(activeConfirm.confirm)" :key="c">{{ r[c] ?? '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 确认卡片：改写对照 -->
+        <div v-if="activeConfirm.confirm.diffs && activeConfirm.confirm.diffs.length">
+          <div class="diff-row" v-for="(d, di) in activeConfirm.confirm.diffs" :key="di">
+            <div class="diff-field">{{ d.field }}</div>
+            <div class="diff-vals">
+              <span class="diff-from">{{ d.from ?? '空' }}</span>
+              <span class="diff-arrow">→</span>
+              <span class="diff-to">{{ d.to }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="confirm-note" v-if="activeConfirm.confirm.note">{{ activeConfirm.confirm.note }}</div>
+
+        <!-- 自由输入：ask 用它回答，手打确认用它敲「删除 166 条」 -->
+        <input v-if="needsInput(activeConfirm.confirm)"
+               class="typed-confirm ask-input"
+               v-model="activeConfirm.confirm.free_input"
+               :placeholder="inputHint(activeConfirm.confirm)"
+               :disabled="busy"
+               @keydown.enter.prevent="submitFree(activeConfirm)">
+
+        <div class="confirm-actions">
+          <button class="btn" @click="answerConfirm(activeConfirm.ti, '取消')"
+                  :disabled="busy">{{ i18n.cancel }}</button>
+
+          <!-- ask：自由输入 → 发送 -->
+          <button v-if="activeConfirm.confirm.kind === 'ask'"
+                  class="btn solid"
+                  :disabled="busy || !activeConfirm.confirm.free_input.trim()"
+                  @click="submitFree(activeConfirm)">发送</button>
+
+          <!-- 手打确认 -->
+          <button v-else-if="activeConfirm.confirm.confirm_mode === 'typed'"
+                  class="btn" :class="activeConfirm.confirm.danger ? 'danger' : 'solid'"
+                  :disabled="busy || !activeConfirm.confirm.free_input.trim()"
+                  @click="submitFree(activeConfirm)">执行</button>
+
+          <!-- 普通确认 -->
+          <button v-else class="btn"
+                  :class="activeConfirm.confirm.danger ? 'danger' : 'solid'"
+                  :disabled="busy"
+                  @click="answerConfirm(activeConfirm.ti, activeConfirm.confirm.confirm_hint)">
+            {{ activeConfirm.confirm.verb }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 中断时收起输入区：屏幕上只有一个能打字的地方 -->
+  <div class="composer" v-if="!activeConfirm">
     <div class="composer-in">
       <!-- 拖进来就传。整块输入框都是落点，不另设一个「拖到这里」的虚线框——
            那个框本身就是一块多余的图形 -->

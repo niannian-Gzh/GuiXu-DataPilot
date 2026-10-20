@@ -39,22 +39,14 @@ FIX_PROMPT = """你上次生成的SQL执行失败了，请修正。
 def get_schema(table_name: str) -> str:
     """拼装表结构描述：字段名 + 类型 + 必填/可空 + 中文含义。
 
-    类型和必填是"事实"——从库读（describe）。
-    中文含义是"标注"——从 schema_store 读（用户可编辑）。
+    走 `schema_store` 而不是直接读 `storage.describe`——那边已经把
+    "结构（库的事实）+ 含义（人加的标注）"合成一个 schema 对象，
+    `render_schema` 是它唯一的文本转换点。旧版在这里单独拼一遍，
+    换数据源之后签名对不上，恢复记录时直接报 "missing table"。
     """
-    from schema_store import get_field_label
+    from schema_store import get_table_schema
 
-    rows = describe(table_name)
-
-    lines = []
-    for r in rows:
-        col_name = r["name"]
-        col_type = r["type"]
-        nullable = r.get("nullable", True)
-        tag = "可空" if nullable else "必填"
-        desc = get_field_label(table_name, col_name)
-        lines.append(f"  - {col_name} ({col_type}, {tag}): {desc}")
-    return "\n".join(lines)
+    return render_schema(get_table_schema(table_name))
 
 
 def render_schema(schema: dict) -> str:

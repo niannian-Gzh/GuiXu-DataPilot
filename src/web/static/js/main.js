@@ -689,21 +689,43 @@ createApp({
       if (!turn || !turn.confirm || busy.value) return;
 
       const cancelled = text === '取消';
+      const isAsk = turn.confirm.kind === 'ask';
+
       turn.confirm.resolved = true;
       turn.confirm.cancelled = cancelled;
-      turn.confirm.verdict = cancelled ? '任务已被终止' : '正在执行…';
+
+      if (isAsk && !cancelled) {
+        turn.confirm.answer = text;
+        turn.confirm.verdict = `已回答：${text}`;
+      } else {
+        turn.confirm.verdict = cancelled ? '任务已被终止' : '正在执行…';
+      }
+
+      // 挂起的那次调用不会单独发 tool_result——它没有返回，答案就是
+      // 用户这句话。续跑开始前先记下它，跑完把状态从「待确认」改成终态，
+      // 否则那一行永远停在等待中
+      const waiting = turn.tools.filter((t) => t.state === 'wait');
 
       // 取消掉的那个工具不会再有结果回来，别让它永远停在「待确认」
       if (cancelled) {
-        turn.tools.forEach((t) => { if (t.state === 'wait') t.state = 'cancel'; });
+        waiting.forEach((t) => { t.state = 'cancel'; });
       }
 
       await runStream(text, turn);
 
-      // 卡片里直接给结论，answer 就不再单独渲染了
-      // 取消时忽略后端回传的文本，用固定文案——"任务已被终止"是流程语言，
-      // 比后端的"已取消操作"更准确
-      turn.confirm.verdict = cancelled ? '任务已被终止' : (turn.answer || '已执行');
+      // 非取消：续跑成功即视为这次调用完成。续跑里新挂起的工具
+      // 不在 waiting 里（它是这一趟新出现的），状态由新事件决定
+      if (!cancelled) waiting.forEach((t) => { t.state = 'ok'; });
+
+      // 续跑后模型会给出自己的回答，那是正文（prose），不是卡片的终态。
+      // 这里只记一句结果，卡片保持一行——把它塞进 verdict 就糊了
+      if (cancelled) {
+        turn.confirm.verdict = isAsk ? '已跳过' : '任务已被终止';
+      } else if (isAsk) {
+        turn.confirm.verdict = `已回答：${turn.confirm.answer}`;
+      } else {
+        turn.confirm.verdict = '已执行';
+      }
     };
 
 

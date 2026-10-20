@@ -355,6 +355,12 @@ def chat(req: ChatRequest):
         events.put(event)
 
     def run():
+        # 一次只可能挂着一个中断（中断了就停，不会攒）
+        pending = session.get_pending()
+        # 这一条输入是「对中断的回答」还是「新问题」。except 里 pending
+        # 会被新挂起覆盖，所以先单独记一笔，收尾时还要用
+        resumed = pending is not None
+
         # final 只报这一轮新增的工具，所以先记住起点。
         # 用户那条消息在下面才 append，所以切片里会带上它——
         # 它没有 gx_tools，捞不出东西，无害
@@ -374,30 +380,52 @@ def chat(req: ChatRequest):
             sink(event)
 
         try:
-            # 用户那条消息在【这一轮开始】时就落进会话，不等回答写完。
-            # 两个理由：时间戳要的是「什么时候问的」，而 agent 跑完可能
-            # 要几十秒，落在那儿就把「问」和「答」记成了同一个时刻；
-            # 再者中途报错时，这条消息本来就该留下。
-            # 所以整条链路只在这里调一次 add_user（原来在三个分支里各调一次）
-            session.add_user(req.question)
+            if pending:
+                # 这条输入是对中断的回答，不是新问题：
+                # 不进 user 历史（那条在中断那一轮已经进过了），
+                # 也不发 start——界面上还是同一轮，改时间会把它标错
+                action, payload = pending_service.answer_pending(
+                    req.question, session, _state["llm"],
+                )
 
-            # 时刻以后端记的为准，前端拿它去标这一轮。
-            # 让前端自己生成的话，刷新之后会从会话文件里读到另一个值，
-            # 同一条消息前后显示两个时间
-            sink({
-                "type": "start",
-                "session_id": session_id,
-                "question": req.question,
-                "at": session.messages[-1]["gx_at"],
-            })
+                if action == "resume" and not pending.get("resume"):
+                    # 旧版本落盘的 pending：只有候选、没有断点，接不上。
+                    # 与其让它以"确认"两个字当新问题跑一遍，不如说清楚
+                    session.clear_pending()
+                    action, payload = "done", (
+                        "这次操作挂起时没有留下断点，无法接着执行。请重新发起。"
+                    )
 
-            handled, msg = pending_service.handle_pending(
-                req.question, session, _state["llm"],
-            )
-            if handled:
-                session.add_assistant(msg)
-                sink({"type": "answer", "content": msg})
+                if action == "resume":
+                    session.clear_pending()
+                    run_agent(
+                        req.question, session, _state["llm"], trace,
+                        emit=tally,
+                        resume=pending.get("resume"),
+                        tool_result=payload,
+                    )
+                else:
+                    # done：确认没通过 / 导看看详情，直接给用户，不惊动模型
+                    session.add_assistant(payload)
+                    sink({"type": "answer", "content": payload})
             else:
+                # 用户那条消息在【这一轮开始】时就落进会话，不等回答写完。
+                # 两个理由：时间戳要的是「什么时候问的」，而 agent 跑完可能
+                # 要几十秒，落在那儿就把「问」和「答」记成了同一个时刻；
+                # 再者中途报错时，这条消息本来就该留下。
+                # 所以整条链路只在这里调一次 add_user（原来在三个分支里各调一次）
+                session.add_user(req.question)
+
+                # 时刻以后端记的为准，前端拿它去标这一轮。
+                # 让前端自己生成的话，刷新之后会从会话文件里读到另一个值，
+                # 同一条消息前后显示两个时间
+                sink({
+                    "type": "start",
+                    "session_id": session_id,
+                    "question": req.question,
+                    "at": session.messages[-1]["gx_at"],
+                })
+
                 run_agent(
                     req.question, session, _state["llm"], trace,
                     emit=tally,
@@ -430,8 +458,12 @@ def chat(req: ChatRequest):
                 "session_id": session_id,
                 "elapsed_ms": trace.data["elapsed_ms"],
                 # 同 start：给这一轮标时刻用后端记的那个。
-                # pending 轮次没有 add_assistant，[-1] 是用户那条，也对
-                "at": session.messages[-1].get("gx_at") if session.messages else None,
+                # pending 轮次没有 add_assistant，[-1] 是用户那条，也对。
+                # 续跑没有新的用户消息，[-1] 还是中断那一轮的问题——
+                # 拿它标"答完的时刻"会显示成过去，所以留空让前端取当前时间
+                "at": None if resumed else (
+                    session.messages[-1].get("gx_at") if session.messages else None
+                ),
             })
 
     def stream():

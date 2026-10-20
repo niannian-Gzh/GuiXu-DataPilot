@@ -101,9 +101,10 @@ def list_deleted(table_name: str, ctx) -> str:
 
     return json.dumps({
         "ok": True,
+        "status": "empty" if not rows else "ok",
         "table": table_name,
         "columns": keep_labels + ["删除时间"],
-        "records": [list(r) for r in rows],
+        "rows": [list(r) for r in rows],
         "row_count": len(rows),
     }, ensure_ascii=False)
 

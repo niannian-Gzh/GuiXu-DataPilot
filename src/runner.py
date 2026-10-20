@@ -80,13 +80,22 @@ def query_df(sql: str, params=None, timeout: int | None = None):
 def execute(sql: str, params=None) -> int:
     """跑 DDL / DML，返回受影响行数。
 
-    DDL 的 rowcount 是 -1，归一成 0——**调用方拿它算"改了几行"，
-    负数会让 `affected` 这种字段变得没法解释。**
+    **不能用 `cursor.rowcount`。** 写操作打的是业务视图，真实改动发生在
+    INSTEAD OF 触发器里（软删除改底表的 `is_deleted`、插入补系统列），
+    游标认为自己一行都没改，rowcount 恒为 0——于是 `affected: 0`，
+    模型据此判断"没改成功"，转头再查一遍。
+
+    `total_changes` 把触发器内的改动也算进来，差值才是"实际动了几行"。
+    DDL 不产生行改动，差值是 0，正好符合这个口径。
     """
     con = connect()
     try:
-        cur = con.execute(sql, params) if params is not None else con.execute(sql)
-        return max(cur.rowcount, 0)
+        before = con.total_changes
+        if params is not None:
+            con.execute(sql, params)
+        else:
+            con.execute(sql)
+        return con.total_changes - before
     finally:
         con.close()
 

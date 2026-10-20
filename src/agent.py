@@ -25,7 +25,9 @@ SYSTEM_PROMPT = """你是归墟（GuiXu），一个数据处理 Agent。工具�
 1. 自主组合工具达成目标，这是合理规划，不是降级。
 2. 不欺骗用户：目标未达成时，如实告知进展。
 3. 不编造数据：所有数据来自工具返回。
-4. 不猜测：问题不明确时，直接提问。
+4. 不猜测：问题不明确、或要在几个方向里选时，调用 ask_user 工具提问。
+   不要只在回答里反问——那样这一轮就结束了，用户回答后你接不上；
+   ask_user 会挂起流程，用户答完你能拿着答案继续做。
 5. 信任工具结果，不要反复重试同一个操作。
 6. 如果工具返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。
 
@@ -67,8 +69,18 @@ def _finish(sink, text: str) -> str:
 
 
 def run_agent(user_input: str, session, llm, trace,
-              max_iterations: int = 10, emit=None):
-    """Agent 主循环。emit 是可选的事件接收器，用于把过程推给前端。"""
+              max_iterations: int = 10, emit=None,
+              resume: dict = None, tool_result: str = ""):
+    """Agent 主循环。emit 是可选的事件接收器，用于把过程推给前端。
+
+    **resume 是中断后的续跑入口。** 用户回答中断问题后，把那个回答
+    伪装成那次工具调用的返回（`tool_result`），接在这轮对话的断点上
+    继续跑——模型始终看到自己调过什么、拿到了什么，不必重新理解一遍。
+
+    断点存在 pending 的 `resume` 里，只管「这一轮已经发生过的消息」，
+    system prompt 和更早的历史每次重新组装（它们是可推导的，存下来
+    反而会和 session 历史重复，越滚越多）。
+    """
     # 每轮开始时读一次配置，改完设置不必重启
     loop_timeout = setting("agent.loop_timeout")
     read_limit = setting("agent.read_tool_limit")
@@ -93,25 +105,57 @@ def run_agent(user_input: str, session, llm, trace,
         today=date.today().isoformat(),
         tables=tables_list,
     )}]
+    # 用户那条由 api 在轮次开始时 add_user，get_history() 已经带出来了。
+    # **这里不再 append**——以前两处各加一次，同一个问题每轮发两遍
     messages.extend(session.get_history())
-    messages.append({"role": "user", "content": user_input})
+
+    # 断点之后的片段从这一刀开始算。续跑时只接这一截，
+    # system 和更早的历史由上面重新组装——它们是可推导的，
+    # 存进断点只会和 session 历史重复
+    base_len = len(messages)
+    segment_start = base_len
+
+    start_round = 0
+    if resume:
+        start_round = resume.get("round", 0)
+        messages.extend(resume.get("messages") or [])
+        # 挂起的那个工具，用续体的结果补上它的 tool 返回
+        messages.append({
+            "role": "tool",
+            "tool_call_id": resume["call"]["id"],
+            "content": tool_result,
+        })
+        # 同一批里排在它后面、还没来得及执行的工具：显式说明没执行。
+        # 不能直接丢——assistant 的 tool_calls 里列了它们，缺了 API 会报错
+        for cid in resume.get("skipped") or []:
+            messages.append({
+                "role": "tool",
+                "tool_call_id": cid,
+                "content": json.dumps({
+                    "ok": False,
+                    "error": "因前一个操作需要用户确认，本次未执行",
+                    "error_type": "skipped",
+                }, ensure_ascii=False),
+            })
+    # 非续跑时不需要再补 user——上面 get_history() 的最后一条就是它
 
     success_counts = {}
     failure_counts = {}
-    tool_log = []       # 这一轮走过的工具，存进会话供界面回看
-    reasoning_log = []  # 这一轮的思考链，同上
+    tool_log = list(resume.get("tool_log") or []) if resume else []
+    reasoning_log = list(resume.get("reasoning_log") or []) if resume else []
 
     for i in range(max_iterations):
+        round_no = start_round + i + 1
         if time.time() - start_time > loop_timeout:
             return _finish(emit, f"处理超时（超过 {loop_timeout} 秒），请简化请求或稍后重试。")
 
-        _emit(emit, "think", round=i + 1)
+        _emit(emit, "think", round=round_no)
         msg, usage, reasoning = llm.chat_messages(messages, tools=TOOL_SCHEMAS)
         if usage:
             session.set_prompt_tokens(usage["prompt_tokens"])
         if reasoning:
-            _emit(emit, "reasoning", round=i + 1, text=reasoning)
-            reasoning_log.append({"round": i + 1, "text": reasoning})
+            _emit(emit, "reasoning", round=round_no, text=reasoning)
+            reasoning_log.append({"round": round_no, "text": reasoning})
         if msg.tool_calls:
             assistant_msg = {
                 "role": "assistant",
@@ -132,7 +176,7 @@ def run_agent(user_input: str, session, llm, trace,
                 assistant_msg["reasoning_content"] = reasoning
             messages.append(assistant_msg)
 
-            for tc in msg.tool_calls:
+            for ci, tc in enumerate(msg.tool_calls):
                 name = tc.function.name
                 limit = write_limit if name in WRITE_TOOLS else read_limit
 
@@ -142,10 +186,27 @@ def run_agent(user_input: str, session, llm, trace,
                 except json.JSONDecodeError:
                     args = {}
 
-                _emit(emit, "tool_call", round=i + 1, call_id=tc.id, name=name, args=args)
+                _emit(emit, "tool_call", round=round_no, call_id=tc.id, name=name, args=args)
 
                 tool_start = time.time()
-                result = dispatch(name, args, functions)
+                try:
+                    result = dispatch(name, args, functions)
+                except UserInputRequired as e:
+                    # 工具要求先问用户。把这一轮的对话片段存成断点——
+                    # 用户回答后由 run_agent(resume=...) 从这个位置接上，
+                    # 回答会伪装成这次工具调用的返回
+                    e.pending_action.setdefault("user_input", user_input)
+                    e.pending_action.setdefault("trace_id", trace.id)
+                    e.pending_action["resume"] = {
+                        "messages": messages[segment_start:],
+                        "call": {"id": tc.id, "name": name},
+                        # 同一批里排在它后面的工具，续跑时补一条「未执行」
+                        "skipped": [c.id for c in msg.tool_calls[ci + 1:]],
+                        "tool_log": tool_log,
+                        "reasoning_log": reasoning_log,
+                        "round": round_no,
+                    }
+                    raise
                 elapsed_ms = int((time.time() - tool_start) * 1000)
 
                 _emit(emit, "tool_result",
@@ -156,7 +217,7 @@ def run_agent(user_input: str, session, llm, trace,
                       raw=result[:tool_result_limit])
 
                 tool_log.append({
-                    "round": i + 1,     # 回放时靠它把思考插回原位，否则顺序对不上
+                    "round": round_no,  # 回放时靠它把思考插回原位，否则顺序对不上
                     "name": name,
                     "args": args,
                     "ok": _is_success(result),

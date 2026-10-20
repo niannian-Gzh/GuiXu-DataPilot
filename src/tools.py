@@ -4,7 +4,7 @@ import snapshot
 from runner import using
 from nl2sql import get_schema, render_schema
 from schema_store import get_all_tables_schema
-from services import ServiceContext
+from services import ServiceContext, UserInputRequired
 from services import (
     query_service, delete_service, create_service,
     update_service, transform_service, structure_service,
@@ -27,16 +27,12 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "query_database",
             "description": (
-                "查询数据。把用户的自然语言问题翻译成SQL并执行，返回自然语言答案。\n"
-                "【返回特征——必须遵守】\n"
-                "1. 如果返回包含 hint 字段：说明查询已完整执行、结果可信，"
-                "直接基于该结果回答，不要换问法反复查询。\n"
-                "2. 如果返回包含 ambiguous: true 和 branches 字段："
-                "你必须把 branches 里的所有分支都展示给用户，"
-                "不能只报一个值。例如展示为：\n"
-                "   「有两种理解：\n"
-                "    - 包含匹配（默认）：141 个\n"
-                "    - 精确匹配：76 个」"
+                "查询数据。把用户的自然语言问题翻译成 SQL 并执行，"
+                "返回**数据本身**：columns（列名）+ rows（二维数组）。\n"
+                "拿到数据后自己判断怎么用——统计、对比、排序都可以，不要只复述。\n"
+                "`status: \"empty\"` 表示执行成功但没有符合条件的数据，"
+                "不是失败；可以看 `total_records_in_table` 判断是表空还是条件太窄。\n"
+                "`truncated: true` 表示只给了前 N 行，需要更多就换个更具体的问法。"
             ),
             "parameters": {
                 "type": "object",
@@ -182,6 +178,34 @@ TOOL_SCHEMAS = [
                     "file_path": {"type": "string", "description": "Excel 文件路径"},
                 },
                 "required": ["table_name", "file_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_user",
+            "description": (
+                "向用户提问，等回答后再继续。**问题不明确、需要在几个方向里选、"
+                "或缺关键信息时用它，不要猜。**\n"
+                "给了 options 就是让用户选方向（最多 3 个）；不给就是纯澄清。\n"
+                "用户永远可以自由输入——选项只是省事，不是限制。\n"
+                "这个工具会挂起当前流程，用户回答后你会拿到 answer 继续。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "要问用户的问题，一句话说清楚缺什么",
+                    },
+                    "options": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "可选的方向，最多 3 个。不给就是纯澄清",
+                    },
+                },
+                "required": ["question"],
             },
         },
     },
@@ -502,6 +526,26 @@ def build_tool_functions(llm, trace):
     def request_import(table_name, file_path):
         return import_service.request_import(file_path, base_ctx.for_table(table_name))
 
+    def ask_user(question, options=None):
+        """向用户提问——工具挂起，不碰数据。
+
+        它和确认卡片走同一条路：抛 UserInputRequired，用户回答后
+        由 pending_service 的续体把它伪装成这次调用的返回。
+        区别只在续体：这里是「答案就是结果」，确认卡片是「执行完才算结果」。
+        """
+        raise UserInputRequired(
+            question=question,
+            pending_action={
+                "type": "ask",
+                "stage": "confirm",
+                "question": question,
+                # options 只是提示，最多 3 个；自由输入永远在
+                "options": [str(o) for o in (options or [])][:3],
+                "user_input": base_ctx.trace.data.get("question", ""),
+                "trace_id": base_ctx.trace.id,
+            },
+        )
+
     def check_consistency(table_name=None):
         # 传了表名——检查那一张；不传——检查所有表
         if table_name:
@@ -568,6 +612,7 @@ def build_tool_functions(llm, trace):
         "request_update": request_update,
         "request_batch_create": request_batch_create,
         "request_import": request_import,
+        "ask_user": ask_user,
         "check_consistency": check_consistency,
         "export_to_excel": export_to_excel,
         "generate_report": generate_report,
