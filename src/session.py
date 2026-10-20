@@ -32,11 +32,22 @@ def _now() -> str:
 
 
 class Session:
+    """一个会话的两份记录：**存证**和**记忆**。
+
+    - `messages` 是**存证**：完整的对话流水，只增不减，给人回看
+    - `summary` + `summary_upto` 是**记忆**：给模型的压缩版
+
+    这两件事的需求是相反的——存证要全，记忆要小。放在一个列表里，
+    压缩就会毁掉存证（旧版确实是这样：`compact()` 把旧消息砍了）。
+    分开之后，压缩只推进 `summary_upto`，一条消息都不删。
+    """
+
     def __init__(self, session_id: str = None):
         self.session_id = session_id or uuid.uuid4().hex[:12]
-        self.messages = []
+        self.messages = []          # 存证：完整，只增不减
+        self.summary = None         # 记忆：旧对话的要点
+        self.summary_upto = 0       # 摘要覆盖到 messages 的第几条
         self.pending_action = None
-        self.summary = None
         self.prompt_tokens = 0
 
     def add_user(self, text: str):
@@ -53,7 +64,10 @@ class Session:
         self.messages.append(msg)
 
     def get_history(self) -> list:
-        """返回带摘要的完整历史（摘要为 system 角色）。
+        """给模型的那一份：摘要 + **尚未被摘要的消息**。
+
+        这是记忆侧，不是存证。`summary_upto` 之前的消息已经被摘要覆盖，
+        不再逐条发给模型——但它们还在 `self.messages` 里，前端照样看得见。
 
         gx_tools 不能原样塞回去（API 不认这个字段），但也不能直接丢掉——
         丢掉的话，模型回看历史时只看到自己说过「已生成 xxx.pdf」，
@@ -67,7 +81,7 @@ class Session:
                 "content": f"【历史摘要】\n{self.summary}",
             })
 
-        for m in self.messages:
+        for m in self.messages[self.summary_upto:]:
             tools = m.get("gx_tools")
             # gx_* 一律只给界面回看，不进 prompt：
             #   gx_reasonings 动辄上千字，每轮都带上，成本和噪音都不划算；
@@ -86,11 +100,19 @@ class Session:
                     status = "成功"
                 else:
                     status = "失败"
-                args = t.get("args") or {}
-                arg_text = "，".join(
-                    f"{k}={v}" for k, v in list(args.items())[:3]
-                )
-                lines.append(f"- {t['name']}({arg_text}) → {status}")
+
+                # 参数**全给**，不再按位置截前 3——那样 table_name 会被切掉，
+                # 模型看到的是"参数的前三个"，不是"重要的三个"。
+                # 只在整串超长时截尾（大数组之类），截的是尾巴不是位置
+                arg_text = json.dumps(t.get("args") or {}, ensure_ascii=False)
+                if len(arg_text) > 160:
+                    arg_text = arg_text[:160] + "…"
+
+                # 结果要点：这一轮到底查到了几行、改了几条、导出了什么。
+                # 没有它，模型只知道"调过且成功"，不知道发生过什么
+                gist = t.get("gist") or ""
+                tail = f"，{gist}" if gist else ""
+                lines.append(f"- {t['name']}({arg_text}) → {status}{tail}")
 
             result.append({
                 "role": m["role"],
@@ -103,6 +125,7 @@ class Session:
     def clear(self):
         self.messages.clear()
         self.summary = None
+        self.summary_upto = 0
         self.prompt_tokens = 0
 
     def set_pending(self, action: dict):
@@ -145,6 +168,9 @@ class Session:
             "title": self.title(),
             "message_count": len(self.messages),
             "summary": self.summary,
+            # 摘要覆盖到第几条。不存它的话，重启后要么把摘要过的
+            # 对话再发一遍，要么把没摘要的当成已摘要吞掉
+            "summary_upto": self.summary_upto,
             "messages": self.messages,
             # 挂起的中断也一起落盘：它带着断点（这一轮已经发生过的
             # 消息片段），重启后仍能从断在哪继续
@@ -165,6 +191,9 @@ class Session:
             return session
         session.messages = data.get("messages", [])
         session.summary = data.get("summary")
+        # 旧文件没有这个字段：旧版压缩是**删消息**，summary 对应的
+        # 那部分本来就不在 messages 里，所以从 0 开始正是对的
+        session.summary_upto = int(data.get("summary_upto") or 0)
         # 断点跟着会话一起回来。没有它，重启后 pending 虽然还在，
         # 但模型已经不知道自己断在哪个工具调用上了
         session.pending_action = data.get("pending")
@@ -190,8 +219,13 @@ class Session:
         return sorted(items, key=lambda x: x["updated_at"], reverse=True)
 
     def should_compact(self, threshold: int) -> bool:
-        """是否触发压缩。要求至少 20 条消息，避免早期误触发。"""
-        return self.prompt_tokens >= threshold and len(self.messages) >= 20
+        """是否触发压缩。要求**尚未摘要的**至少 20 条，避免早期误触发。
+
+        不能拿 `len(self.messages)` 数：存证只增不减，条数永远够，
+        压缩过一次之后每轮都会再压一次。
+        """
+        pending = len(self.messages) - self.summary_upto
+        return self.prompt_tokens >= threshold and pending >= 20
 
     def archive(self, reason: str = "auto") -> Path:
         """归档完整对话到文件。"""
@@ -235,43 +269,54 @@ class Session:
         return file_path
 
     def compact(self, llm, keep_recent: int = 6):
-        """把旧消息摘要成一段，保留最近 N 轮。"""
-        keep_count = keep_recent * 2
-        if len(self.messages) <= keep_count:
-            return
+        """把旧消息摘要成要点。**一条消息都不删。**
 
-        old_messages = self.messages[:-keep_count]
-        recent_messages = self.messages[-keep_count:]
+        旧版这里最后一句是 `self.messages = recent_messages`——压缩把
+        存证也砍了，用户刷新后早期对话直接消失。现在只推进
+        `summary_upto`：模型看到的上下文变小，人看到的记录一点没少。
+        """
+        keep_count = keep_recent * 2
+        end = len(self.messages) - keep_count
+        if end <= self.summary_upto:
+            return
 
         parts = []
         if self.summary:
             parts.append(f"【之前摘要】\n{self.summary}")
-
-        for m in old_messages:
+        for m in self.messages[self.summary_upto:end]:
             role = "用户" if m["role"] == "user" else "助手"
-            parts.append(f"{role}：{m['content']}")
+            text = m.get("content", "")
+            # 动作凭据也要进摘要的输入。只摘 content 的话，"调过什么、
+            # 结果是什么"会被整段丢掉，模型回看时会否认自己做过
+            for t in m.get("gx_tools") or []:
+                state = "成功" if t.get("ok") else "失败"
+                gist = f"，{t['gist']}" if t.get("gist") else ""
+                text += f"\n  [{t['name']} → {state}{gist}]"
+            parts.append(f"{role}：{text}")
 
         text = "\n\n".join(parts)
 
-        prompt = f"""请把以下对话历史压缩成一段简洁的摘要。
+        # **要事实，不要散文。** 散文的信息不可控：该留的被挤掉、
+        # 不该留的占地方，而且模型没法逐条核对。要点列表可以
+        prompt = f"""请把以下对话历史整理成**要点列表**，不要写成一段散文。
 
 要求：
-1. 保留关键信息：已确认的事实、正在进行的操作、项目名/人名等关键实体
-2. 保留用户的偏好和决策
-3. 不要编造
-4. 不超过 500 字
-5. 用第三人称叙述
+1. 每条一行，写**事实**：用户要什么、做了哪些操作、结果是什么（关键数字保留）
+2. 保留实体名（表名、字段名、文件名、人名）
+3. 保留用户的偏好和决定
+4. 不要编造，不确定的不写
+5. 不超过 500 字
 
 对话历史：
 
 {text}
 
-摘要："""
+要点："""
 
         new_summary = llm.chat("你是一个对话摘要助手", prompt).strip()
 
         self.summary = new_summary
-        self.messages = recent_messages
+        self.summary_upto = end
         self.prompt_tokens = 0
 
     def __len__(self):

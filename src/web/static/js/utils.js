@@ -112,6 +112,8 @@ export const clockTime = (iso) => {
 export const toolGist = (tool) => {
   const p = tool.parsed;
   if (p) {
+    // 历史回放时 parsed 是后端抽好的结果要点，直接用
+    if (p.gist) return p.gist;
     if (p.row_count != null) return p.row_count + ' 行';
     if (p.answer) return String(p.answer).slice(0, 70);
     if (p.message) return String(p.message).slice(0, 70);

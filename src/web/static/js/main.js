@@ -781,6 +781,20 @@ createApp({
               continue;
             }
             const t = item.src;
+            // 新会话文件存的是结构化字段（sql / preview / file_path / gist），
+            // 不再存整段 raw；旧文件里还有 raw，先按原样解析，保持兼容
+            const legacyRaw = t.raw || '';
+            // 空字段不放进去：展开时一串 `"file_path": ""` 只是噪音
+            const parsed = legacyRaw ? safeParse(legacyRaw) : (
+              (t.sql || t.preview || t.file_path || t.gist)
+                ? {
+                    ...(t.sql ? { sql: t.sql } : {}),
+                    ...(t.preview ? { rows: t.preview } : {}),
+                    ...(t.file_path ? { file_path: t.file_path } : {}),
+                    ...(t.gist ? { gist: t.gist } : {}),
+                  }
+                : null
+            );
             const tool = {
               callId: '',
               name: t.name,
@@ -788,8 +802,8 @@ createApp({
               state: t.security ? 'warn' : (t.ok ? 'ok' : 'err'),
               open: false,
               ms: t.ms,
-              raw: t.raw || '',
-              parsed: safeParse(t.raw),
+              raw: legacyRaw,
+              parsed,
             };
             cur.tools.push(tool);
             collectArtifact(cur, tool);

@@ -56,6 +56,50 @@ def _is_security_error(result_str: str) -> bool:
         return False
 
 
+def _tool_evidence(result_str: str) -> dict:
+    """从工具返回里抽**回放时要看的东西**，不存整段 raw。
+
+    raw 是 8000 字符的截断版，一轮几个工具就是几十 KB，而它九成
+    是模型当轮已经看过的数据。留下的是回看时真正会看的：一句结果
+    要点、模型写过的 SQL、产出的文件、前几行数据。
+
+    规则抽取，不调 LLM——这些字段本来就是结构化的，问模型一遍
+    既费钱又不准。
+    """
+    try:
+        data = json.loads(result_str)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    if data.get("ok") is False:
+        gist = "失败：" + str(data.get("error") or "")[:60]
+    else:
+        bits = []
+        if data.get("status") == "empty":
+            bits.append("空结果")
+        if data.get("row_count") is not None:
+            bits.append(f"{data['row_count']} 行")
+        if data.get("affected") is not None:
+            bits.append(f"影响 {data['affected']} 条")
+        if data.get("file_path"):
+            bits.append(str(data["file_path"]).replace("\\", "/").rsplit("/", 1)[-1])
+        if data.get("snapshots") is not None:
+            bits.append(f"{len(data['snapshots'])} 个快照")
+        gist = "，".join(bits)
+
+    rows = data.get("rows")
+    evidence = {
+        "gist": gist,
+        "sql": data.get("sql") or "",
+        "file_path": data.get("file_path") or "",
+        "preview": rows[:3] if isinstance(rows, list) else None,
+    }
+    # 空值不落盘：每条都带一堆 "" 和 null，文件平白多一截
+    return {k: v for k, v in evidence.items() if v not in ("", None)}
+
+
 def _emit(sink, type_: str, **payload):
     """推送一个执行事件。sink 为空时静默，CLI 不受影响。"""
     if sink:
@@ -219,11 +263,13 @@ def run_agent(user_input: str, session, llm, trace,
                 tool_log.append({
                     "round": round_no,  # 回放时靠它把思考插回原位，否则顺序对不上
                     "name": name,
-                    "args": args,
+                    "args": args,       # 全量。以前按位置截前 3，会把 table_name 切掉
                     "ok": _is_success(result),
                     "security": _is_security_error(result),
                     "ms": elapsed_ms,
-                    "raw": result[:tool_result_limit],
+                    # 动作记忆：一句结果要点 + 回放要看的结构化字段。
+                    # 不再存 raw——raw 只在这一轮的界面事件里出现
+                    **_tool_evidence(result),
                 })
 
                 if _is_success(result):
