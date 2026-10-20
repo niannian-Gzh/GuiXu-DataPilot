@@ -230,6 +230,35 @@ def request_drop_table(table_name: str, ctx=None) -> str:
     )
 
 
+# ============================================================ 回滚
+
+def request_rollback(snapshot_id: int, ctx) -> str:
+    """请求把表退回某个快照。
+
+    **回滚本身也是破坏性操作**——`snapshot.rollback` 会先给当前状态
+    再落一份，所以回滚错了还能回滚回来（design 数据层第五节）。
+    """
+    snaps = using(snapshot_mod.list_snapshots)
+    target = next((s for s in snaps if s["id"] == snapshot_id), None)
+    if not target:
+        return json.dumps(
+            {"ok": False, "error": f"没有这个快照：{snapshot_id}",
+             "error_type": "invalid"},
+            ensure_ascii=False,
+        )
+
+    raise UserInputRequired(
+        question=f"即将回滚 {target['table']}",
+        pending_action=_card_pending(
+            "struct", ctx.for_table(target["table"]),
+            [[target["table"], target["at"], target["label"], target["rows"]]],
+            ["表", "时间", "因何产生", "行数"], 1, True,
+            action="rollback", snapshot_id=snapshot_id,
+            table_name=target["table"],
+        ),
+    )
+
+
 # ============================================================ 执行
 
 def execute_structure(pending: dict, trace_id: str, user_input: str) -> str:
@@ -257,6 +286,8 @@ def execute_structure(pending: dict, trace_id: str, user_input: str) -> str:
             ))
         elif action == "drop_table":
             _run(lambda con: snapshot_mod.drop_table(con, table))
+        elif action == "rollback":
+            _run(lambda con: snapshot_mod.rollback(con, pending["snapshot_id"]))
         else:
             raise ValueError(f"未知的结构动作：{action}")
     except Exception as e:

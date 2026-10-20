@@ -1,4 +1,7 @@
 import json
+
+import snapshot
+from runner import using
 from nl2sql import get_schema, render_schema
 from schema_store import get_all_tables_schema
 from services import ServiceContext
@@ -395,6 +398,63 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "list_deleted",
+            "description": (
+                "列出这张表里被删掉、还能恢复的行（软删除的那些）。\n"
+                "只读，不需要确认。用户问'我删过什么''刚才删的还在吗'时用它。\n"
+                "要恢复其中某几条，再调 request_restore。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
+                },
+                "required": ["table_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_snapshots",
+            "description": (
+                "列出某张表的历史快照（做覆盖导入 / 删表 / 删列 / 回滚之前自动留下的）。\n"
+                "只读。用户问'有没有之前的版本''能退回去吗'时用它。\n"
+                "返回的 id 交给 rollback_version 用。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table_name": {
+                        "type": "string",
+                        "description": "表名。不给就是全库的。",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rollback_version",
+            "description": (
+                "把一张表退回某个快照。**破坏性操作**——执行前会自动给"
+                "当前状态再落一份快照，所以回滚错了还能回滚回来。\n"
+                "snapshot_id 从 list_snapshots 拿。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "snapshot_id": {"type": "integer", "description": "快照 id"},
+                },
+                "required": ["snapshot_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "drop_table",
             "description": (
                 "删掉整张表。**破坏性最强**——执行前自动落快照，"
@@ -488,6 +548,18 @@ def build_tool_functions(llm, trace):
             table_name, base_ctx.for_table(table_name)
         )
 
+    def list_deleted(table_name):
+        return restore_service.list_deleted(table_name, base_ctx.for_table(table_name))
+
+    def list_snapshots(table_name=None):
+        return json.dumps(
+            {"ok": True, "snapshots": using(snapshot.list_snapshots, table_name)},
+            ensure_ascii=False,
+        )
+
+    def rollback_version(snapshot_id):
+        return structure_service.request_rollback(snapshot_id, base_ctx)
+
     return {
         "query_database": query_database,
         "request_delete": request_delete,
@@ -505,6 +577,9 @@ def build_tool_functions(llm, trace):
         "alter_column": alter_column,
         "drop_column": drop_column,
         "drop_table": drop_table,
+        "list_deleted": list_deleted,
+        "list_snapshots": list_snapshots,
+        "rollback_version": rollback_version,
     }
 
 

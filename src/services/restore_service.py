@@ -4,7 +4,7 @@ from datetime import datetime
 import storage
 from nl2sql import get_schema, generate_filter_sql
 from execute import execute_sql
-from services import UserInputRequired, bulk_threshold, card_records
+from services import UserInputRequired, bulk_threshold, card_columns, card_records
 from audit import log
 from runner import execute, using
 
@@ -72,6 +72,40 @@ def _days_left(value) -> str:
         return "—"
     left = 7 - (datetime.now() - deleted).days
     return f"剩 {max(left, 0)} 天"
+
+
+def list_deleted(table_name: str, ctx) -> str:
+    """列出这张表里被删掉、还能恢复的行。
+
+    **只读，不用确认。** 跟"恢复"分开：恢复要用户看着记录点头，
+    而"我删过哪些"是一个问题，模型答得上就行。
+
+    走底表——已删的行在视图里根本看不见。多带一列「删除时间」，
+    它是垃圾桶的倒计时起点，模型回答时也用得上。
+    """
+    keys, labels = card_columns(ctx)
+    all_name = table_name + storage.SOFTDEL_SUFFIX
+    biz = [k for k in keys if k not in storage.SYSTEM_COLS]
+
+    def _read(con):
+        cols = storage.columns_of(con, all_name)
+        keep = [c for c in biz if c in cols]
+        return con.execute(
+            f"SELECT {', '.join(storage.quote(c) for c in keep)}, deleted_at "
+            f"FROM {storage.quote(all_name)} WHERE is_deleted = 1 "
+            f"ORDER BY deleted_at DESC"
+        ).fetchall(), keep
+
+    rows, keep = using(_read)
+    keep_labels = [lab for k, lab in zip(keys, labels) if k in keep]
+
+    return json.dumps({
+        "ok": True,
+        "table": table_name,
+        "columns": keep_labels + ["删除时间"],
+        "records": [list(r) for r in rows],
+        "row_count": len(rows),
+    }, ensure_ascii=False)
 
 
 def execute_restore(candidates, table_name: str, trace_id: str, user_input: str) -> int:
