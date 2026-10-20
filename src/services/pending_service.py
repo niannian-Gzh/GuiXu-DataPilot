@@ -1,3 +1,4 @@
+import json
 import re
 from services import bulk_threshold
 from services import (
@@ -138,30 +139,34 @@ def _handle_restore(question, session, pending):
 
 def _handle_create(question, session, pending):
     if delete_service.is_confirm(question):
-        create_service.execute_create(
-            pending["record"], pending["real_table"],
+        result = json.loads(create_service.execute_create(
+            pending["record"], pending["table_name"],
             pending["trace_id"], pending["user_input"],
-        )
-        name = pending["record"]["project_name"]
+        ))
         session.clear_pending()
-        return True, f"已新增项目「{name}」。"
+        if not result.get("ok"):
+            return True, f"新增失败：{result.get('error')}"
+        return True, f"已在「{pending['table']}」新增 {result['affected']} 条记录。"
     return True, "请回复「确认」执行新增，或「取消」放弃。"
 
 
 def _handle_batch_create(question, session, pending):
-    n = len(pending["records"])
+    # 卡片的 records 是二维行，执行数据在 batch_records——两个键不是一回事
+    n = pending["affected"]
     if n <= bulk_threshold():
         valid = delete_service.is_confirm(question)
     else:
         valid = delete_service.is_bulk_confirm(question, n)
 
     if valid:
-        count = create_service.execute_batch_create(
-            pending["records"], pending["real_table"],
+        result = json.loads(create_service.execute_batch_create(
+            pending["batch_records"], pending["table_name"],
             pending["trace_id"], pending["user_input"],
-        )
+        ))
         session.clear_pending()
-        return True, f"已新增 {count} 条记录。"
+        if not result.get("ok"):
+            return True, f"批量新增失败（整批已回滚）：{result.get('error')}"
+        return True, f"已在「{pending['table']}」新增 {result['affected']} 条记录。"
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 

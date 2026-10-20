@@ -98,19 +98,24 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "request_create",
-            "description": "请求新增一条记录。字段从该表的结构里看。"
-            "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。",
+            "description": (
+                "请求新增一条记录。\n"
+                "record 是一行数据：{字段名: 值}。字段名必须是该表定义里存在的列；\n"
+                "标着「必填」的列不能缺；没给的「可空」列会留空，"
+                "有默认值的列由库里填默认值。\n"
+                "唯一约束会由数据库在写入时检查——重复了会返回 error_type: duplicate，"
+                "那不是失败，是提示你换一个值。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "table_name": {"type": "string", "description": _TABLE_DESC},
-                    "project_name": {"type": "string"},
-                    "owner": {"type": "string"},
-                    "category": {"type": "string", "description": "web 或 嵌入式"},
-                    "status_raw": {"type": "string", "description": "默认'已提交'"},
-                    "issued_date": {"type": "string", "description": "YYYY-MM-DD，默认今天"},
+                    "record": {
+                        "type": "object",
+                        "description": "一行数据：{字段名: 值}",
+                    },
                 },
-                "required": ["table_name", "project_name", "owner", "category"],
+                "required": ["table_name", "record"],
             },
         },
     },
@@ -139,25 +144,19 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "request_batch_create",
-            "description": "请求批量新增记录。一次新增多条时使用。"
-            "【返回特征】如果返回 is_security: true，说明这是安全拒绝，不要重试，直接告知用户。",
+            "description": (
+                "请求批量新增记录。records 是多行，每行一个 {字段名: 值}，"
+                "字段规则同 request_create。\n"
+                "整批要么全进、要么全不进——不会写进去一半。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "table_name": {"type": "string", "description": _TABLE_DESC},
                     "records": {
                         "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "project_name": {"type": "string"},
-                                "owner": {"type": "string"},
-                                "category": {"type": "string"},
-                                "status_raw": {"type": "string"},
-                                "issued_date": {"type": "string"},
-                            },
-                            "required": ["project_name", "owner", "category"],
-                        },
+                        "items": {"type": "object"},
+                        "description": "多行数据，每行 {字段名: 值}",
                     },
                 },
                 "required": ["table_name", "records"],
@@ -341,12 +340,8 @@ def build_tool_functions(llm, trace):
     def request_restore(table_name, filter_question):
         return restore_service.request_restore(filter_question, base_ctx.for_table(table_name))
 
-    def request_create(table_name, project_name, owner, category,
-                       status_raw="已提交", issued_date=None):
-        return create_service.request_create(
-            project_name, owner, category, status_raw, issued_date,
-            base_ctx.for_table(table_name),
-        )
+    def request_create(table_name, record):
+        return create_service.request_create(record, base_ctx.for_table(table_name))
 
     def request_update(table_name, filter_question, updates):
         return update_service.request_update(filter_question, updates, base_ctx.for_table(table_name))

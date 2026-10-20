@@ -48,3 +48,30 @@ class ServiceContext:
 def bulk_threshold() -> int:
     """影响多少条以上时，确认方式升级为手打「删除 N 条」。"""
     return setting("display.bulk_threshold")
+
+
+def card_columns(ctx) -> tuple[list[str], list[str]]:
+    """(英文字段名, 中文显示名)。
+
+    卡片要显示中文列名，而后端只知道英文字段——这层翻译放在这里，
+    免得 7 个 service 各写一份。没标中文的回落到字段名：
+    **显示一个英文列名，也胜过显示一个空白。**
+    """
+    from runner import using
+    from storage import describe
+
+    d = using(describe, ctx.table_name)
+    return (
+        [c["name"] for c in d["columns"]],
+        [c["note"] or c["name"] for c in d["columns"]],
+    )
+
+
+def card_records(ctx, rows: list[dict]) -> tuple[list[str], list[list]]:
+    """对象数组 → 卡片的 (中文列名, 二维行)。
+
+    **列名和数据必须一路给出去**，前端才画得出通用表格——
+    它不认识任何业务字段，只认识"第几列叫什么"。
+    """
+    keys, labels = card_columns(ctx)
+    return labels, [[r.get(k) for k in keys] for r in rows]

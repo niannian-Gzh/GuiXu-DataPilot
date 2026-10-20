@@ -952,6 +952,14 @@ powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000 -State List
 
 [素材] **熔断要按 (工具 + 参数) 计数，不能按工具名**：按名字计，会把"换参数探索"误杀成"思维死循环"——**它明明在往对的方向试。**
 
+[素材] **隔离层会把底表的默认值吞掉**：加上软删除隔离（视图 + `INSTEAD OF` 触发器）之后，`INSERT INTO inventory (sku)` 本该让 `qty` 用 `DEFAULT 0`，实际报 `NOT NULL constraint failed`。
+
+根因：**视图的 INSERT 触发器是显式列列表**——`VALUES (NEW.id, NEW.sku, NEW.qty, …)`。没给的列在 `NEW` 里是 `NULL`，原样传下去，**底表的 DEFAULT 永远轮不到生效**。
+
+修法：生成触发器时，对有默认值的列用 `COALESCE(NEW.col, 默认值)`；默认值还是从 `PRAGMA table_info` 读，不新增第二份。连带一个错误分类的问题：`Duplicate`（换个值再试）和 `ConstraintFailed`（少给了东西）**处置方式完全不同**，不能都报 `duplicate`。
+
+**教训：每一层抽象都会遮住下一层的某个特性。** 隔离层挡住的不只是已删的行，还有默认值、约束这些"数据库本来就管得好"的东西——**而且它不报错，只是悄悄地让那个特性失效。**
+
 ## 三、认知与洞见 —— Agent 和自己
 
 [素材] **"这个项目的问题不在某一处，在没有主线"** —— 一个能跑、评测满分、却让人"感觉模糊"的项目。模糊不是技术问题，是**主线缺失**。

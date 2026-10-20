@@ -1,6 +1,6 @@
 import json
 import re
-from services import UserInputRequired, bulk_threshold
+from services import UserInputRequired, bulk_threshold, card_records
 from services._filters import find_candidates
 from audit import log
 from display import format_table
@@ -19,9 +19,17 @@ def request_delete(filter_question: str, ctx) -> str:
             {"status": "not_found", "message": "没有找到匹配的记录"},
             ensure_ascii=False,
         )
+    labels, records = card_records(ctx, candidates)
     pending = {
         "type": "delete",
         "stage": "confirm",
+        # —— 卡片字段（前端只读这几个）——
+        "table": ctx.table_name,
+        "columns": labels,
+        "records": records,
+        "affected": len(candidates),
+        "danger": len(candidates) > bulk_threshold(),
+        # —— 内部字段（执行时要用，前端忽略）——
         "table_name": ctx.table_name,
         "real_table": ctx.real_table,
         "candidates": candidates,

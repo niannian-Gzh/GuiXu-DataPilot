@@ -1,8 +1,8 @@
 import {
-  FIELD_LABELS, SQL_WORDS,
+  SQL_WORDS,
   escapeHtml, strongify, md, safeParse, prettyJson, highlightSql,
   fmtVal, shortTime, stamp, clockTime, toolGist, makeThinkNode, thinkGist,
-  confirmColumns, confirmTitle, candidateRows, buildConfirm,
+  confirmColumns, confirmTitle, buildConfirm,
 } from './utils.js';
 import * as api from './api.js';
 import { dict, fmt } from './i18n.js';

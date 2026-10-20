@@ -222,7 +222,18 @@ def rebuild_access(
         f"FROM {all_name} WHERE is_deleted = 0"
     )
 
-    new_vals = ", ".join(f"NEW.{q}" for q in quoted)
+    # **有默认值的列要用 COALESCE 兜一下。**
+    # 触发器的列列表是显式的，`INSERT INTO 视图 (只给一部分列)` 时，
+    # 没给的列在 NEW 里是 NULL——如果原样传给底表，底表的 DEFAULT
+    # 就永远轮不到生效，NOT NULL 会直接失败。
+    defaults = {
+        r[1]: r[4] for r in con.execute(f"PRAGMA table_info({all_name})")
+        if r[4] is not None and r[1] not in SYSTEM_COLS
+    }
+    new_vals = ", ".join(
+        f"COALESCE(NEW.{q}, {defaults[c]})" if c in defaults else f"NEW.{q}"
+        for c, q in zip(biz, quoted)
+    )
     assignments = ", ".join(f"{q} = NEW.{q}" for q in quoted)
 
     # 增：写底表，is_deleted 强制为 0
@@ -525,15 +536,24 @@ class Duplicate(Exception):
         super().__init__(f"{table} 里 {', '.join(columns)} 已经有一条同样的记录了")
 
 
+class ConstraintFailed(Exception):
+    """别的约束失败（NOT NULL / CHECK / 类型）。跟"重复"分开报——
+    `duplicate` 的意思是"换个值再试"，而 NOT NULL 失败是"少给了东西"，
+    模型该知道的处置方式完全不同。"""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
 def translate(con: sqlite3.Connection, err: sqlite3.IntegrityError) -> Exception:
-    """把 sqlite3 的唯一约束错误翻译成 Duplicate，别的原样返回。
+    """把 sqlite3 的完整性错误翻译成模型看得懂的话。
 
     索引名是我们自己起的（`{表}_uniq_{列}` / `{表}_alive`），
     所以能从错误信息里把表和列还原出来。
     """
     text = str(err)
     if "UNIQUE constraint failed" not in text:
-        return err
+        return ConstraintFailed(text)
     target = text.split(":", 1)[-1].strip()          # "projects_all.name"
     for pair in target.split(","):
         parts = pair.strip().split(".")

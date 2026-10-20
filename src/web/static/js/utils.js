@@ -3,13 +3,6 @@
    所以从 setup 里提出来是安全的。 */
 
 /* 字段的界面显示名。改前后对比、确认卡片都靠它把 project_name 变成「项目名称」 */
-export const FIELD_LABELS = {
-  project_name: '项目名称', owner: '负责人', category: '分类',
-  status_raw: '状态', issued_date: '下发时间', certified_date: '下证时间',
-  resubmit_name: '重提项目名', reject_date: '打回时间',
-  resubmit_date: '重提时间', reject_count: '打回次数',
-};
-
 /* SQL 高亮的关键字表 */
 export const SQL_WORDS = [
   'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'ORDER', 'BY',
@@ -151,137 +144,78 @@ export const confirmTitle = (c) => {
 };
 
 /* ---------------- 确认卡片构造 ---------------- */
-export const candidateRows = (list) =>
-  list.map((c) => ({
-    '项目名称': c.project_name,
-    '负责人': c.owner || '—',
-    '状态': c.status_raw || '—',
-  }));
+/* 确认卡片：后端给数据，前端管长相。
+   ============================================================
+   后端只给 {type, table, columns, records, affected, danger, changes}，
+   其中 columns 是**中文列名**（从表定义取），records 是与之对应的二维数组。
+
+   这样这张卡片对**任何表**都成立。旧版把项目表的字段写死在这里
+   （project_name / owner / status_raw），换一张表就显示错——
+   而"多表"正是这个项目要去的方向。
+
+   文案（scope / note）在前端按 type 写死，后端不传——
+   design 的原话："卡片文案前端写死一句，后端不传文案"。 */
+const CONFIRM_SCOPE = {
+  delete:    (n) => `删除 ${n} 条记录`,
+  restore:   (n) => `恢复 ${n} 条记录`,
+  create:    (n) => (n > 1 ? `新增 ${n} 条记录` : '新增 1 条记录'),
+  update:    (n) => `修改 ${n} 条记录`,
+  transform: (n) => `修改 ${n} 条记录`,
+  struct:    () => '修改表结构',
+  import:    () => 'Excel 导入',
+};
+
+const CONFIRM_NOTE = {
+  delete:    (n) => `确认后这 ${n} 条进入回收站，7 天内可恢复。`,
+  restore:   (n) => `确认后这 ${n} 条重新回到台账。`,
+  create:    () => '确认后写入台账。',
+  update:    () => '确认后立即写入台账。',
+  transform: (n) => `将修改 ${n} 条记录，请核对下方预览。`,
+  struct:    () => '这是改表结构的操作，执行后结构会变。',
+  import:    () => '默认口径：新增全部导入，冲突以台账为准，已删除的保持删除。'
+                + '要改口径请直接在输入框说明，例如「导入，并恢复已删除的记录」。',
+};
 
 export const buildConfirm = (pending) => {
   const type = pending.type;
-  const base = {
-    resolved: false, verdict: '', rows: [], diffs: null, verb: '确认',
+  const n = pending.affected ?? (pending.records ? pending.records.length : 0);
+
+  const c = {
+    resolved: false,
+    verdict: '',
+    rows: [],
+    diffs: null,
+    typed_input: '',
     confirm_mode: pending.confirm_mode || 'simple',
     confirm_hint: pending.confirm_hint || '确认',
-    typed_input: '',
+    danger: !!pending.danger,
+    scope: (CONFIRM_SCOPE[type] || (() => '需要确认'))(n),
+    verb: pending.verb || (type === 'delete' ? '确认删除'
+                         : type === 'restore' ? '确认恢复'
+                         : '确认'),
+    note: (CONFIRM_NOTE[type] || (() => ''))(n),
   };
 
-  if (type === 'delete') {
-    const n = pending.candidates.length;
-    return Object.assign(base, {
-      scope: '删除 ' + n + ' 条记录',
-      verb: '确认删除',
-      danger: true,
-      rows: candidateRows(pending.candidates),
-      note: '确认后这 ' + n + ' 条进入回收站，7 天内可恢复。',
-    });
-  }
-
-  if (type === 'restore') {
-    const n = pending.candidates.length;
-    return Object.assign(base, {
-      scope: '恢复 ' + n + ' 条记录',
-      verb: '确认恢复',
-      rows: candidateRows(pending.candidates),
-      note: '确认后这 ' + n + ' 条重新回到项目台账。',
-    });
-  }
-
-  if (type === 'create') {
-    const r = pending.record;
-    return Object.assign(base, {
-      scope: '新增 1 条记录',
-      verb: '确认新增',
-      rows: [{
-        '项目名称': r.project_name,
-        '负责人': r.owner || '—',
-        '分类': r.category || '—',
-        '状态': r.status_raw || '已提交',
-        '下发时间': r.issued_date || '今天',
-      }],
-      note: '确认后写入台账。',
-    });
-  }
-
-  if (type === 'batch_create') {
-    const n = pending.records.length;
-    return Object.assign(base, {
-      scope: '批量新增 ' + n + ' 条记录',
-      verb: '确认新增',
-      rows: candidateRows(pending.records),
-      note: '确认后这 ' + n + ' 条写入台账。',
-    });
-  }
-
-  if (type === 'update') {
-    const n = pending.candidates.length;
-    const first = pending.candidates[0] || {};
-    const diffs = Object.entries(pending.updates || {}).map(([k, v]) => ({
-      field: FIELD_LABELS[k] || k,
-      from: n === 1 ? fmtVal(first[k]) : '（' + n + ' 条各不相同）',
-      to: fmtVal(v),
-    }));
-    return Object.assign(base, {
-      scope: '修改 ' + n + ' 条记录',
-      verb: '确认修改',
-      rows: pending.candidates.map((c) => ({
-        '项目名称': c.project_name,
-        '负责人': c.owner || '—',
-        '当前状态': c.status_raw || '—',
-      })),
-      diffs,
-      note: '确认后立即写入台账。',
-    });
-  }
-
-  if (type === 'transform') {
-    const n = pending.total || 0;
-    const full = !!pending.is_full_table;
-    const bulk = pending.confirm_mode === 'typed';
-    const levelLabel = full ? '全表修改' : (bulk ? '大批量修改' : '修改');
-
-    // 预览行的列名是英文列名，转成中文标签；值也统一走 fmtVal
-    const rows = (pending.rows || []).map((r) => {
-      const out = {};
-      Object.entries(r).forEach(([k, v]) => {
-        out[FIELD_LABELS[k] || k] = fmtVal(v);
+  // 通用表格：列名 + 二维行。认不出业务字段，也没有业务字段可认。
+  if (Array.isArray(pending.columns) && Array.isArray(pending.records)) {
+    c.rows = pending.records.map((row) => {
+      const obj = {};
+      pending.columns.forEach((col, i) => {
+        const v = Array.isArray(row) ? row[i] : row[col];
+        obj[col] = v === null || v === undefined ? '—' : fmtVal(v);
       });
-      return out;
-    });
-
-    return Object.assign(base, {
-      scope: '修改 ' + n + ' 条记录',
-      level_label: levelLabel,
-      verb: '确认修改',
-      danger: full,
-      rows: rows,
-      note: full
-        ? '⚠️ 此操作没有筛选条件，将修改全表所有记录。'
-        : '将修改 ' + n + ' 条记录，请核对下方预览。',
+      return obj;
     });
   }
 
-  if (type === 'import') {
-    const s = pending.scan_result || {};
-    const count = (k) => (s[k] ? s[k].length : 0);
-    return Object.assign(base, {
-      scope: 'Excel 导入',
-      verb: '确认导入',
-      rows: [
-        { '类别': '新增记录', '条数': count('new_records'), '说明': '文件里有、台账里没有' },
-        { '类别': '字段冲突', '条数': count('conflicts'), '说明': '同名记录字段对不上' },
-        { '类别': '已删除待恢复', '条数': count('deleted_in_db'), '说明': '台账里是删除态、文件里又出现' },
-        { '类别': '文件缺失', '条数': count('missing_from_excel'), '说明': '台账里有、文件里没有（不影响）' },
-      ],
-      note: '默认口径：新增全部导入，冲突以台账为准，已删除的保持删除。'
-          + '要改口径请直接在输入框说明，例如「导入，并恢复已删除的记录」。',
-    });
+  // 字段级改动（update / transform）：{field, before, after}
+  if (Array.isArray(pending.changes)) {
+    c.diffs = pending.changes.map((d) => ({
+      field: d.field,
+      from: fmtVal(d.before),
+      to: fmtVal(d.after),
+    }));
   }
 
-  return Object.assign(base, {
-    scope: '需要确认',
-    verb: '确认',
-    note: pending.message || '',
-  });
+  return c;
 };
