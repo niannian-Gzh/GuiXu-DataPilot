@@ -133,6 +133,46 @@ export const updateSchema = (table, data) =>
    连同那个字段上写好的中文含义。所以调用方拿到 changes 要如实报出来 */
 export const refreshSchema = () => _req('/schema/refresh', 'POST');
 
+/* ---------------- 恢复页 ---------------- */
+
+/* 列表类读失败返回 null（页面提示"读取失败"），不返回空数组——
+   空数组的意思是"真的没有"，两者在恢复页上差得很远 */
+export async function getDeletedRows() {
+  try {
+    const res = await fetch(API + '/recover/deleted');
+    if (!res.ok) return null;
+    return (await res.json()).tables || [];
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function getSnapshots() {
+  try {
+    const res = await fetch(API + '/recover/snapshots');
+    if (!res.ok) return null;
+    return (await res.json()).tables || [];
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function getSnapshotPreview(id) {
+  try {
+    const res = await fetch(API + '/recover/snapshot/' + id);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+export const restoreRows = (table, ids) =>
+  _req('/recover/restore', 'POST', { table, ids });
+
+export const rollbackSnapshot = (id) =>
+  _req('/recover/rollback', 'POST', { id });
+
 export const createConfig = (data) => _req('/configs', 'POST', data);
 export const updateConfig = (id, data) => _req('/configs/' + id, 'PUT', data);
 export const deleteConfig = (id) => _req('/configs/' + id, 'DELETE');

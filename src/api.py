@@ -26,7 +26,7 @@ from providers import PROVIDERS, get_provider, guess_model
 from settings_spec import PARAMS, GROUPS, param_by_key, defaults as spec_defaults
 from cleanup import cleanup, cleanup_snapshots
 from services import UserInputRequired
-from services import pending_service
+from services import pending_service, recover_service
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -259,6 +259,13 @@ def overview_api():
             con.close()
     except Exception:
         out["source"]["tables"] = None
+
+    # —— 恢复页的读数：左栏「恢复」右端 ——
+    # 读不出来就当没有，别让一个附加读数拖垮整个概览
+    try:
+        out["recover"] = recover_service.counts()
+    except Exception:
+        out["recover"] = None
 
     # —— 模型 ——
     active = store.get_active() or {}
@@ -782,6 +789,48 @@ class ModelsRequest(BaseModel):
     provider: Optional[str] = None
     base_url: Optional[str] = None
     key: Optional[str] = None
+
+
+# ============ 恢复页 ============
+# 回收站和版本历史都是人在页面上直接翻、直接点的，不经过模型。
+# 写操作复用对话里同一批执行端（审计、事务、回滚前的快照都在那儿）
+
+
+class RestoreRequest(BaseModel):
+    table: str
+    ids: list
+
+
+class RollbackRequest(BaseModel):
+    id: int
+
+
+@app.get("/recover/deleted")
+def recover_deleted_api():
+    return {"tables": recover_service.deleted_rows()}
+
+
+@app.post("/recover/restore")
+def recover_restore_api(req: RestoreRequest):
+    return recover_service.restore(req.table, req.ids)
+
+
+@app.get("/recover/snapshots")
+def recover_snapshots_api():
+    return {"tables": recover_service.snapshots()}
+
+
+@app.get("/recover/snapshot/{snap_id}")
+def recover_preview_api(snap_id: int):
+    out = recover_service.preview(snap_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="快照不存在")
+    return out
+
+
+@app.post("/recover/rollback")
+def recover_rollback_api(req: RollbackRequest):
+    return recover_service.rollback(req.id)
 
 
 @app.get("/settings/providers")

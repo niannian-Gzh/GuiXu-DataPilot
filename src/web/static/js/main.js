@@ -11,6 +11,7 @@ import ChatView from './components/ChatView.js';
 import FilesPanel from './components/FilesPanel.js';
 import SettingsView from './components/SettingsView.js';
 import SchemaView from './components/SchemaView.js';
+import RecoverView from './components/RecoverView.js';
 
 /* 应用入口。
 
@@ -23,7 +24,7 @@ import SchemaView from './components/SchemaView.js';
 const { createApp, ref, computed, watch, onMounted, nextTick, provide } = Vue;
 
 createApp({
-  components: { ChatView, FilesPanel, SettingsView, SchemaView },
+  components: { ChatView, FilesPanel, SettingsView, SchemaView, RecoverView },
   setup() {
     /* ---------------- 状态 ---------------- */
     const turns = ref([]);
@@ -39,7 +40,7 @@ createApp({
     const overview = ref(null);            // 欢迎页读数：数据源 / 规模 / 模型
 
     /* ---------------- 设置 ---------------- */
-    const view = ref('chat');              // 'chat' | 'settings' | 'schema'
+    const view = ref('chat');              // 'chat' | 'settings' | 'schema' | 'recover'
     const settings = ref({ groups: [], params: [], info: {} });
     const activeGroup = ref('model');
     const leftTab = ref('sessions');        // 'sessions' | 'trace'
@@ -272,9 +273,17 @@ createApp({
        状态（草稿、改动）属于那个页面，离开即销毁，不该挂在 store 上 */
     const goSchemaRaw = () => { view.value = 'schema'; };
 
+    /* 恢复页同理，自己 onMounted 去取。顺手刷一次读数——
+       左栏那个「N 条 · M 版」不能是上次进来时的旧数 */
+    const goRecoverRaw = () => {
+      view.value = 'recover';
+      loadOverview();
+    };
+
     const goSettings = guarded(goSettingsRaw);
     const goChat = guarded(goChatRaw);
     const goSchema = guarded(goSchemaRaw);
+    const goRecover = guarded(goRecoverRaw);
     const newSession = guarded(newSessionRaw);
 
     const saveSettings = async () => {
@@ -1009,7 +1018,8 @@ createApp({
       leaveGuard,
       allGroups, isLocalGroup, activeGroupParams, activeGroupDesc,
       dirty, groupDirty, dirtyCount, editValue, onEdit, resetField,
-      discardDraft, loadSettings, goSettings, goChat, goSchema, saveSettings,
+      discardDraft, loadSettings, loadOverview,
+      goSettings, goChat, goSchema, goRecover, saveSettings,
 
       // 模型配置
       providers, configs, activeId, currentModel, editor, formModels, formState,
@@ -1102,6 +1112,21 @@ createApp({
           <span class="asset-n">文档库概览</span>
           <span class="asset-m">—</span>
         </button>
+        <!-- 恢复：还能捞回几行、手上有几份快照。它是唯一能让用户
+             知道"有东西可以回头"的地方 -->
+        <button class="asset" :class="{on: view === 'recover'}" @click="goRecover">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 8a5 5 0 1 0 1.6-3.7"/>
+            <path d="M3 2.5V5h2.5"/>
+          </svg>
+          <span class="asset-n">恢复</span>
+          <span class="asset-m">
+            {{ overview && overview.recover
+                 ? overview.recover.deleted + ' 条 · ' + overview.recover.snapshots + ' 版'
+                 : '—' }}
+          </span>
+        </button>
       </div>
 
       <div class="list">
@@ -1153,6 +1178,7 @@ createApp({
     <chat-view v-if="view === 'chat'"></chat-view>
     <settings-view v-else-if="view === 'settings'"></settings-view>
     <schema-view v-else-if="view === 'schema'"></schema-view>
+    <recover-view v-else-if="view === 'recover'"></recover-view>
   </div>
 </div>
 
