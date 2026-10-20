@@ -34,9 +34,12 @@ from runner import query_df, transaction, using
 
 
 def _match_key(table_name: str) -> str | None:
-    """导入的匹配键：表上的**单列**唯一约束。"""
-    uniq = using(storage.uniques_of, table_name + storage.SOFTDEL_SUFFIX)
-    for cols in uniq:
+    """导入的匹配键：表上的**单列**唯一约束。
+
+    传**业务名**——`uniques_of` 自己会加 `_all`（它跟 describe 一样
+    按业务名工作）。两边都加一次就变成查 `xxx_all_all` 了。
+    """
+    for cols in using(storage.uniques_of, table_name):
         if len(cols) == 1:
             return cols[0]
     return None

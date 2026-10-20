@@ -104,14 +104,19 @@ def execute_many(sql: str, rows: list) -> int:
 
 
 class _Handle:
-    """事务句柄——只有 execute 和 execute_many。"""
+    """事务句柄。
+
+    `execute` 返回**游标**，不返回行数——跟原生 `sqlite3` 一致。
+    原因是事务里既可能写（要 rowcount）也可能读（要 fetchall /
+    `PRAGMA table_info` 的迭代），硬把返回值统一成 int 会让后者没法用
+    （`'int' object is not iterable`）。要行数的调用方取 `.rowcount` 就行。
+    """
 
     def __init__(self, con: sqlite3.Connection):
         self._con = con
 
-    def execute(self, sql: str, params=None) -> int:
-        cur = self._con.execute(sql, params) if params is not None else self._con.execute(sql)
-        return max(cur.rowcount, 0)
+    def execute(self, sql: str, params=None):
+        return self._con.execute(sql, params) if params is not None else self._con.execute(sql)
 
     def execute_many(self, sql: str, rows: list) -> int:
         if not rows:

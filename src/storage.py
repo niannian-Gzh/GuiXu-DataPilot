@@ -180,9 +180,17 @@ def create_unique(con: sqlite3.Connection, table: str, columns) -> None:
 
 
 def uniques_of(con: sqlite3.Connection, table: str) -> list[list[str]]:
-    """读唯一约束。模型得知道哪些列不能重复，不然它会靠碰壁学习。"""
+    """读唯一约束。模型得知道哪些列不能重复，不然它会靠碰壁学习。
+
+    **先 fetchall 再循环。** 直接 `for row in con.execute(...)` 然后在
+    循环体里再 `con.execute(...)`，内层会重置外层游标，外层静默中断——
+    结果是"索引明明在、这里却读出来空"，而且不报错。
+    """
+    indexes = con.execute(
+        f"PRAGMA index_list({quote(table + SOFTDEL_SUFFIX)})"
+    ).fetchall()
     out = []
-    for row in con.execute(f"PRAGMA index_list({quote(table + SOFTDEL_SUFFIX)})"):
+    for row in indexes:
         # index_list: (seq, name, unique, origin, partial)
         if not row[2]:
             continue
@@ -284,6 +292,77 @@ def drop_column(con: sqlite3.Connection, name: str, col: str, pk: str = "id") ->
         f"ALTER TABLE {quote(f'{name}{SOFTDEL_SUFFIX}')} DROP COLUMN {quote(col)}"
     )
     rebuild_access(con, name, columns_of(con, f"{name}{SOFTDEL_SUFFIX}"), pk)
+
+
+def change_column_type(
+    con: sqlite3.Connection, name: str, col: str, new_type: str, pk: str = "id"
+) -> None:
+    """改列类型。SQLite 没有 `ALTER COLUMN`，只能重建表。
+
+    步骤：拆视图和触发器 → 建新表（换类型）→ 拷数据 → 删旧表 →
+    换名 → 重建视图和触发器。**整件事必须在一个事务里**，
+    不然中途失败会留下一张半成品表。
+
+    **调用方必须先落快照**——这一步连数据一起搬，回滚要连数据回滚
+    （design 数据层第五节）。
+
+    类型替换走正则而不是重建 DDL：原建表语句里有主键、NOT NULL、
+    默认值、唯一约束，重建时一项一项拼太容易漏；只把那一列的类型
+    换掉，其余原样保留。
+    """
+    import re
+
+    all_name = name + SOFTDEL_SUFFIX
+    row = con.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (all_name,)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"{name} 不存在")
+    ddl = row[0]
+
+    # 只替换目标列的类型——`"col" TYPE` 或 `col TYPE`
+    pattern = re.compile(
+        rf'((?:"{re.escape(col)}"|{re.escape(col)})\s+)([A-Za-z]+(?:\([^)]*\))?)',
+        re.IGNORECASE,
+    )
+    new_ddl, n = pattern.subn(rf"\g<1>{new_type}", ddl, count=1)
+    if n == 0:
+        raise ValueError(f"在建表语句里找不到列 {col}")
+    new_ddl = new_ddl.replace(f'"{all_name}"', f'"{all_name}_new"', 1)
+    if f"{all_name}_new" not in new_ddl:          # 表名没加引号的写法
+        new_ddl = new_ddl.replace(all_name, f"{all_name}_new", 1)
+
+    cols = [c for c in columns_of(con, all_name)]
+    joined = ", ".join(quote(c) for c in cols)
+
+    # **索引要另存**——CREATE TABLE 的 DDL 里没有它们，而 DROP TABLE
+    # 会连带删掉。不存的话，重建出来的表会丢掉唯一约束，而且不报错。
+    index_sql = [
+        r[0] for r in con.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? "
+            "AND sql IS NOT NULL", (all_name,)
+        )
+    ]
+
+    con.execute(new_ddl)
+    con.execute(
+        f"INSERT INTO {quote(all_name + '_new')} ({joined}) "
+        f"SELECT {joined} FROM {quote(all_name)}"
+    )
+    for suffix in ("ins", "upd", "del"):
+        con.execute(f"DROP TRIGGER IF EXISTS {quote(f'{name}_{suffix}')}")
+    con.execute(f"DROP VIEW IF EXISTS {quote(name)}")
+    con.execute(f"DROP TABLE {quote(all_name)}")
+    con.execute(f"ALTER TABLE {quote(all_name + '_new')} RENAME TO {quote(all_name)}")
+
+    for sql in index_sql:                              # 索引按原名重建
+        con.execute(sql.replace(all_name, all_name))   # 名字里带的就是它，原样执行
+
+    con.execute(
+        f"CREATE INDEX IF NOT EXISTS {quote(name + '_alive')} "
+        f"ON {quote(all_name)} (is_deleted)"
+    )
+    rebuild_access(con, name, columns_of(con, all_name), pk_of(con, all_name))
 
 
 def repair(con: sqlite3.Connection) -> dict:

@@ -3,7 +3,7 @@ import re
 from services import bulk_threshold
 from services import (
     delete_service, create_service, update_service,
-    transform_service, add_column_service,
+    transform_service, structure_service,
 )
 from services import import_service, restore_service
 
@@ -64,8 +64,8 @@ def handle_pending(question: str, session, llm=None):
         return _handle_import(question, session, pending, llm)
     if ptype == "transform":
         return _handle_transform(question, session, pending)
-    if ptype == "add_column":
-        return _handle_add_column(question, session, pending)
+    if ptype == "struct":
+        return _handle_struct(question, session, pending)
 
     return False, ""
 
@@ -208,19 +208,16 @@ def _handle_transform(question, session, pending):
     return True, "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
 
 
-def _handle_add_column(question, session, pending):
+def _handle_struct(question, session, pending):
+    """结构变更的执行端。建表 / 加列 / 改列 / 删列 / 删表都走这里。"""
     if delete_service.is_confirm(question):
-        result = add_column_service.execute_add_column(
+        result = json.loads(structure_service.execute_structure(
             pending, pending["trace_id"], pending["user_input"]
-        )
+        ))
         session.clear_pending()
-
-        msg = f"已加列「{result['column']}」。"
-        if result["label_set"]:
-            msg += "中文含义已标注。"
-        else:
-            msg += "你可以在「数据库概览」页标注它的中文含义。"
-        return True, msg
+        if not result.get("ok"):
+            return True, f"结构修改失败：{result.get('error')}"
+        return True, f"已在「{pending['table']}」完成结构修改。"
     return True, "请回复「确认」执行，或「取消」放弃。"
 
 

@@ -4,7 +4,7 @@ from schema_store import get_all_tables_schema
 from services import ServiceContext
 from services import (
     query_service, delete_service, create_service,
-    update_service, transform_service, add_column_service,
+    update_service, transform_service, structure_service,
 )
 from services import import_service, restore_service
 from services import consistency_service
@@ -318,6 +318,97 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_table",
+            "description": (
+                "新建一张表。\n"
+                "columns 是列定义：每项 {name, type, nullable?, default?}。\n"
+                "- name：小写字母开头的英文标识符\n"
+                "- type：VARCHAR / INTEGER / BIGINT / DOUBLE / BOOLEAN / TIMESTAMP / DATE\n"
+                "- nullable：默认 true；给 false 就是必填\n"
+                "- default：默认值（SQL 字面量，字符串不用自己加引号）\n"
+                "不给主键时自动补一个自增整型 id。\n"
+                "unique：哪几列合起来不能重复，比如 [\"order_no\"]。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table_name": {"type": "string", "description": "新表的名字"},
+                    "columns": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "列定义列表",
+                    },
+                    "unique": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "唯一列（可选）",
+                    },
+                },
+                "required": ["table_name", "columns"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "alter_column",
+            "description": (
+                "改一个列的类型。这是破坏性操作——表会被重建，"
+                "执行前自动落快照。已有数据按新类型重新解释。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
+                    "column_name": {"type": "string"},
+                    "new_type": {
+                        "type": "string",
+                        "enum": ["VARCHAR", "INTEGER", "BIGINT", "DOUBLE",
+                                 "BOOLEAN", "TIMESTAMP", "DATE"],
+                    },
+                },
+                "required": ["table_name", "column_name", "new_type"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drop_column",
+            "description": (
+                "删掉一个列。破坏性操作——执行前自动落快照，"
+                "之后可以从版本历史回滚。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
+                    "column_name": {"type": "string"},
+                },
+                "required": ["table_name", "column_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drop_table",
+            "description": (
+                "删掉整张表。**破坏性最强**——执行前自动落快照，"
+                "之后可以从版本历史回滚。问清楚是哪张表再动手。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "table_name": {"type": "string", "description": _TABLE_DESC},
+                },
+                "required": ["table_name"],
+            },
+        },
+    },
 ]
 
 
@@ -372,9 +463,29 @@ def build_tool_functions(llm, trace):
         return transform_service.request_transform(description, base_ctx.for_table(table_name))
 
     def add_column(table_name, column_name, column_type, default_value=None, label=None):
-        return add_column_service.request_add_column(
-            column_name, column_type, default_value, label,
+        return structure_service.request_add_column(
+            table_name, column_name, column_type, default_value, label,
             base_ctx.for_table(table_name),
+        )
+
+    def create_table(table_name, columns, unique=None):
+        return structure_service.request_create_table(
+            table_name, columns, unique, base_ctx.for_table(table_name)
+        )
+
+    def alter_column(table_name, column_name, new_type):
+        return structure_service.request_alter_column(
+            table_name, column_name, new_type, base_ctx.for_table(table_name)
+        )
+
+    def drop_column(table_name, column_name):
+        return structure_service.request_drop_column(
+            table_name, column_name, base_ctx.for_table(table_name)
+        )
+
+    def drop_table(table_name):
+        return structure_service.request_drop_table(
+            table_name, base_ctx.for_table(table_name)
         )
 
     return {
@@ -390,6 +501,10 @@ def build_tool_functions(llm, trace):
         "generate_report": generate_report,
         "transform_data": transform_data,
         "add_column": add_column,
+        "create_table": create_table,
+        "alter_column": alter_column,
+        "drop_column": drop_column,
+        "drop_table": drop_table,
     }
 
 
