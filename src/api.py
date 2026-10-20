@@ -43,7 +43,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import pandas as pd
 from runner import connect, query_df, transaction
-from session import ARCHIVE_DIR
+from session import ARCHIVE_DIR, valid_id
 import schema_store
 import storage
 from storage import SOFTDEL_SUFFIX, describe, list_tables
@@ -61,8 +61,15 @@ _state = {
 _sessions: dict[str, Session] = {}
 
 
+def _check_session_id(session_id: str) -> None:
+    """会话 id 会拼成文件名，先关死路径字符。"""
+    if not valid_id(session_id):
+        raise HTTPException(status_code=400, detail="会话 id 不合法")
+
+
 def _load_session(session_id: str) -> Session:
     """优先取内存里的会话，其次从磁盘读回，都没有就新建。"""
+    _check_session_id(session_id)
     if session_id in _sessions:
         return _sessions[session_id]
     session = Session.load(session_id)
@@ -881,7 +888,9 @@ class ModelsRequest(BaseModel):
 
 class RestoreRequest(BaseModel):
     table: str
-    ids: list
+    # 主键可能是整数也可能是文本；对象/数组这类形状在入口就挡掉，
+    # 否则会一路走到 sqlite 的参数绑定，变成 500
+    ids: list[int | str]
 
 
 class RollbackRequest(BaseModel):
@@ -1170,6 +1179,7 @@ def list_sessions():
 @app.get("/sessions/{session_id}")
 def get_session(session_id: str):
     """读回一个会话的完整消息。"""
+    _check_session_id(session_id)
     path = ARCHIVE_DIR / f"{session_id}.json"
     if session_id not in _sessions and not path.exists():
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -1186,6 +1196,7 @@ def get_session(session_id: str):
 @app.delete("/sessions/{session_id}")
 def delete_session(session_id: str):
     """删除一个会话（内存 + 磁盘）。"""
+    _check_session_id(session_id)
     _sessions.pop(session_id, None)
     path = ARCHIVE_DIR / f"{session_id}.json"
     if path.exists():

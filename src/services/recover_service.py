@@ -99,9 +99,12 @@ def restore(table: str, ids: list) -> dict:
 
     if not pk:
         return {"ok": False, "error": "这张表没有主键，无法按行恢复"}
-    n = restore_service.execute_restore(
-        [{pk: v} for v in ids], table, "ui", "恢复页手动恢复",
-    )
+    try:
+        n = restore_service.execute_restore(
+            [{pk: v} for v in ids], table, "ui", "恢复页手动恢复",
+        )
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     return {"ok": True, "table": table, "affected": n}
 
 

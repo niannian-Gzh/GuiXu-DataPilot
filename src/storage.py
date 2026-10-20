@@ -62,6 +62,12 @@ def connect(path: str | Path) -> sqlite3.Connection:
     con = sqlite3.connect(str(path), isolation_level=None)
     con.execute("PRAGMA foreign_keys = ON")
     ensure_meta(con)
+    # 快照表也在"库的完整形状"里。以前它只在 snapshot 自己的自测里建过，
+    # 于是全新库第一次删表/删列/看版本历史就报 no such table——而开发机上
+    # 那张表是历史运行留下的，谁都没发现。延迟导入是为了避开
+    # storage → snapshot → storage 的模块级循环。
+    from snapshot import ensure_meta as ensure_snapshot_meta
+    ensure_snapshot_meta(con)
     return con
 
 

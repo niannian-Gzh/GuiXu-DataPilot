@@ -50,8 +50,46 @@ export const strongify = (text) => {
   return fences.join('```');
 };
 
+/* Markdown 允许的标签。模型用的就是 Markdown，不需要原始 HTML——
+   但 strongify 会把成对的 ** 落成 <strong>，所以它必须在名单里。
+
+   为什么要有这一步：marked 默认放行原始 HTML。模型复述库里的内容
+   时，一个单元格里的 <img onerror=...> 会被 v-html 插进对话流并执行。
+   这是**间接注入**——用户没输过这段 HTML，是数据里带的。 */
+const MD_TAGS = new Set([
+  'p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'blockquote', 'hr',
+  'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'table', 'thead', 'tbody', 'tr', 'th', 'td',
+]);
+
+export const sanitizeHtml = (html) => {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const walk = (node) => {
+    for (const el of [...node.children]) {
+      if (!MD_TAGS.has(el.tagName.toLowerCase())) {
+        // 不在名单里的标签拆掉，留下文字。DOMParser 的文档不执行脚本，
+        // 所以这里不会因为先解析再拆而触发 onerror
+        el.replaceWith(...el.childNodes);
+        continue;
+      }
+      for (const attr of [...el.attributes]) {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith('on') || name === 'style') {
+          el.removeAttribute(attr.name);
+        } else if ((name === 'href' || name === 'src')
+                   && /^\s*(javascript|data):/i.test(attr.value)) {
+          el.removeAttribute(attr.name);
+        }
+      }
+      walk(el);
+    }
+  };
+  walk(doc.body);
+  return doc.body.innerHTML;
+};
+
 export const md = (text) => {
-  try { return marked.parse(strongify(text)); }
+  try { return sanitizeHtml(marked.parse(strongify(text))); }
   catch (e) { return escapeHtml(text); }
 };
 

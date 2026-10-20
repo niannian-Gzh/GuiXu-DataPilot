@@ -24,6 +24,7 @@
 """
 
 import json
+import sqlite3
 
 import pandas as pd
 
@@ -326,31 +327,41 @@ def execute_import(scan_result, rename_map, deleted_action, conflict_action,
         return record
 
     inserted = updated = restored = 0
-    with transaction() as tx:
-        for r in scan_result["new_records"]:
-            _write_rows(tx, table_name, [_rename(r)])
-            inserted += 1
+    try:
+        with transaction() as tx:
+            for r in scan_result["new_records"]:
+                _write_rows(tx, table_name, [_rename(r)])
+                inserted += 1
 
-        for c in scan_result["conflicts"]:
-            if conflict_action == "excel":
-                _update_row(tx, table_name, key, c["key"], c["excel_data"])
-                updated += 1
+            for c in scan_result["conflicts"]:
+                if conflict_action == "excel":
+                    _update_row(tx, table_name, key, c["key"], c["excel_data"])
+                    updated += 1
 
-        if deleted_action == "restore":
-            for d in scan_result["deleted_in_db"]:
-                tx.execute(
-                    f"UPDATE {storage.quote(table_name + storage.SOFTDEL_SUFFIX)} "
-                    f"SET is_deleted = 0, deleted_at = NULL "
-                    f"WHERE {storage.quote(key)} = ?",
-                    [d["key"]],
-                )
-                restored += 1
+            if deleted_action == "restore":
+                for d in scan_result["deleted_in_db"]:
+                    tx.execute(
+                        f"UPDATE {storage.quote(table_name + storage.SOFTDEL_SUFFIX)} "
+                        f"SET is_deleted = 0, deleted_at = NULL "
+                        f"WHERE {storage.quote(key)} = ?",
+                        [d["key"]],
+                    )
+                    restored += 1
 
-        # 审计和写入在同一个事务里：要么都成，要么都不成
-        record(tx, "import", {
-            "trace_id": trace_id, "user_input": user_input, "table": table_name,
-            "inserted": inserted, "updated": updated, "restored": restored,
-        })
+            # 审计和写入在同一个事务里：要么都成，要么都不成
+            record(tx, "import", {
+                "trace_id": trace_id, "user_input": user_input, "table": table_name,
+                "inserted": inserted, "updated": updated, "restored": restored,
+            })
+    except sqlite3.IntegrityError as e:
+        # 整批已经回滚。把约束冲突翻译成人话返回，别让调用方接 500——
+        # 对用户来说这是"Excel 里有一行跟库里撞了"，不是系统故障
+        err = storage.translate(None, e)
+        kind = "duplicate" if isinstance(err, storage.Duplicate) else "constraint"
+        return json.dumps(
+            {"ok": False, "error": str(err), "error_type": kind},
+            ensure_ascii=False,
+        )
     return json.dumps({
         "ok": True, "table": table_name,
         "inserted": inserted, "updated": updated, "restored": restored,

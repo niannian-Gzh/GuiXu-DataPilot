@@ -55,6 +55,16 @@ def check_transform_safety(sql: str) -> tuple[bool, str, bool]:
     if not isinstance(stmt, exp.Update):
         return False, f"变换只允许 UPDATE 语句，检测到 {type(stmt).__name__}", False
 
+    # **系统表不能碰。** 只查赋值字段不够：`UPDATE _gx_audit SET action=...`
+    # 改的是审计，字段名完全合法。变换的 UPDATE 本来就打底表（要连已删行
+    # 一起看），所以这里只拦 `_gx_` 前缀，不拦 `_all` 后缀。
+    bad_tables = {
+        t.name for t in stmt.find_all(exp.Table)
+        if t.name and t.name.lower().startswith("_gx_")
+    }
+    if bad_tables:
+        return False, f"不允许变换系统表：{sorted(bad_tables)}", False
+
     for assignment in stmt.expressions:
         col = assignment.this
         if not isinstance(col, exp.Column):

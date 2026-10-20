@@ -160,7 +160,8 @@ def enrich_pending(pending: dict) -> dict:
         n = pending.get("affected", 1)
         verb = "新增"
     elif ptype == "transform":
-        n = pending.get("total", 0)
+        # 卡片的字段叫 affected；total 是旧版本留下的名字，兼容老 pending
+        n = pending.get("affected", pending.get("total", 0))
         verb = "修改"
     else:
         # create / struct / import / ask：不涉及批量，一律 simple
@@ -201,10 +202,17 @@ def _handle_delete(question, pending):
 def _handle_restore(question, pending):
     if not _confirm_ok(question, pending):
         return "done", "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
-    count = restore_service.execute_restore(
-        pending["candidates"], pending["table_name"],
-        pending["trace_id"], pending["user_input"],
-    )
+    try:
+        count = restore_service.execute_restore(
+            pending["candidates"], pending["table_name"],
+            pending["trace_id"], pending["user_input"],
+        )
+    except ValueError as e:
+        # 比如删了 A、又建了一条同名 A，现在恢复旧 A 会撞唯一约束。
+        # 这不是系统故障，是用户能理解并处理的一条事实
+        return "resume", json.dumps({
+            "ok": False, "error_type": "duplicate", "error": str(e),
+        }, ensure_ascii=False)
     return "resume", json.dumps({
         "ok": True, "table": pending["table"], "affected": count,
     }, ensure_ascii=False)
@@ -230,7 +238,8 @@ def _handle_update(question, pending):
 
 
 def _handle_transform(question, pending):
-    if not _confirm_ok(question, pending, threshold_n=pending["total"]):
+    n = pending.get("affected", pending.get("total", 0))
+    if not _confirm_ok(question, pending, threshold_n=n):
         return "done", "确认未通过。请重新输入正确的确认信息，或回复「取消」。"
     return "resume", transform_service.execute_transform(
         pending, pending["table_name"],

@@ -29,10 +29,16 @@ import sqlglot
 from sqlglot import exp
 
 import storage
+from guard import SecurityError
 
 
-class GateError(Exception):
-    """SQL 被闸门拦下。"""
+class GateError(SecurityError):
+    """SQL 被闸门拦下。
+
+    **继承 `SecurityError`**：工具层和查询服务早就在按这个类型分流
+    （安全拒绝不重试、不计入熔断）。闸门以前是独立异常，拒绝会一路
+    冒到 api 的兜底 except，或者被归成 `unknown`——同一件事有两副面孔。
+    """
 
 
 # 每种意图允许的语句类型
@@ -108,14 +114,19 @@ def _parse(sql: str):
 def _check_tables(stmt, con):
     """表名必须在数据源里。这是为了**拦住绕过视图直接打底表**——
     `orders_all` 是物理表，SQLite 不会替你拦，闸门要拦。
+
+    **比较不区分大小写。** SQLite 的表名本来就不区分：`SELECT * FROM
+    DEVICES` 和 `devices` 是同一条语句。白名单按原样比较的话，模型
+    把表名写成大写就会被"表不在数据源里"拦掉——防的不是越权，
+    是误伤。
     """
-    known = set(storage.list_tables(con))
+    known = {t.lower() for t in storage.list_tables(con)}
     ctes = {c.alias_or_name.lower() for c in stmt.find_all(exp.CTE)}
     used = {
         t.name for t in stmt.find_all(exp.Table)
         if t.name and t.name.lower() not in ctes
     }
-    unknown = used - known
+    unknown = {t for t in used if t.lower() not in known}
     if unknown:
         raise GateError(
             f"这些表不在数据源里：{sorted(unknown)}。可用的有：{sorted(known)}"

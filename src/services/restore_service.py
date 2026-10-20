@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from datetime import datetime
 
 import storage
@@ -122,19 +123,25 @@ def execute_restore(candidates, table_name: str, trace_id: str, user_input: str)
 
     ids = [c[pk] for c in candidates]
     marks = ",".join("?" * len(ids))
-    with transaction() as tx:
-        # 底表 + 系统列，特权旁路——事务句柄本来就不设闸门
-        tx.execute(
-            f"UPDATE {storage.quote(table_name + storage.SOFTDEL_SUFFIX)} "
-            f"SET is_deleted = 0, deleted_at = NULL "
-            f"WHERE {storage.quote(pk)} IN ({marks})",
-            ids,
-        )
-        record(tx, "restore", {
-            "trace_id": trace_id,
-            "user_input": user_input,
-            "table": table_name,
-            "affected_count": len(ids),
-            "affected_ids": ids,
-        })
+    try:
+        with transaction() as tx:
+            # 底表 + 系统列，特权旁路——事务句柄本来就不设闸门
+            tx.execute(
+                f"UPDATE {storage.quote(table_name + storage.SOFTDEL_SUFFIX)} "
+                f"SET is_deleted = 0, deleted_at = NULL "
+                f"WHERE {storage.quote(pk)} IN ({marks})",
+                ids,
+            )
+            record(tx, "restore", {
+                "trace_id": trace_id,
+                "user_input": user_input,
+                "table": table_name,
+                "affected_count": len(ids),
+                "affected_ids": ids,
+            })
+    except sqlite3.IntegrityError as e:
+        # 恢复不是"写入新数据"，但它同样会被唯一约束挡住：删掉 A 之后
+        # 又建了一条同名 A，旧 A 就回不去了。翻译成人话，别让调用方接 500
+        err = storage.translate(None, e)
+        raise ValueError(str(err)) from e
     return len(ids)

@@ -8,6 +8,16 @@ from config import PROJECT_ROOT
 
 ARCHIVE_DIR = PROJECT_ROOT / "logs" / "sessions"
 
+# 会话 id 会成为文件名。**必须只允许安全字符**：Windows 上反斜杠也是
+# 路径分隔符，`..\..\secrets` 会拼到会话目录外面去，`save()` 能覆盖
+# 任意 `.json`，`load()` 能读任意会话文件。
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def valid_id(session_id: str | None) -> bool:
+    return bool(session_id) and bool(SESSION_ID_RE.fullmatch(session_id))
+
+
 # 打招呼类开头，取标题时跳过
 GREETING_PREFIXES = (
     "你好", "您好", "早上好", "中午好", "下午好", "晚上好",
@@ -43,6 +53,8 @@ class Session:
     """
 
     def __init__(self, session_id: str = None):
+        if session_id is not None and not valid_id(session_id):
+            raise ValueError("会话 id 只能包含字母、数字、下划线和短横线")
         self.session_id = session_id or uuid.uuid4().hex[:12]
         self.messages = []          # 存证：完整，只增不减
         self.summary = None         # 记忆：旧对话的要点

@@ -56,6 +56,26 @@ def _check_name(name: str) -> str | None:
     return None
 
 
+def _check_table_name(name: str) -> str | None:
+    """表名和列名同一套规则，外加两条命名空间禁令。
+
+    `_gx_` 前缀是系统表、`_all` 后缀是软删底表，`list_tables` 会把它们
+    过滤掉。建表时不拦，用户会得到一张**建成功了、但哪儿都看不见**的表——
+    报错还发生在下一次找它的时候。
+    """
+    if not name:
+        return "表名不能为空"
+    if len(name) > 64:
+        return "表名最长 64 个字符"
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
+        return "表名只能用小写字母、数字、下划线，且以字母开头"
+    if name.startswith(storage.SYSTEM_PREFIX):
+        return f"表名不能以 {storage.SYSTEM_PREFIX} 开头（那是系统表）"
+    if name.endswith(storage.SOFTDEL_SUFFIX):
+        return f"表名不能以 {storage.SOFTDEL_SUFFIX} 结尾（那是软删除底表）"
+    return None
+
+
 def _card_pending(ptype: str, ctx, rows: list[list], columns: list[str],
                   affected: int, danger: bool, **internal) -> dict:
     return {
@@ -79,6 +99,11 @@ def _card_pending(ptype: str, ctx, rows: list[list], columns: list[str],
 def request_create_table(table_name: str, columns: list[dict],
                          unique=None, ctx=None) -> str:
     """建一张表。`columns` 是 [{name, type, nullable?, default?}]。"""
+    err = _check_table_name(table_name)
+    if err:
+        return json.dumps({"ok": False, "error": err, "error_type": "invalid"},
+                          ensure_ascii=False)
+
     existing = using(storage.list_tables)
     if table_name in existing:
         return json.dumps(
