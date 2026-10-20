@@ -3,12 +3,12 @@ from config import setting
 from runner import query_df
 
 
-def execute_sql(sql: str):
+def execute_sql(sql: str, system: bool = False):
     """执行 SQL。只允许 SELECT，带内存保护和超时保护。
 
-    从前它收一个 `db_path`——那是"数据源是个要连的东西"时代的遗留，
-    里面的注释自己都写着"保留但已不使用"。现在归 runner 统一管库，
-    这个参数就彻底没了。
+    `system=True` 给「恢复 / 列出已删」用：它们要打底表、要看 is_deleted，
+    是设计里明写了的特权旁路。旁路只跳过表名和系统列检查，
+    语句类型（只许 SELECT）照查。
     """
     max_rows = setting("safety.max_rows")
     query_timeout = setting("safety.query_timeout")
@@ -19,7 +19,7 @@ def execute_sql(sql: str):
     sql_clean = sql.strip().rstrip(";")
     wrapped_sql = f"SELECT * FROM ({sql_clean}) AS _limited LIMIT {max_rows + 1}"
 
-    df = query_df(wrapped_sql, timeout=query_timeout)
+    df = query_df(wrapped_sql, timeout=query_timeout, system=system)
 
     if len(df) > max_rows:
         df = df.head(max_rows).copy()

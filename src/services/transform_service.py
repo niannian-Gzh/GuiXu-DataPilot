@@ -72,7 +72,10 @@ def request_transform(description: str, ctx) -> str:
 
     # 预览——会改哪些行
     try:
-        preview_df = query_df(preview_sql, timeout=setting("safety.query_timeout"))
+        # 变换 SQL 打的是底表（real_table）——它要连已删行一起看，
+        # 否则预览和实际 UPDATE 的范围对不上
+        preview_df = query_df(preview_sql, timeout=setting("safety.query_timeout"),
+                              system=True)
     except Exception as e:
         return json.dumps(
             {"ok": False, "error": f"预览失败：{e}", "error_type": "unknown"},

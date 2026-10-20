@@ -244,7 +244,7 @@ def overview_api():
                 try:
                     total += int(query_df(
                         f"SELECT COUNT(*) AS n FROM {storage.quote(name + SOFTDEL_SUFFIX)}",
-                        timeout=4,
+                        timeout=4, system=True,
                     ).iloc[0]["n"])
                 except Exception:
                     # 单表数不出来不该让整个读数塌掉——跳过它，其余照常

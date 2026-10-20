@@ -103,7 +103,8 @@ def scan(file_path: str, ctx) -> dict:
         label = key
         return {"error": f"Excel 里必须有「{label}」这一列——导入靠它判断重复。"}
 
-    df_db = query_df(f"SELECT * FROM {ctx.real_table}")
+    # 比对要连已删行一起看：导入的"恢复已删除"靠它判断哪些是被删过的
+    df_db = query_df(f"SELECT * FROM {ctx.real_table}", system=True)
     db_by_key = {r[key]: r for _, r in df_db.iterrows()}
     excel_keys = set(df[key])
     db_keys = set(db_by_key)

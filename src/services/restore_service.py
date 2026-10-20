@@ -22,7 +22,8 @@ def find_deleted(filter_question: str, ctx) -> list:
         f"SELECT * FROM ({sql}) WHERE is_deleted = true "
         f"ORDER BY deleted_at DESC"
     )
-    df = execute_sql(wrapped)
+    # 底表 + is_deleted：设计里明写的特权旁路
+    df = execute_sql(wrapped, system=True)
     return df.to_dict("records")
 
 
@@ -126,6 +127,7 @@ def execute_restore(candidates, table_name: str, trace_id: str, user_input: str)
         f"SET is_deleted = 0, deleted_at = NULL "
         f"WHERE {storage.quote(pk)} IN ({marks})",
         ids,
+        system=True,   # 底表 + 系统列，特权旁路
     )
 
     log("restore", {

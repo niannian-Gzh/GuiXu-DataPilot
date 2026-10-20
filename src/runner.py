@@ -24,6 +24,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 
+import gate
 import storage
 from config import resolve_db_path
 
@@ -48,7 +49,8 @@ def using(fn, *args, **kwargs):
         con.close()
 
 
-def query_df(sql: str, params=None, timeout: int | None = None):
+def query_df(sql: str, params=None, timeout: int | None = None,
+             purpose: str = "read", system: bool = False):
     """跑查询，返回 pandas DataFrame。
 
     timeout 是秒。靠 `Connection.interrupt()` 实现——它**从另一个线程**
@@ -63,6 +65,7 @@ def query_df(sql: str, params=None, timeout: int | None = None):
         timer = threading.Timer(timeout, con.interrupt)
         timer.start()
     try:
+        gate.check(sql, purpose, con, system=system)
         cur = con.execute(sql, params) if params is not None else con.execute(sql)
         rows = cur.fetchall()
         cols = [d[0] for d in cur.description] if cur.description else []
@@ -77,8 +80,9 @@ def query_df(sql: str, params=None, timeout: int | None = None):
         con.close()
 
 
-def execute(sql: str, params=None) -> int:
-    """跑 DDL / DML，返回受影响行数。
+def execute(sql: str, params=None, purpose: str = "write",
+            system: bool = False) -> int:
+    """跑 DML / DDL，返回受影响行数。
 
     **不能用 `cursor.rowcount`。** 写操作打的是业务视图，真实改动发生在
     INSTEAD OF 触发器里（软删除改底表的 `is_deleted`、插入补系统列），
@@ -87,9 +91,13 @@ def execute(sql: str, params=None) -> int:
 
     `total_changes` 把触发器内的改动也算进来，差值才是"实际动了几行"。
     DDL 不产生行改动，差值是 0，正好符合这个口径。
+
+    `system=True` 是特权旁路（恢复已删行、清理回收站），只跳过表名和
+    系统列检查，语句类型照查。
     """
     con = connect()
     try:
+        gate.check(sql, purpose, con, system=system)
         before = con.total_changes
         if params is not None:
             con.execute(sql, params)
@@ -124,7 +132,17 @@ class _Handle:
     def __init__(self, con: sqlite3.Connection):
         self._con = con
 
-    def execute(self, sql: str, params=None):
+    def execute(self, sql: str, params=None, purpose: str | None = None):
+        """事务内执行。
+
+        `purpose` 为 None 时**不过闸门**——事务里跑的是内部代码拼的 SQL，
+        表名和列名都来自表定义，DDL 的入口（structure_service）也自己校验过。
+        闸门罩的是 `runner.execute` / `query_df` 两个出口，也就是
+        「服务拼的 DML」和「模型写的 SQL」真正出门的地方。
+        参数留着，将来要收紧时不用改结构。
+        """
+        if purpose:
+            gate.check(sql, purpose, self._con)
         return self._con.execute(sql, params) if params is not None else self._con.execute(sql)
 
     def execute_many(self, sql: str, rows: list) -> int:
