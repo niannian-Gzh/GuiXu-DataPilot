@@ -6,7 +6,6 @@ from typing import Optional
 import json
 import math
 import queue
-import shutil
 import threading
 import uuid
 
@@ -21,6 +20,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
@@ -29,12 +29,12 @@ from session import Session
 from agent import run_agent, resume_entry
 from trace import Trace
 from config import (
-    load_config, resolve_db_path, PROJECT_ROOT, CONFIG_PATH,
-    setting, get, get_config, save_config,
+    resolve_db_path, PROJECT_ROOT, CONFIG_PATH,
+    setting, get_config, save_config,
 )
 import config_store as store
-from providers import PROVIDERS, get_provider, guess_model
-from settings_spec import PARAMS, GROUPS, param_by_key, defaults as spec_defaults
+from providers import PROVIDERS, get_provider
+from settings_spec import PARAMS, GROUPS, param_by_key
 from cleanup import cleanup, cleanup_snapshots
 from services import UserInputRequired
 from services import pending_service, recover_service
@@ -46,7 +46,9 @@ from runner import connect, query_df, transaction
 from session import ARCHIVE_DIR, valid_id
 import schema_store
 import storage
-from storage import SOFTDEL_SUFFIX, describe, list_tables
+from storage import describe, list_tables
+from rag import RagError, SUPPORTED as RAG_SUFFIXES
+from rag import service as rag_service
 
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 EXPORT_DIR = PROJECT_ROOT / "data" / "exports"
@@ -268,7 +270,8 @@ def overview_api():
             for name in names:
                 try:
                     total += int(query_df(
-                        f"SELECT COUNT(*) AS n FROM {storage.quote(name + SOFTDEL_SUFFIX)}",
+                        f"SELECT COUNT(*) AS n FROM "
+                        f"{storage.quote(storage.physical_table(con, name))}",
                         timeout=4, system=True,
                     ).iloc[0]["n"])
                 except Exception:
@@ -287,6 +290,12 @@ def overview_api():
     except Exception:
         out["recover"] = None
 
+    # —— 文档库的读数：左栏「文档库概览」右端 ——
+    try:
+        out["docs"] = rag_service.counts()
+    except Exception:
+        out["docs"] = None
+
     # —— 模型 ——
     active = store.get_active() or {}
     if active:
@@ -302,9 +311,12 @@ def overview_api():
 # ============ 对话接口 ============
 
 # 会产出文件的工具。产物清单只从这几个里找
-PRODUCING_TOOLS = {"generate_report", "export_to_excel"}
+PRODUCING_TOOLS = {"generate_report", "export_to_excel", "write_document"}
 
-ARTIFACT_KINDS = {".pdf": "pdf", ".xlsx": "xlsx", ".xls": "xlsx"}
+ARTIFACT_KINDS = {
+    ".pdf": "pdf", ".xlsx": "xlsx", ".xls": "xlsx",
+    ".docx": "docx", ".md": "markdown", ".txt": "text",
+}
 
 
 def _collect_artifacts(tools: list) -> list:
@@ -317,11 +329,14 @@ def _collect_artifacts(tools: list) -> list:
     for t in tools:
         if t.get("name") not in PRODUCING_TOOLS or not t.get("ok"):
             continue
-        try:
-            data = json.loads(t.get("raw") or "{}")
-        except (json.JSONDecodeError, TypeError):
-            continue
-        rel = data.get("file_path")
+        # gx_tools 里存的是 _tool_evidence 的顶层字段，没有 raw。
+        # 旧会话可能只有 raw，兼容着读一下
+        rel = t.get("file_path")
+        if not rel:
+            try:
+                rel = json.loads(t.get("raw") or "{}").get("file_path")
+            except (json.JSONDecodeError, TypeError):
+                continue
         if not rel:
             continue
 
@@ -617,7 +632,8 @@ def _readonly_info() -> dict:
             tables = len(names)
             total = sum(
                 con.execute(
-                    f"SELECT COUNT(*) FROM {storage.quote(name + SOFTDEL_SUFFIX)}"
+                    f"SELECT COUNT(*) FROM "
+                    f"{storage.quote(storage.physical_table(con, name))}"
                 ).fetchone()[0]
                 for name in names
             )
@@ -772,11 +788,12 @@ def get_schema_api():
                         "cardinality": r[4],
                     })
 
+            physical = storage.physical_table(con, name)
             tables.append({
                 "name": name,
-                "real_table": name + SOFTDEL_SUFFIX,
+                "real_table": physical,
                 "label": d["note"],
-                "pk": storage.pk_of(con, name + SOFTDEL_SUFFIX),
+                "pk": storage.pk_of(con, physical),
                 "uniques": storage.uniques_of(con, name),
                 "relations": related,
                 "fields": [
@@ -825,10 +842,6 @@ def drop_relation_api(from_table: str, from_column: str,
             tx, from_table, from_column, to_table, to_column,
         )
     return {"ok": True, "removed": removed}
-
-
-class FieldLabelUpdate(BaseModel):
-    label: str
 
 
 class TableSchemaUpdate(BaseModel):
@@ -1204,6 +1217,137 @@ def delete_session(session_id: str):
     return {"status": "ok"}
 
 
+# ============ 文档库 ============
+# 上传/删除/重建/检索测试都不经过模型：人在页面上直接点。
+# 检索工具 search_documents 在 tools.py 里，走的是同一个 service.search
+
+async def _save_upload(file: UploadFile, dest: Path) -> int:
+    """边写边量地把上传落盘。超限或失败都把半截文件删掉。
+
+    两个上传入口（Excel / 文档）共用这一份——以前各抄一遍，改一个
+    上限文案就会让两边行为分叉。
+    """
+    max_mb = setting("safety.max_upload_mb")
+    max_bytes = max_mb * 1024 * 1024
+    written = 0
+    try:
+        with open(dest, "wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件超过 {max_mb} MB 上限",
+                    )
+                f.write(chunk)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+    return written
+
+
+@app.get("/documents")
+def list_documents_api():
+    """文档列表 + 读数。"""
+    return rag_service.list_documents()
+
+
+@app.post("/documents/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """上传一份文档：解析 → 分块 → 向量 → 落库。
+
+    和 Excel 上传共用同一个大小上限，但格式白名单不同——这里是语料，
+    不是数据表。
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="文件名不能为空")
+
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in RAG_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文档格式：{suffix or '（没有扩展名）'}。"
+                   "可用：PDF / Word(.docx) / txt / md",
+        )
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    # 临时文件名不带用户给的名字：和 Excel 上传同一个理由，路径字符
+    # 一个都不该从请求里进来
+    tmp = UPLOAD_DIR / f"doc-{uuid.uuid4().hex}{suffix}"
+
+    try:
+        await _save_upload(file, tmp)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"写入失败：{e}")
+
+    try:
+        # **入库必须扔到线程池。** 解析、分块、embedding，以及扫描件的
+        # 逐页视觉识别全是同步阻塞；直接跑在事件循环上，会把正在进行的
+        # 对话 SSE 和其它请求一起冻住（30 页扫描件能冻几分钟）
+        out = await run_in_threadpool(
+            rag_service.ingest, tmp, file.filename, False, _state.get("llm"),
+        )
+    except RagError as e:
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"入库失败：{e}")
+
+    return {"ok": True, **out}
+
+
+@app.delete("/documents/{doc_id}")
+def delete_document_api(doc_id: int):
+    """软删：进回收站，保留期内可恢复。"""
+    try:
+        return {"ok": True, **rag_service.delete(doc_id)}
+    except RagError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/documents/{doc_id}/restore")
+def restore_document_api(doc_id: int):
+    try:
+        return {"ok": True, **rag_service.restore(doc_id)}
+    except RagError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/documents/{doc_id}")
+def get_document_api(doc_id: int):
+    """原文预览：解析后的全文 + 分块。"""
+    try:
+        return {"ok": True, **rag_service.preview_document(doc_id)}
+    except RagError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/documents/rebuild")
+def rebuild_documents_api():
+    """重建 FAISS 索引。索引是派生的，重建永远安全。"""
+    return {"ok": True, **rag_service.rebuild()}
+
+
+class DocSearchRequest(BaseModel):
+    query: str
+    top_k: Optional[int] = None
+
+
+@app.post("/documents/search")
+def search_documents_api(req: DocSearchRequest):
+    """文档库页的检索测试。和 Agent 的 search_documents 同一个实现。"""
+    try:
+        return {"ok": True, **rag_service.search(req.query, req.top_k)}
+    except RagError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ============ 文件接口 ============
 
 @app.post("/upload")
@@ -1217,32 +1361,15 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="只支持 .xlsx / .xls 文件")
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    # 只留 basename：请求里的 filename 可能带路径字符，不能让它参与拼路径
+    safe_name = f"{uuid.uuid4().hex[:8]}_{Path(file.filename).name}"
     file_path = UPLOAD_DIR / safe_name
 
-    # 边写边量：不能先整个落盘再判断大小，那样限制就没意义了
-    max_mb = setting("safety.max_upload_mb")
-    max_bytes = max_mb * 1024 * 1024
-    written = 0
     try:
-        with open(file_path, "wb") as f:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                written += len(chunk)
-                if written > max_bytes:
-                    f.close()
-                    file_path.unlink(missing_ok=True)
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"文件超过 {max_mb} MB 上限",
-                    )
-                f.write(chunk)
+        await _save_upload(file, file_path)
     except HTTPException:
         raise
     except Exception as e:
-        file_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"写入失败：{e}")
 
     rel_path = file_path.relative_to(PROJECT_ROOT)
@@ -1373,15 +1500,93 @@ def preview_file(path: str = Query(...)):
             "url": f"/raw?path={quote(path)}",
         }
 
+    if suffix == ".docx":
+        return _preview_docx(full_path)
+
+    if suffix in (".md", ".txt"):
+        text, truncated = _preview_text(full_path)
+        return {
+            "type": "markdown" if suffix == ".md" else "text",
+            "text": text,
+            "truncated": truncated,
+        }
+
     return {
         "type": "other",
         "url": f"/download?path={path}",
     }
 
 
+def _preview_text(path: Path, limit: int = 100_000) -> tuple[str, bool]:
+    """只读前 limit 字节给预览。
+
+    **不能先 read_bytes 再切**：几百 MB 的日志会整个进内存，而预览
+    只需要开头。截断点还可能落在多字节字符中间——UTF-8 解码失败后退
+    最多 3 个字节再试，而不是直接落到 GB18030 解出一屏乱码。
+    """
+    truncated = path.stat().st_size > limit
+    with open(path, "rb") as f:
+        raw = f.read(limit)
+
+    if truncated:
+        for cut in range(4):
+            try:
+                return raw[:len(raw) - cut].decode("utf-8-sig"), True
+            except UnicodeDecodeError:
+                continue
+        # GB18030 是双字节，退 1 个字节就够
+        try:
+            return raw[:len(raw) - 1].decode("gb18030"), True
+        except UnicodeDecodeError:
+            pass
+        return raw.decode("utf-8", errors="replace"), True
+
+    for enc in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            return raw.decode(enc), False
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace"), False
+
+
+def _preview_docx(path: Path) -> dict:
+    """Word 预览：段落、标题、表格，不连样式。
+
+    浏览器不会内嵌渲染 docx。前端引入 mammoth 能保真，但那要多 300KB
+    vendor 和一条新的渲染链；这里只把**内容**按块摊平，样式交给页面。
+    对"看一眼这份文档写了什么"够用。
+    """
+    from docx import Document
+
+    doc = Document(str(path))
+    blocks = []
+
+    for p in doc.paragraphs:
+        text = p.text.strip()
+        if not text:
+            continue
+        style = (p.style.name or "").lower()
+        if style.startswith("heading"):
+            try:
+                level = int(style.replace("heading", "").strip())
+            except ValueError:
+                level = 2
+            blocks.append({"kind": "h", "level": min(max(level, 1), 3), "text": text})
+        else:
+            blocks.append({"kind": "p", "text": text})
+
+    for table in doc.tables:
+        rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+        if rows:
+            blocks.append({"kind": "table", "rows": rows})
+
+    truncated = len(blocks) > 500
+    return {"type": "docx", "blocks": blocks[:500], "truncated": truncated}
+
+
 @app.delete("/files/{file_path:path}")
 def delete_file(file_path: str):
-    """删除一个文件。"""
+    """删除一个文件。前端没有挂入口，但接口留着——清空之外的单删。"""
     full_path = PROJECT_ROOT / file_path
     if not _is_safe_path(str(full_path)):
         raise HTTPException(status_code=403, detail="文件不存在或不允许删除")

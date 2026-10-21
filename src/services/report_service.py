@@ -11,10 +11,10 @@
 """
 
 import json
-import re
 from datetime import datetime
 
 from config import PROJECT_ROOT
+from services import stamped_filename
 from services.report import charts
 from services.report.render import render_html, html_to_pdf
 
@@ -23,12 +23,6 @@ REPORT_DIR = PROJECT_ROOT / "data" / "reports"
 
 # 再多就不像报告了，像导出
 MAX_SECTIONS = 12
-
-
-def _clean_filename(title: str) -> str:
-    """标题 → 文件名。Windows 不允许的那些字符换掉。"""
-    s = re.sub(r'[\\/:*?"<>|\r\n\t]', "_", title).strip()
-    return s[:60] or "报告"
 
 
 def _normalize_section(raw: dict) -> dict:
@@ -87,7 +81,9 @@ def run(title: str, intro: str, sections: list) -> str:
     })
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    filename = f"{_clean_filename(title)}_{datetime.now():%Y%m%d_%H%M%S}.pdf"
+    filename = stamped_filename(
+        title, "pdf", max_len=60, fallback="报告", unique=True,
+    )
     file_path = REPORT_DIR / filename
     html_to_pdf(html, file_path)
 

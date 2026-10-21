@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 
-from agent_driver import run_question, tool_args
+from agent_driver import run_question
 from harness import case, check, eq
 
 WRITE_TOOLS = {
@@ -314,7 +314,7 @@ def agent_confirm_gate(env):
         seen["count"] = env.count("devices")
         return "取消", None
 
-    run = run_question(env, "删除编号 D-005 的设备", plan=plan)
+    run_question(env, "删除编号 D-005 的设备", plan=plan)
     eq(seen.get("type"), "delete", "删除没有先弹确认")
     eq(seen.get("count"), 11, "确认之前数据就变了")
     eq(env.count("devices"), 11, "取消之后数据还是变了")

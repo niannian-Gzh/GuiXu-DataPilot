@@ -16,7 +16,7 @@ export default {
     // 共享 store 展开后仍是 ref 对象本身，响应性不丢，
     // 模板里的插值和事件绑定一个字都不用改
     const store = Vue.inject('store');
-    // 字典另起别名 i18n：对话流用的是 v-for="(t, ti) in turns"，
+    // 文案另起别名 labels：对话流用的是 v-for="(t, ti) in turns"，
     // 循环内的 t 是 turn 对象，会把 store 里的字典 t 遮住——
     // 循环里那些本该取词的地方就取成了 turn 上不存在的字段，
     // 按钮有框无字（取消、预览、无输出提示都栽在这上面）
@@ -149,7 +149,7 @@ export default {
     };
 
     return {
-      ...store, i18n: t, today, tries, pickOpen, pickWrap, openPick, pickModel,
+      ...store, labels: t, today, tries, pickOpen, pickWrap, openPick, pickModel,
       activeConfirm, needsInput, inputHint, submitFree, toggleConfirm,
       askItem, askValue, askLabel, pickOption, submitAsk,
     };
@@ -198,7 +198,7 @@ export default {
 
     <div v-if="!allTools.length" class="empty-note" style="padding:60px 0">
       本次会话还没有工具调用<br>
-      <span style="font-size:11px">{{ i18n.traceEmpty }}</span>
+      <span style="font-size:11px">{{ labels.traceEmpty }}</span>
     </div>
 
     <template v-else>
@@ -273,7 +273,7 @@ export default {
             <div class="detail-k" v-if="t.parsed">结果</div>
             <pre v-if="t.parsed">{{ prettyJson(t.parsed) }}</pre>
             <pre v-else-if="t.raw">{{ t.raw }}</pre>
-            <div class="detail-rows" v-else>{{ i18n.noToolOutput }}</div>
+            <div class="detail-rows" v-else>{{ labels.noToolOutput }}</div>
           </div>
         </template>
       </div>
@@ -292,8 +292,8 @@ export default {
     <div class="void-mark">${guixuMark()}</div>
 
     <div class="void-in">
-      <div class="void-h">{{ i18n.welcomeTitle }}</div>
-      <div class="void-s">{{ i18n.welcomeSubtitle }}</div>
+      <div class="void-h">{{ labels.welcomeTitle }}</div>
+      <div class="void-s">{{ labels.welcomeSubtitle }}</div>
 
       <div class="void-try">
         <div class="void-rule"></div>
@@ -479,7 +479,7 @@ export default {
               </div>
             </div>
             <div class="artifact-acts">
-              <button class="btn" @click="previewFile(a)">{{ i18n.preview }}</button>
+              <button class="btn" @click="previewFile(a)">{{ labels.preview }}</button>
               <button class="btn" @click="download(a.path, a.name)">下载</button>
             </div>
           </div>
@@ -549,6 +549,28 @@ export default {
 
         <iframe v-else-if="viewer.kind === 'pdf'" class="modal-frame" :src="viewer.url"></iframe>
 
+        <!-- Word：后端把 docx 摊成段落 / 标题 / 表格，样式交给页面。
+             浏览器不内嵌渲染 docx，这条是不引 mammoth 的取舍 -->
+        <div v-else-if="viewer.kind === 'docx'" class="modal-doc">
+          <template v-for="(b, i) in viewer.blocks" :key="i">
+            <component v-if="b.kind === 'h'" :is="'h' + Math.min(b.level + 1, 4)"
+                       class="doc-h">{{ b.text }}</component>
+            <table v-else-if="b.kind === 'table'" class="doc-table">
+              <tbody>
+                <tr v-for="(row, ri) in b.rows" :key="ri">
+                  <td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else>{{ b.text }}</p>
+          </template>
+        </div>
+
+        <div v-else-if="viewer.kind === 'markdown'" class="modal-doc prose"
+             v-html="md(viewer.text)"></div>
+
+        <pre v-else-if="viewer.kind === 'text'" class="modal-text">{{ viewer.text }}</pre>
+
         <div v-else class="modal-note">
           这种格式没法在这里预览，下载后用系统程序打开
         </div>
@@ -556,6 +578,9 @@ export default {
 
       <div class="modal-note" v-if="viewer.kind === 'xlsx' && viewer.total > viewer.rows.length">
         显示前 {{ viewer.rows.length }} 行，共 {{ viewer.total }} 行
+      </div>
+      <div class="modal-note" v-if="viewer.truncated">
+        内容较长，只显示前一部分；下载查看完整文件
       </div>
 
       <div class="modal-foot">
@@ -659,7 +684,7 @@ export default {
 
         <div class="confirm-actions">
           <button class="btn" @click="answerConfirm(activeConfirm.ti, activeConfirm.ci, '取消')"
-                  :disabled="busy">{{ i18n.cancel }}</button>
+                  :disabled="busy">{{ labels.cancel }}</button>
 
           <!-- ask：一题一题来，全答完才发送 -->
           <button v-if="activeConfirm.confirm.kind === 'ask'"

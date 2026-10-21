@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import threading
 
-from harness import case, check, eq, raises
+from harness import case, eq
 from services import ServiceContext, UserInputRequired
 from services import create_service, query_service
 from services.structure_service import request_create_table

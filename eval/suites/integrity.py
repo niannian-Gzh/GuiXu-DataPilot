@@ -12,7 +12,8 @@ import json
 import storage
 import snapshot as snapshot_mod
 from harness import case, check, eq
-from services import create_service, delete_service, recover_service
+from cleanup import cleanup as run_cleanup
+from services import create_service, recover_service
 
 
 # ============================================================ 审计
@@ -196,6 +197,44 @@ def recover_requires_pk(env):
     check(row is None, "没有软删列的表不该出现在垃圾桶")
     out = recover_service.restore("loose", [1])
     eq(out.get("ok"), False)
+
+
+@case("D8", "无主键裸表不拖垮启动清理", "手工建一张没有 _all 的表再跑清理",
+      "跳过它，清理不抛异常，概览与恢复读数照常")
+def cleanup_skips_bare_table(env):
+    # 先把 fixture 自带的过期行清掉，后面的读数才只反映这张裸表
+    run_cleanup()
+    before = env.client().get("/overview").json()["source"]["rows"]
+    deleted = env.scalar("SELECT COUNT(*) FROM devices_all WHERE is_deleted = 1")
+    con = env.connect()
+    try:
+        con.execute("CREATE TABLE loose (name TEXT, note TEXT)")
+        con.execute("INSERT INTO loose VALUES ('甲', '乙')")
+    finally:
+        con.close()
+
+    run_cleanup()                  # 修之前这里抛 no such table: loose_all
+    eq(env.count("loose"), 1, "裸表不该被清理动到")
+    after = env.client().get("/overview").json()["source"]["rows"]
+    eq(after, before + 1, "概览没把裸表的行算进去")
+    eq(recover_service.counts()["deleted"], int(deleted), "恢复读数被裸表拖垮")
+
+
+@case("D8", "裸表在数据字典里照常可读", "手工建裸表后 GET /schema",
+      "字段可见，real_table 指向它自己")
+def bare_table_schema(env):
+    con = env.connect()
+    try:
+        con.execute("CREATE TABLE loose (name TEXT, note TEXT)")
+    finally:
+        con.close()
+
+    data = env.client().get("/schema").json()
+    t = next((x for x in data["tables"] if x["name"] == "loose"), None)
+    check(t is not None, "裸表没被列出来")
+    eq(t["real_table"], "loose", "real_table 指向了不存在的 loose_all")
+    eq([f["name"] for f in t["fields"]], ["name", "note"], "字段读不出来")
+    eq(t["pk"], None, "无主键表不该报主键")
 
 
 # ============================================================ 数据字典与关系

@@ -28,9 +28,9 @@ design 那句"没有硬编码、没有 JSON 文件、没有第二份"说的是�
 这个文件删掉。
 """
 
-from runner import connect, using
+from runner import using
 import storage
-from storage import SOFTDEL_SUFFIX, describe as _describe, list_tables as _list
+from storage import describe as _describe, list_tables as _list
 
 
 def load() -> dict:
@@ -90,7 +90,9 @@ def get_table_schema(table: str) -> dict:
         d = _describe(con, table)
         return {
             "name": table,
-            "real_table": table + SOFTDEL_SUFFIX,
+            # 裸表没有 `_all`，real_table 就是它自己——拼死后缀会让
+            # 生成的 SQL 打到一张不存在的表上
+            "real_table": storage.physical_table(con, table),
             "label": d["note"],
             "fields": [
                 {
@@ -104,11 +106,6 @@ def get_table_schema(table: str) -> dict:
         }
 
     return using(_build)
-
-
-def get_all_tables_schema() -> list:
-    """所有业务表的结构化 schema（旧形状）。"""
-    return [get_table_schema(t) for t in using(_list)]
 
 
 def refresh_from_db() -> dict:

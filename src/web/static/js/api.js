@@ -7,8 +7,6 @@
 
 const API = '';
 
-export const apiPath = (p) => API + p;
-
 /* ---------------- 设置 ---------------- */
 
 export async function getSettings() {
@@ -146,6 +144,45 @@ export const dropRelation = (r) => _req(
   }).toString(),
   'DELETE',
 );
+
+/* ---------------- 文档库 ---------------- */
+
+/* 列表读失败返回 null（页面提示"读取失败"），不返回空数组——
+   空数组的意思是"库里真的没有"，两者在文档库页上差得很远 */
+export async function getDocuments() {
+  try {
+    const res = await fetch(API + '/documents');
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function uploadDocument(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch(API + '/documents/upload', { method: 'POST', body: fd });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || '上传失败');
+  return data;
+}
+
+export const deleteDocument = (id) => _req('/documents/' + id, 'DELETE');
+export const restoreDocument = (id) => _req('/documents/' + id + '/restore', 'POST');
+export const rebuildDocuments = () => _req('/documents/rebuild', 'POST');
+export const searchDocuments = (query, top_k) =>
+  _req('/documents/search', 'POST', { query, top_k });
+
+export async function getDocument(id) {
+  try {
+    const res = await fetch(API + '/documents/' + id);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
 
 /* ---------------- 恢复页 ---------------- */
 

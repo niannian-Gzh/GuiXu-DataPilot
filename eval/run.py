@@ -28,6 +28,7 @@ def _load_suites(with_agent: bool):
     import suites.integrity    # noqa: F401
     import suites.edges        # noqa: F401
     import suites.resilience   # noqa: F401
+    import suites.documents    # noqa: F401
     if with_agent:
         import suites.agent_tools  # noqa: F401
 

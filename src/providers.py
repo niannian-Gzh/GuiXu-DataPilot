@@ -28,6 +28,8 @@ DEFAULT_CAPABILITIES = {
     "reasoning_echo": False,
     # 认不认 reasoning_effort 这个参数
     "reasoning_effort": False,
+    # 认不认图片输入。扫描件 PDF 靠它；不认就明确拒绝，不发请求
+    "vision": False,
     "context_window": 32000,
 }
 
@@ -46,6 +48,7 @@ PROVIDERS = [
             # 兼容接口不返回 reasoning_content，回传反而可能被拒
             "reasoning_echo": False,
             "reasoning_effort": True,
+            "vision": True,
             "context_window": 128000,
         },
     },
@@ -63,6 +66,7 @@ PROVIDERS = [
             "reasoning": False,
             "reasoning_echo": False,
             "reasoning_effort": False,
+            "vision": True,
             "context_window": 200000,
         },
     },
@@ -74,6 +78,9 @@ PROVIDERS = [
                    "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"],
         "env": "GEMINI_API_KEY",
         "note": "官方文档里兼容层仍标 beta；只有 chat/completions，没有 responses",
+        "capabilities": {
+            "vision": True,
+        },
     },
     {
         "id": "mistral",
@@ -117,6 +124,8 @@ PROVIDERS = [
             "reasoning": True,
             "reasoning_echo": True,
             "reasoning_effort": True,
+            # 用户实测：当前 DeepSeek 这几支能读图片（扫描件走它）
+            "vision": True,
             "context_window": 128000,
         },
     },
@@ -218,14 +227,6 @@ _BY_ID = {p["id"]: p for p in PROVIDERS}
 def get_provider(provider_id: str):
     """按 id 取预设。找不到返回 None——调用方据此拒绝，别静默兜底。"""
     return _BY_ID.get(provider_id)
-
-
-def guess_model(provider_id: str) -> str:
-    """切换供应商时给的默认模型。"""
-    p = get_provider(provider_id)
-    if not p:
-        return ""
-    return p["models"][0] if p["models"] else ""
 
 
 def resolve_capabilities(cfg: dict) -> dict:

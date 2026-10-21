@@ -1,3 +1,4 @@
+import base64
 import time
 from dotenv import load_dotenv
 from openai import OpenAI, APITimeoutError, APIConnectionError, RateLimitError
@@ -111,3 +112,51 @@ class LLM:
         message = resp.choices[0].message
         reasoning = getattr(message, "reasoning_content", None)
         return message, usage, reasoning
+
+    def describe_images(self, images: list[bytes], prompt: str) -> str:
+        """把图片交给模型，返回它读出来的文字。
+
+        只给扫描件 PDF 用。模型不认图片时**在发请求前就拦**——
+        服务端返回的 400 往往看不出是"这个模型不支持图片"，用户
+        只会看到一串英文。这里统一成一句能照做的提示。
+        """
+        # mock 态没有 client。不先说清楚，扫描件会以一个 AttributeError
+        # 收场，用户看不到问题在哪
+        if self.mock:
+            raise RuntimeError(
+                "当前模型配置还没有填 API key，无法识别扫描件PDF"
+            )
+        if not self.capabilities.get("vision"):
+            raise RuntimeError(
+                "您当前使用的模型没有图片识别能力，无法识别扫描件PDF"
+            )
+
+        content = [{"type": "text", "text": prompt}]
+        for png in images:
+            b64 = base64.b64encode(png).decode("ascii")
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            })
+
+        try:
+            resp = _call_with_retry(lambda: self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                temperature=0,
+                messages=[{"role": "user", "content": content}],
+            ))
+        except Exception as e:
+            text = str(e).lower()
+            # 只认和图片输入直接相关的信号。裸的 "400" 太宽：模型名写错、
+            # 上下文超长也是 400，按"没有视觉能力"报会把人引到错误方向
+            if any(k in text for k in (
+                "image", "vision", "unsupported content",
+                "does not support image", "invalid content type",
+            )):
+                raise RuntimeError(
+                    "您当前使用的模型没有图片识别能力，无法识别扫描件PDF"
+                ) from e
+            raise
+
+        return resp.choices[0].message.content or ""

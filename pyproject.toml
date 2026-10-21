@@ -8,17 +8,24 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "faiss-cpu>=1.15.1",
     "fastapi>=0.141.1",
     "jinja2>=3.1.6",
+    "markdown>=3.11.2",
     "matplotlib>=3.11.2",
+    "onnxruntime>=1.31.0",
     "openai>=3.11.0",
     "openpyxl>=3.1.5",
     "pandas>=3.0.5",
     "playwright>=1.63.0",
+    "pymupdf>=2.0",
+    "pypdf>=6.21.1",
+    "python-docx>=1.2.0",
     "python-dotenv>=1.2.3",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
     "sqlglot>=26.0.0",
+    "tokenizers>=0.23.3",
     "uvicorn>=0.53.0",
 ]
 

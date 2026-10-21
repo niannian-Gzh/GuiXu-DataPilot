@@ -1,48 +1,23 @@
-/* 界面文案字典。
+/* 界面文案表。
 
-   带 {x} 的是占位符模板，用 fmt() 填——不拆成 prefix + 值 + suffix：
-   中英文语序不同（「思考 · 第 2 轮」对 "Thinking · Round 2"），
-   拆成前后缀拼起来，换语言时必然散架。
+   **产品只有中文。** 这里不是多语言框架——没有 en、没有语言切换，
+   也不为"将来翻译"留空位。集中在这里的理由只有两个：
 
-   en 先留空对象：查不到就回落 zh，界面不会出现空白或 undefined。 */
+   1. 文案和模板分开，改措辞不用翻组件
+   2. 带 {x} 的占位符用 fmt() 填，避免 prefix + 值 + suffix 拼接
 
-export const I18N = {
-  zh: {
-    /* 品牌 */
-    brandTag: '数据处理 Agent',
+   将来真要加语言，再给这里加一层映射；现在不预支那层结构。 */
 
-    /* 左栏 */
-    tabSessions: '会话',
-    tabTrace: '轨迹',
-    newChat: '新对话',
-    noSessions: '还没有历史会话',
-    deleteSession: '删除会话',
-    clickAgainToDelete: '再点一次即删除',
-
+export const STRINGS = {
     /* 轨迹页 */
-    traceTitle: '执行轨迹',
-    traceScope: '执行过程只属于当前这次对话',
     traceEmpty: '执行轨迹只属于当前这次对话，换个会话或先问点什么',
-    traceRounds: '本会话轮次',
-    totalSteps: '总步数',
-    toolTime: '工具耗时',
-    statOk: '成功',
-    statFail: '失败 / 拒绝',
     noToolOutput: '这一步没有返回内容（等待确认或被中断）',
-    thinkRound: '思考 · 第 {n} 轮',
-    thinkPlain: '思考',
-    empty: '空',
-    running: '正在处理…',
 
     /* 欢迎页 */
     welcomeTitle: '今天想问点什么？',
     welcomeSubtitle: '用一句话，处理你的数据',
-    sampleHint: '试试「把已下证的项目导成 Excel」',
 
     /* 输入区 */
-    inputPlaceholder: '问点什么，或把 Excel 拖进来',
-    sendHint: '发送 ·',
-    newlineHint: '换行',
     cancel: '取消',
     send: '发送',
     nextQuestion: '下一题',
@@ -50,37 +25,23 @@ export const I18N = {
     /* 产物 */
     artifacts: '产物',
     preview: '预览',
-    download: '下载',
-    downloadView: '下载查看',
 
     /* 设置页 */
     settings: '设置',
     save: '保存',
     saving: '保存中…',
     discardChanges: '放弃改动',
-    unsaved: '未保存',
-    changed: '已改',
     resetDefault: '恢复默认',
-    readonlyInfo: '只读信息',
-    maintain: '维护',
-    notSet: '未设置',
-    all: '全部',
 
     /* 维护组 */
     exportFiles: '导出与报告文件',
     historySessions: '历史会话',
-    filesCount: '· 共 {n} 个',
-    sessionsCount: '· 共 {n} 个',
-    deleteFilesWarn: '将永久删除 {n} 个文件，不可撤销',
-    deleteSessionsWarn: '将永久删除 {n} 个会话，含全部对话记录',
     confirmDelete: '确认删除',
-    confirm: '确认？',
     clearAllFiles: '清空所有文件',
     deleteAllSessions: '删除全部会话',
 
     /* 数据库概览 */
     schemaTitle: '数据库概览',
-    schemaDesc: '只读表结构。字段名、类型、必填都是数据库的事实，这里改不了；能改的只有中文映射',
     refresh: '刷新',
     refreshing: '刷新中…',
     refreshNoChange: '无变化',
@@ -123,6 +84,38 @@ export const I18N = {
     relRemoved: '已删除关系',
 
     /* 恢复页 */
+    /* 文档库 */
+    docsTitle: '文档库',
+    docsCount: '{n} 份 · {m} 块',
+    docsTabLibrary: '文档库',
+    docsTabTrash: '回收站',
+    docsTrashEmpty: '回收站是空的',
+    docsTrashCount: '回收站 {n}',
+    docsDeletedAt: '{at} 删除',
+    docsDaysLeft: '剩 {n} 天',
+    docsRestore: '恢复',
+    docsRestored: '已恢复：{name}',
+    docsDeleted: '已移入回收站：{name}',
+    docsPreview: '原文',
+    docsChunksTitle: '分块',
+    docsUpload: '上传文档',
+    docsUploading: '入库中…',
+    docsDrop: '把 PDF / Word / txt / md 拖到这里',
+    docsEmpty: '文档库还是空的',
+    docsEmptyHint: '制度、手册、规范这类资料传上来，Agent 就能检索它们',
+    docsSearchPlaceholder: '检索一句话，看看能命中哪段',
+    docsSearch: '检索',
+    docsSearchEmpty: '没有找到相关内容',
+    docsRebuild: '重建索引',
+    docsRebuilt: '索引已重建 · {n} 块 · {ms} ms',
+    docsDelete: '删除',
+    docsDeleteTitle: '删除文档',
+    docsDeleteWarn: '文档会移入回收站，保留期内可以恢复；切片和检索结果会立即隐藏。',
+    docsConfirmDelete: '确认删除',
+    docsUploaded: '已入库：{name} · {n} 块',
+    docsLoadFail: '读取文档库失败',
+    docsChunks: '{n} 块',
+
     recoverTitle: '恢复',
     recoverTrash: '垃圾桶',
     recoverVersions: '版本历史',
@@ -151,19 +144,16 @@ export const I18N = {
     recoverFieldTime: '时间',
     recoverFieldKind: '类别',
     recoverFieldRows: '行数',
-  },
-
-  en: {},
 };
 
 /**
- * 取某个语言的字典，直接给模板用属性访问：t.artifacts。
+ * 取文案表，直接给模板用属性访问：t.artifacts。
  *
  * 不导出一个 t(key) 函数——模板里写 t('artifacts') 又长又容易和
  * 属性访问混起来，而且 Vue 模板对函数调用的容错不如属性访问直观。
  */
-export function dict(lang = 'zh') {
-  return I18N[lang] || I18N.zh;
+export function dict() {
+  return STRINGS;
 }
 
 /** 填占位符：fmt('第 {n} 轮', { n: 2 }) → '第 2 轮' */

@@ -155,6 +155,61 @@ PARAMS = [
         "hint": "预览导入的 Excel 时最多读几行。调大有卡顿风险",
     },
 
+    # ================= 文档库 =================
+    {
+        "key": "rag.chunk_size",
+        "group": "developer",
+        "label": "分块大小",
+        "type": "number",
+        "default": 400,
+        "min": 100,
+        "max": 2000,
+        "hint": "每块最多多少字。只影响之后上传的文档，已有切片不会自动重切",
+        "risk": "调小：检索更精准，但同一段上下文可能被拆开；"
+                "调大：上下文更完整，但无关内容一起进 prompt",
+    },
+    {
+        "key": "rag.chunk_overlap",
+        "group": "developer",
+        "label": "分块重叠",
+        "type": "number",
+        "default": 50,
+        "min": 0,
+        "max": 500,
+        "hint": "相邻两块重叠多少字，避免跨块的意思在边界断掉",
+    },
+    {
+        "key": "rag.top_k",
+        "group": "developer",
+        "label": "检索条数",
+        "type": "number",
+        "default": 4,
+        "min": 1,
+        "max": 20,
+        "hint": "一次检索返回几个最相关的切片。条数越多，模型看到的上下文越全，也越费 token",
+    },
+    {
+        "key": "rag.min_score",
+        "group": "developer",
+        "label": "相关度门槛",
+        "type": "number",
+        "default": 0.35,
+        "min": 0,
+        "max": 1,
+        "step": 0.05,
+        "hint": "余弦相似度低于这个值的切片不返回。太低会塞进无关内容，太高可能一条都搜不到",
+    },
+    {
+        "key": "rag.vision_max_pages",
+        "group": "developer",
+        "label": "扫描件页数上限",
+        "type": "number",
+        "default": 30,
+        "min": 1,
+        "max": 200,
+        "hint": "扫描件 PDF 交给多模态模型识别时，最多处理多少页。超过要拆分上传",
+    },
+
     # ================= 开发者 =================
     {
         "key": "agent.keep_recent_turns",
@@ -271,13 +326,6 @@ PARAMS = [
         "risk": "调大：超大文件在解析时会占用大量内存",
     },
 ]
-
-
-# 刻意不暴露的参数，以及为什么
-NOT_EXPOSED = {
-    "data.db_path": "这是库里那个文件，改了等于换一个库",
-    "上传/导出/报告目录": "系统级路径，界面按约定读写，不该由用户改",
-}
 
 
 def param_by_key(key: str):

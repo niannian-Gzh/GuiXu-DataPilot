@@ -117,11 +117,6 @@ body {
   color: var(--muted);
 }
 .t-label { font-size: 11.5px; letter-spacing: .06em; color: var(--ink-soft); }
-.t-body  { font-size: 13.5px; line-height: 1.75; color: var(--ink-soft); }
-.t-read {                        /* 读数大字 */
-  font-family: var(--din); font-size: 27px; letter-spacing: .14em;
-  font-weight: 400; color: var(--ink);
-}
 
 
 /* ===================== 三 · 应用骨架 =====================
@@ -1396,13 +1391,6 @@ td .tag, .tag {
 }
 .reset:hover { color: var(--muted); }
 
-/* 高级项没开高级模式时的样子：值照常看得见，但明说现在改不了 */
-.set-locked {
-  display: flex; align-items: center; gap: 8px; justify-content: flex-end;
-  font-family: var(--mono); font-size: 12px; color: var(--faint);
-}
-.set-locked svg { width: 13px; height: 13px; flex: none; }
-
 /* 改这项会有什么后果。只在高级模式下说——不开高级时，
    用户本来也改不到它，说了也只是噪音 */
 .set-risk {
@@ -1551,3 +1539,112 @@ td.cnm.empty .cnm-btn { color: var(--faint); font-style: italic; }
 .rec-line span { width: 48px; flex: none; color: var(--faint); }
 .rec-line b { font-weight: 500; color: var(--ink); }
 .rec-warn { margin-top: 14px; font-size: 11.5px; line-height: 1.75; color: var(--warn); }
+
+
+/* ===================== 文档库 =====================
+   和数据源概览同构：一张列表 + 一个检索入口。
+   检索测试不是调试工具——上传完资料，用户得能当场确认"搜得到" */
+
+.docs { display: flex; flex-direction: column; gap: 14px; }
+
+.doc-actions { display: flex; gap: 10px; align-items: center; }
+.doc-actions .btn { width: auto; padding: 8px 16px; }
+.doc-file { display: none; }
+
+.doc-drop {
+  border: 1px dashed var(--hair);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--faint);
+  transition: border-color .15s, color .15s, background .15s;
+}
+.doc-drop.dragging {
+  border-color: var(--acc-line);
+  color: var(--acc-lift);
+  background: var(--acc-dim);
+}
+
+.doc-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--hair-soft);
+  border-radius: 8px;
+  background: var(--raise);
+}
+.doc-kind {
+  flex: none; width: 46px; text-align: center;
+  font-size: 10px; letter-spacing: .06em;
+  color: var(--acc-lift);
+  border: 1px solid var(--acc-line);
+  padding: 2px 4px; border-radius: 4px;
+}
+.doc-nm {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; color: var(--ink);
+}
+.doc-meta { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+.doc-row .btn { width: auto; padding: 5px 10px; }
+
+.doc-search {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--hair-soft);
+  border-radius: 8px;
+  background: var(--raise);
+}
+.doc-search svg { width: 14px; height: 14px; flex: none; color: var(--faint); }
+.doc-search input {
+  flex: 1; min-width: 0;
+  padding: 6px 0;
+  background: none; border: none; outline: none;
+  color: var(--ink); font-size: 12.5px;
+}
+.doc-search .btn { width: auto; padding: 6px 12px; }
+
+.doc-hit {
+  padding: 10px 12px;
+  border: 1px solid var(--hair-soft);
+  border-radius: 8px;
+  background: var(--raise);
+}
+.doc-hit-head {
+  display: flex; justify-content: space-between; gap: 10px;
+  margin-bottom: 6px; font-size: 12px; color: var(--ink);
+}
+.doc-score { font-family: var(--mono); font-size: 11px; color: var(--acc-lift); }
+.doc-hit p { font-size: 12.5px; line-height: 1.7; color: var(--faint); white-space: pre-wrap; }
+
+/* 原文预览：全文在上，分块在下——分块是给"切得好不好"看的 */
+.doc-preview-modal { max-width: 860px; }
+.doc-chunks { margin: 8px 18px 16px; border-top: 1px solid var(--hair-soft); padding-top: 12px; }
+.doc-chunks-title { font-size: 11px; color: var(--faint); margin-bottom: 8px; letter-spacing: .04em; }
+.doc-chunk {
+  display: flex; gap: 10px; padding: 8px 10px; margin-bottom: 6px;
+  border: 1px solid var(--hair-soft); border-radius: 6px;
+}
+.doc-chunk-no { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--faint); padding-top: 2px; }
+.doc-chunk p { margin: 0; font-size: 12px; line-height: 1.7; color: var(--ink); white-space: pre-wrap; }
+
+
+/* ===================== 产物预览：Word / md / txt =====================
+   三种格式共用 .modal-body。Word 的块由后端摊平，样式在这里给 */
+
+.modal-doc { padding: 8px 18px 16px; font-size: 13px; line-height: 1.75; color: var(--ink); }
+.modal-doc p { margin: 8px 0; }
+.modal-doc .doc-h { margin: 16px 0 6px; font-size: 14px; font-weight: 600; }
+.modal-doc .doc-table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+.modal-doc .doc-table td {
+  width: auto !important;
+  border: 1px solid var(--hair-soft);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.modal-text {
+  margin: 0; padding: 8px 18px 16px;
+  white-space: pre-wrap; word-break: break-word;
+  font-family: var(--mono); font-size: 12px; line-height: 1.7;
+  color: var(--ink);
+}

@@ -1,11 +1,10 @@
 import json
 import sqlite3
-from datetime import datetime
 
 import storage
 from nl2sql import get_schema, generate_filter_sql
 from execute import execute_sql
-from services import UserInputRequired, bulk_threshold, card_columns, card_records
+from services import UserInputRequired, card_columns, card_records
 from audit import record
 from runner import transaction, using
 
@@ -29,6 +28,13 @@ def find_deleted(filter_question: str, ctx) -> list:
 
 
 def request_restore(filter_question: str, ctx) -> str:
+    if not using(storage.has_soft_delete, ctx.table_name):
+        return json.dumps({
+            "ok": False,
+            "error": "这张表没有软删除保护，没有可恢复的记录",
+            "error_type": "invalid",
+        }, ensure_ascii=False)
+
     candidates = find_deleted(filter_question, ctx)
     if not candidates:
         return json.dumps(
@@ -58,24 +64,6 @@ def request_restore(filter_question: str, ctx) -> str:
     )
 
 
-def _format_deleted_at(value) -> str:
-    if value is None or str(value) in ("NaT", "None", ""):
-        return "—"
-    return str(value)[:16]
-
-
-def _days_left(value) -> str:
-    """距离物理清理还剩几天。"""
-    if value is None or str(value) in ("NaT", "None", ""):
-        return "—"
-    try:
-        deleted = datetime.fromisoformat(str(value)[:19])
-    except ValueError:
-        return "—"
-    left = 7 - (datetime.now() - deleted).days
-    return f"剩 {max(left, 0)} 天"
-
-
 def list_deleted(table_name: str, ctx) -> str:
     """列出这张表里被删掉、还能恢复的行。
 
@@ -85,6 +73,13 @@ def list_deleted(table_name: str, ctx) -> str:
     走底表——已删的行在视图里根本看不见。多带一列「删除时间」，
     它是垃圾桶的倒计时起点，模型回答时也用得上。
     """
+    if not using(storage.has_soft_delete, table_name):
+        return json.dumps({
+            "ok": False,
+            "error": "这张表没有软删除保护，没有可恢复的记录",
+            "error_type": "invalid",
+        }, ensure_ascii=False)
+
     keys, labels = card_columns(ctx)
     all_name = table_name + storage.SOFTDEL_SUFFIX
     biz = [k for k in keys if k not in storage.SYSTEM_COLS]

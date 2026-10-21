@@ -1,4 +1,4 @@
-/* 右栏：本次会话的产物列表。轨迹已搬到左栏独立页 */
+/* 右栏：本次会话的产物列表。轨迹在对话页内切换，不占这里 */
 export default {
   name: 'FilesPanel',
   setup() {
@@ -28,7 +28,7 @@ export default {
            产物和「哪一轮对话、基于什么条件导出的」绑在一起才有意义 -->
       <div v-if="!allArtifacts.length" class="empty-note">
         本次会话还没有产出文件<br>
-        <span style="font-size:10.5px">试试「把已下证的项目导成 Excel」</span>
+        <span style="font-size:10.5px">试试「把最近的记录导成 Excel」</span>
       </div>
       <!-- 整项可点 = 预览。原来下面挂着「预览 / 下载」两个按钮，
            但下载在预览里也有——一个动作留一个入口就够 -->

@@ -68,6 +68,9 @@ def connect(path: str | Path) -> sqlite3.Connection:
     # storage → snapshot → storage 的模块级循环。
     from snapshot import ensure_meta as ensure_snapshot_meta
     ensure_snapshot_meta(con)
+    # 文档库的两张系统表同理：新库第一次打开文档库页时不该是 500
+    from rag import ensure_meta as ensure_rag_meta
+    ensure_rag_meta(con)
     return con
 
 
@@ -77,6 +80,27 @@ def quote(name: str) -> str:
 
 def columns_of(con: sqlite3.Connection, table: str) -> list[str]:
     return [r[1] for r in con.execute(f"PRAGMA table_info({quote(table)})")]
+
+
+def physical_table(con: sqlite3.Connection, table: str) -> str:
+    """业务表实际存数据的表名。
+
+    受软删保护的表，数据在 `xxx_all`（视图只投影活着的行）；用户绕过
+    系统建的裸表没有这一层，数据就在它自己身上。**所有"要碰底表"的
+    地方都该走这里**，不要自己拼 `_all`——没有主键的裸表不会被
+    `repair()` 补保护，拼出来就是一张不存在的表。
+    """
+    all_name = table + SOFTDEL_SUFFIX
+    exists = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (all_name,),
+    ).fetchone()
+    return all_name if exists else table
+
+
+def has_soft_delete(con: sqlite3.Connection, table: str) -> bool:
+    """这张表有没有软删底表。裸表只可能是"没有"。"""
+    return physical_table(con, table) != table
 
 
 def pk_of(con: sqlite3.Connection, table: str) -> str | None:
@@ -194,7 +218,7 @@ def uniques_of(con: sqlite3.Connection, table: str) -> list[list[str]]:
     结果是"索引明明在、这里却读出来空"，而且不报错。
     """
     indexes = con.execute(
-        f"PRAGMA index_list({quote(table + SOFTDEL_SUFFIX)})"
+        f"PRAGMA index_list({quote(physical_table(con, table))})"
     ).fetchall()
     out = []
     for row in indexes:
@@ -486,7 +510,7 @@ def structure_of(con: sqlite3.Connection, table: str) -> list[dict]:
     """
     out = []
     for _cid, name, type_, notnull, default, pk in con.execute(
-        f"PRAGMA table_info({quote(table + SOFTDEL_SUFFIX)})"
+        f"PRAGMA table_info({quote(physical_table(con, table))})"
     ):
         if name in SYSTEM_COLS:
             continue
@@ -555,7 +579,7 @@ def add_relation(
     for tbl, col in ((from_table, from_column), (to_table, to_column)):
         if tbl not in list_tables(con):
             raise ValueError(f"表不存在：{tbl}")
-        if col not in columns_of(con, tbl + SOFTDEL_SUFFIX):
+        if col not in columns_of(con, physical_table(con, tbl)):
             raise ValueError(f"列不存在：{tbl}.{col}")
     if cardinality not in ("", "1:N", "N:1", "1:1", "M:N"):
         raise ValueError(f"基数只能是 1:N / N:1 / 1:1 / M:N / 空，收到 {cardinality!r}")

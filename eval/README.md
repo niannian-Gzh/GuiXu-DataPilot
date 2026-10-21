@@ -15,7 +15,7 @@ uv run python eval/run.py --list
 # 离线：不调模型，秒级，随便跑
 uv run python eval/run.py --suite offline
 
-# Agent 层：真调模型，约 30 条 × 1–3 次调用
+# Agent 层：真调模型，约 40 条 × 1–3 次调用
 uv run python eval/run.py --suite agent
 
 # 全跑 + 看完整堆栈
@@ -29,7 +29,7 @@ uv run python eval/run.py --case session_traversal
 跑完在 `eval/results/latest.json` 里有一份完整报告，终端只打摘要。
 沙箱默认跑完就删；加 `--keep` 留下来排查。
 
-## 八个维度
+## 九个维度
 
 | 维度 | 管什么 | 套件 |
 |---|---|---|
@@ -41,6 +41,7 @@ uv run python eval/run.py --case session_traversal
 | **D6 韧性** | 畸形参数、熔断、超时、重试、压缩 | 离线（假模型） |
 | **D7 诚实性** | 不编造、空结果说实话、不复述系统提示、不泄 key | Agent |
 | **D8 可观测与完整性** | 审计与事务一致、快照回滚、软删隔离、关系、恢复页 | 离线 |
+| **D9 文档库与产物** | 入库/检索/软删恢复/清理/审计/原文预览/扫描件、四种产物与预览 | 两边都有 |
 
 ## 判定方式
 
@@ -70,6 +71,7 @@ Agent 写操作还看**工具轨迹**：必须出现 `查询 → 确认卡片 �
 | `logs/sessions/` | 沙箱 sessions |
 | `logs/traces.jsonl` | 沙箱 trace |
 | `data/exports` / `reports` / `uploads` | 沙箱同名目录 |
+| `data/documents` | 沙箱 documents（文档库原文件） |
 | `configs.json` / `secrets.json` | 复制一份到沙箱，读写在副本上 |
 
 每条用例前删库重建 fixture（设备巡检：12 台设备 + 20 条巡检 + 1 条软删），
@@ -82,6 +84,9 @@ fixture 在 [`fixtures/inspection.py`](fixtures/inspection.py)：
 - 一台软删设备、一条软删巡检（垃圾桶和隔离都要有货）
 - 一台从没巡检过的设备（NULL 排序）
 - 一个组合唯一约束（导入和结构变更都靠它）
+
+D9 的语料在用例里现造（txt / GBK / docx 表格 / 扫描件 PDF / 提示注入文档），
+不依赖 fixture 常驻——文档库的清空、重建、删除都在同一条用例里闭环。
 
 ## 评测驱动修掉的缺陷
 
@@ -102,6 +107,18 @@ fixture 在 [`fixtures/inspection.py`](fixtures/inspection.py)：
 | `api_recover_bad_ids` | 畸形 id 把恢复接口打成 500 | `RestoreRequest.ids` 收成 `list[int \| str]`，入口 422 |
 
 修完重跑：**141/141，对抗/诚实用例 55/55**。
+
+加入 D9（文档库与产物）之后，总用例 **178 条**（离线 138 / Agent 40）。
+离线 **138/138**；Agent 最近一次全量 **39/40**：`agent_query_bool` 的模型生成了
+一条被只读闸门拒绝的 SQL，随后按「security 不重试」的规则停下——单独复跑
+这条通过，属于模型侧偶发。**闸门拒绝对了，是 Agent 把"自己的 SQL 写错"和
+"用户越权"当成了同一种拒绝。**
+
+全项目清理又补了两条 D8（`cleanup_skips_bare_table` / `bare_table_schema`）：
+用户手工建的无主键裸表没有 `_all` 底表，`cleanup()` 却按 `_all` 查，
+`OperationalError` 从启动流程冒出来；`structure_of` / `real_table` 也把它
+指向了不存在的 `xxx_all`。修法是把「业务名 → 实际表名」收进
+`storage.physical_table()`，清理、概览、恢复读数、数据字典统一走它。
 
 > 这张表本身就是作品的一部分：**评测不是报告，是修复的入口。**
 > 下一次改动如果碰坏其中任何一条，对应用例会立刻变红。

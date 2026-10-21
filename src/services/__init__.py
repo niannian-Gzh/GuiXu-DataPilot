@@ -1,7 +1,31 @@
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 from config import setting
+
+
+# Windows 文件名非法字符。导出、报告、文档产物共用这一份——
+# 以前三个服务各写一遍，规则已经分叉（截断 30/40/60、是否去空白）
+_ILLEGAL_FILENAME = re.compile(r'[\\/:*?"<>|\r\n\t]')
+
+
+def filename_part(text: str, max_len: int = 40, fallback: str = "文件") -> str:
+    cleaned = _ILLEGAL_FILENAME.sub("_", str(text or "")).strip(" ._")
+    cleaned = re.sub(r"\s+", "_", cleaned).strip("._")
+    return cleaned[:max_len] or fallback
+
+
+def stamped_filename(text: str, ext: str, max_len: int = 40,
+                     fallback: str = "文件", unique: bool = False) -> str:
+    """标题 + 时间戳 + 扩展名。`unique` 给产物用：同一秒连写两份不覆盖。"""
+    part = filename_part(text, max_len, fallback)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if unique:
+        stamp += "_" + uuid4().hex[:4]
+    return f"{part}_{stamp}.{str(ext).lstrip('.')}"
 
 
 class UserInputRequired(Exception):

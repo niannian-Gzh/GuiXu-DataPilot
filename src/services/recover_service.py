@@ -196,6 +196,8 @@ def counts() -> dict:
     try:
         deleted = 0
         for name in storage.list_tables(con):
+            if not storage.has_soft_delete(con, name):
+                continue
             deleted += con.execute(
                 f"SELECT count(*) FROM {storage.quote(name + storage.SOFTDEL_SUFFIX)} "
                 f"WHERE is_deleted = 1"

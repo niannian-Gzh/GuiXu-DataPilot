@@ -1,27 +1,12 @@
 import json
 import pandas as pd
-from datetime import datetime
-from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from nl2sql import generate_filter_sql
 from execute import execute_sql
 from audit import log
 from config import PROJECT_ROOT
-from services import card_columns
-import re
-
-
-def _sanitize_filename(text: str, max_len: int = 30) -> str:
-    """把用户输入变成合法的文件名片段。"""
-    # 去掉 Windows 非法字符
-    cleaned = re.sub(r'[\\/:*?"<>|]', "", text)
-    # 去掉多余空格
-    cleaned = re.sub(r"\s+", "_", cleaned.strip())
-    # 截断
-    if len(cleaned) > max_len:
-        cleaned = cleaned[:max_len]
-    return cleaned or "导出数据"
+from services import card_columns, stamped_filename
 
 EXPORT_DIR = PROJECT_ROOT / "data" / "exports"
 
@@ -58,11 +43,11 @@ def run(filter_question: str, ctx) -> str:
 
     # 写文件
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # 文件名用筛选条件，清洗非法字符
-    name_part = _sanitize_filename(filter_question)
-    filename = f"{name_part}_{timestamp}.xlsx"
+    # 文件名用筛选条件，清洗规则和报告、文档产物共用一份
+    filename = stamped_filename(
+        filter_question, "xlsx", max_len=30, fallback="导出数据", unique=True,
+    )
     file_path = EXPORT_DIR / filename
 
     df.to_excel(file_path, index=False)

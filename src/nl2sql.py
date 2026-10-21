@@ -88,7 +88,7 @@ if __name__ == "__main__":
     table = tables[0]
     llm = LLM()
     schema = get_schema(table)
-    question = "打回次数最多的项目是哪个"
+    question = "哪个记录的计数最高"
     sql = generate_sql(question, llm, schema, table)
     print(f"表：{table}")
     print(f"问题：{question}")

@@ -17,7 +17,6 @@ import json
 import os
 import threading
 import uuid
-from pathlib import Path
 
 from config import PROJECT_ROOT, load_config, save_config
 
@@ -34,7 +33,7 @@ EDITABLE = ("name", "provider", "base_url", "model", "note", "capabilities")
 # 能力清单能改哪些键。白名单之外的一律丢掉——
 # 这些值会决定"带不带某个参数"，混进一个错的比没有更糟
 CAPABILITY_KEYS = ("tool_calling", "reasoning", "reasoning_echo",
-                   "reasoning_effort", "context_window")
+                   "reasoning_effort", "vision", "context_window")
 
 
 def _clean_capabilities(value) -> dict:

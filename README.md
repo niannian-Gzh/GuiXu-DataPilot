@@ -9,11 +9,11 @@
 
 用自然语言完成数据的查询、新增、修改、删除、导入、导出、检查和报表生成。
 
-一个桌面窗口就是一张工作台：左栏会话与轨迹，中栏对话流，右栏产物。工具调用、思考过程、确认卡片都摊在对话里，每一步都看得见。
+一个桌面窗口就是一张工作台：左栏资产与会话，中栏对话流（对话 / 轨迹切换），右栏产物。工具调用、思考过程、确认卡片都摊在对话里，每一步都看得见。
 
-- 输入「xx负责的项目有几个」→ 自动生成 SQL、执行、回答
-- 输入「删掉测试项目」→ 搜索候选、确认、软删除（7 天内可恢复）
-- 输入「所有打回次数加 1」→ 按规则重塑、展示改前改后、确认执行
+- 输入「上个月新增了多少条记录」→ 自动生成 SQL、执行、回答
+- 输入「删掉测试数据」→ 搜索候选、确认、软删除（默认 7 天内可恢复）
+- 输入「所有计数加 1」→ 按规则重塑、展示改前改后、确认执行
 - 输入「加一列 priority，表示优先级」→ 改表结构
 - 输入「从 data/新数据.xlsx 导入」→ 扫描差异、确认、导入
 - 输入「给我一份上周周报，和上上周对比」→ 统计、画图、算环比、生成 PDF
@@ -23,14 +23,22 @@
 **WebUI**
 - 三栏布局 + SSE 流式：思考、工具调用、工具返回、回答边跑边出
 - 工具调用卡片化：参数、完整返回、耗时、状态
-- 产物内嵌对话流：PDF 可预览可下载，Excel 直接取走
+- 产物进侧栏并可预览：Excel 表格、PDF 内嵌、Word 段落、Markdown 渲染、纯文本等宽
 - 确认卡片带 diff：候选清单、影响行数、改前改后
 - 会话持久化 + 上下文压缩 + 对话归档
-- 设置页：四组 23 个参数在线可调，改完即生效
+- 设置页：27 个参数在线可调，改完即生效（其中 16 个在开发者模式里，含文档库的 5 个检索数值）
 
 **数据库概览（数据字典）**
 - 表结构、字段类型、必填从库里现读；中文含义由你标
 - 字典只存"用户可改的那部分"，所以数据库加列改类型它不会过期
+
+**文档库（RAG）**
+- 上传 PDF / Word / txt / md：自动解析、分块、向量化
+- 扫描件 PDF 交给当前多模态模型逐页读图；模型不支持图片会明确报错
+- 检索是一个工具：制度、手册、规范这类资料由它查；表数据仍走 SQL
+- 文档库页：上传、原文预览（全文 + 分块）、重建索引、检索测试
+- 删除是软删：进回收站，保留期内可恢复；上传/删除/恢复都写审计
+- 切片原文归 SQLite（唯一真源），FAISS 只是派生索引；reranker 留接口，权重需自行导出 ONNX
 
 **模型接入**
 - 多套模型配置存成卡片，随时切换（测试的、生产的、公司的各存一把 key）
@@ -40,25 +48,24 @@
 - 完整 CRUD：查询 / 新增 / 修改 / 删除，支持单条和批量
 - Excel 导入：扫描差异（新记录 / 冲突 / 软删除），三阶段确认，支持追问详情
 - Excel 导出：中文列名、日期格式化、中文文件名
-- 规则重塑：按自然语言规则批量改值（"打回次数加 1"、"owner 去掉首尾空格"）
+- 规则重塑：按自然语言规则批量改值（"所有计数加 1"、"某一列去掉首尾空格"）
 - 加列改结构：加字段并顺手登记它的中文含义
-- 一致性检查：发现状态字段矛盾、日期顺序异常
 - 日/周/月报：统计 + 图表 + 环比 + LLM 概述，输出 PDF
-- 安全删除：双层确认 + 软删除（7 天可恢复）
+- 文档产物：PDF / Word / md / txt，写完直接进侧栏；说「收进文档库」才复制一份进语料
+- 安全删除：双层确认 + 软删除（默认 7 天可恢复）
 
 **工程底座**
-- 状态联动：修改状态字符串时自动重算五个布尔字段
-- 完整审计：所有写操作记录到 `logs/audit.jsonl`
+- 完整审计：所有写操作记录进库（和写入同一个事务）
 - 多层防护：LLM 重试、熔断、行数上限、SQL 超时、Loop 超时
 - 可观测：每次问答的完整链路写入 `logs/traces.jsonl`
-- 评测驱动：底层 + Agent 层两套题目
+- 评测驱动：178 条用例，九个维度
 
 ## 评测
 
-**141 条，八个维度**：功能正确性、写操作、确认与中断、注入与越权、边界与畸形、韧性、诚实性、可观测与完整性。
+**178 条，九个维度**：功能正确性、写操作、确认与中断、注入与越权、边界与畸形、韧性、诚实性、可观测与完整性、文档库与产物。
 
-- **离线 105 条**：不调模型，秒级。闸门绕过、路径穿越、畸形参数、并发、审计与快照
-- **Agent 36 条**：真调模型。18 个工具、确认/取消/跳过、提示注入、不编造
+- **离线 138 条**：不调模型，秒级。闸门绕过、路径穿越、畸形参数、并发、审计与快照、文档入库/软删/恢复/清理、扫描件、四种产物写出
+- **Agent 40 条**：真调模型。20 个工具、确认/取消/跳过、提示注入、文档检索、不编造
 
 ```bash
 uv run python eval/run.py --suite offline   # 免费，随便跑
@@ -68,7 +75,9 @@ uv run python eval/run.py --suite agent     # 需要可用的 key
 期望值从 fixture 现算，不硬编码；每条用例重跑一个临时库，**不碰 `data/guixu.db`**。
 攻击用例的判据是「拒绝 + 数据零变化 + 该保护的还在」三件事同时成立。
 
-第一轮跑出 117/141，抓到的 10 个缺陷全部修掉后复跑 **141/141**
+第一轮跑出 117/141，抓到的 10 个缺陷全部修掉；加入文档库、产物与裸表兜底后，
+离线 **138/138**；Agent 40 条在最近一次全量里 **39 通过**，1 条因模型偶发生成
+被只读闸门拒绝的 SQL（单独复跑通过），详见 [eval/README.md](eval/README.md#评测驱动修掉的缺陷)
 （新库快照表未初始化、规则变换必崩、会话 id 穿越、Markdown XSS 等，
 逐条对照见 [eval/README.md](eval/README.md#评测驱动修掉的缺陷)）。
 
@@ -87,27 +96,31 @@ uv run python eval/run.py --suite agent     # 需要可用的 key
    ↓
 [Agent 层] agent.py（Loop：决策 + 熔断 + 超时 + 上下文压缩）
    ↓
-[工具层] tools.py（菜单 + 传话筒，12 个工具）
-   ├─ query_database                    查询
-   ├─ request_create / batch_create     新增（单条 / 批量）
-   ├─ request_update                    修改（新值由用户给出）
+[工具层] tools.py（菜单 + 传话筒，20 个工具）
+   ├─ search_documents                  检索文档库（RAG 的动作）
+   ├─ query_database                    查询表
+   ├─ request_create / request_update   新增 / 修改（新值由用户给出）
    ├─ transform_data                    修改（新值由规则算出）
-   ├─ add_column                        加列（改表结构）
+   ├─ create_table / add_column / alter_column / drop_column / drop_table   结构
    ├─ request_delete / request_restore  软删除 / 恢复
    ├─ request_import / export_to_excel  导入 / 导出
-   └─ check_consistency / generate_report   检查 / 报告
+   ├─ write_document / generate_report  文档产物 / 统计报告
+   ├─ list_deleted / list_snapshots / rollback_version   看与回退
+   └─ ask_user                          信息不足时挂起提问
    ↓
 [服务层] services/（业务逻辑，按表构建上下文）
    ├── query / create / update / delete / restore / pending
-   ├── import / consistency / export / transform / add_column
-   └── report（stats + charts + render + templates）
+   ├── import / export / transform / structure
+   ├── document（PDF / Word / md / txt 产物）
+   └── report（charts + render + templates）
    ↓
 [数据层] storage.py   表 · 软删除隔离 · 表定义 · 关系
         snapshot.py  快照 · 回滚（破坏性操作前的退路）
         runner.py    跑 SQL：连接 · 事务 · 超时
-   └─ SQLite 单文件
+        rag/         文档解析 · 分块 · embedding · FAISS · 检索
+   └─ SQLite 单文件（切片真源） + FAISS 内存索引（派生）
 
-[横切] guard（安全）· trace（可观测）· audit（审计）· cleanup（清理）· display（展示）
+[横切] guard（安全）· trace（可观测）· audit（审计）· cleanup（清理）
 ```
 
 **设计原则**：
@@ -134,9 +147,15 @@ git clone https://github.com/niannian-Gzh/GuiXu-DataPilot.git
 cd GuiXu-DataPilot
 uv sync
 
-# 下载报告 PDF 渲染用的 Chromium（约 115MB，只需一次）
+# 下载报告 / PDF 产物渲染用的 Chromium（约 115MB，只需一次）
 uv run playwright install chromium
+
+# 下载文档库 embedding 权重（约 91MB，只需一次）
+uv run python scripts/fetch_model.py
 ```
+
+embedding 权重放在 `models/`（不进版本库——每次 clone 背 91MB 二进制不值得）；
+默认走 hf-mirror，不通就 `--source huggingface`。
 
 ### 配置
 
@@ -163,6 +182,16 @@ data:
 传一个 Excel，Agent 会先推测它可能是哪张表（或是一张新表）、跟已有的表有没有关联，
 推完问你一次，确认后建表灌数据。
 
+### 文档库
+
+左栏「文档库概览」里上传 PDF / Word / txt / md。系统会解析、分块、向量化，
+然后在页面上就能直接试一句检索。之后对话里问「制度里怎么写」「手册里有没有提」，
+Agent 会自己调 `search_documents`；问表里的数据仍然走 SQL。
+
+扫描件 PDF（没有文字层）会交给当前多模态模型逐页读图，再按文字入库。
+模型不支持图片输入时会明确报错，不会假装入库成功。删除的文档进回收站，
+保留期内可以恢复；原文预览能看到解析后的全文和每一块切片。
+
 ### 启动
 
 ```bash
@@ -185,6 +214,10 @@ uv run uvicorn api:app --app-dir src
 | 编排 | 手写 Agent Loop | 拒绝 LangChain，掌控每一步 |
 | PDF 渲染 | Playwright + Chromium | 浏览器版本锁定，不受系统环境摆布 |
 | 图表 | matplotlib | 成熟稳定 |
+| embedding | bge-small-zh-v1.5 + ONNX Runtime | 91MB 随包；不引 torch |
+| 向量检索 | FAISS | 切片归 SQLite，索引是派生的、可重建 |
+| 文档解析 | pypdf / python-docx / PyMuPDF | 纯 Python；PyMuPDF 只负责把扫描页转图片 |
+| 文档产出 | python-docx + markdown | 四种格式共用一条渲染链 |
 
 ## 设计亮点
 
@@ -231,7 +264,7 @@ SQLite 单文件。备份 = 复制一个文件。**没有要起、要停、要�
 
 ### 8. 参数是配置，不是常量
 
-23 个参数收在 `settings_spec.py` 一处定义，界面、校验、默认值都从它生成；代码里读的是 `setting()`。调一个阈值不需要改代码，也不需要重启。
+27 个参数收在 `settings_spec.py` 一处定义，界面、校验、默认值都从它生成；代码里读的是 `setting()`。调一个阈值不需要改代码，也不需要重启。
 
 ### 9. 多层防护
 
@@ -244,7 +277,7 @@ SQLite 单文件。备份 = 复制一个文件。**没有要起、要停、要�
 ### 10. 可观测作为证据链
 
 - `logs/traces.jsonl`：每次问答的完整链路
-- `logs/audit.jsonl`：所有写操作（增/改/删/导入）
+- `_gx_audit`（库内表）：所有写操作（增/改/删/导入），和写入同事务
 
 ## 项目结构
 
@@ -252,20 +285,31 @@ SQLite 单文件。备份 = 复制一个文件。**没有要起、要停、要�
 
 ```
 src/
-├── api.py              FastAPI 入口（SSE、设置、字典、会话、文件）
+├── api.py              FastAPI 入口（SSE、设置、字典、文档库、文件）
 ├── desktop.py          桌面窗口入口
 ├── agent.py            Agent Loop
-├── tools.py            工具定义与分发
-├── display.py          统一 markdown 展示
+├── tools.py            工具定义与分发（20 个）
 │
 ├── storage.py          表 · 软删除隔离 · 表定义 · 关系
 ├── snapshot.py         快照 · 回滚（破坏性操作前的退路）
 ├── runner.py           跑 SQL：连接 · 事务 · 超时
+├── gate.py             执行前闸门（意图 / 表名 / 系统列）
+├── execute.py          执行模型 SQL（含超时和行数上限）
+├── nl2sql.py           自然语言 → SQL
 ├── schema_store.py     数据字典
 ├── config.py           配置与路径解析
 ├── config_store.py     模型配置卡片（configs.json + secrets.json）
 ├── providers.py        供应商预设
-├── settings_spec.py    23 个参数的唯一真源
+├── settings_spec.py    27 个参数的唯一真源
+│
+├── rag/                文档库子系统
+│   ├── parser.py       PDF / Word / txt / md → 纯文本（扫描件转图片给多模态模型）
+│   ├── chunker.py      按段落聚合，超长段落按句切
+│   ├── embedding.py    bge-small-zh ONNX 推理
+│   ├── index.py        FAISS 索引（派生，可重建）
+│   ├── rerank.py       精排接口（权重按需下载，没有就原样返回）
+│   ├── store.py        _gx_doc / _gx_chunk（唯一真源，软删）
+│   └── service.py      入库 · 列表 · 删除/恢复/清理 · 重建 · 检索
 │
 ├── web/static/         前端（无构建）
 │   ├── index.html
@@ -273,37 +317,39 @@ src/
 │   ├── audio/          开机动画音效
 │   ├── css/            app.css（工作台）· splash.css（开机动画）
 │   └── js/
-│       ├── components/ ChatView · SchemaView · SettingsView · FilesPanel
+│       ├── components/ ChatView · SchemaView · RecoverView · DocsView
+│       │                SettingsView · FilesPanel
 │       ├── boot.js · boot.config.js   开机动画 + 首次引导
-│       └── main.js · api.js · i18n.js · utils.js · mark.js
+│       └── main.js · api.js · strings.js · utils.js · mark.js
 │
 ├── services/           业务逻辑
 │   ├── __init__.py     共享：异常、上下文、常量
 │   ├── query / create / update / delete / restore / pending
-│   ├── import / consistency / export / transform / add_column
+│   ├── import / export / transform / structure / recover
+│   ├── document_service.py   PDF / Word / md / txt 产物
 │   └── report/
-│       ├── stats.py       原子统计
 │       ├── charts.py      图表生成
 │       ├── render.py      HTML → PDF
 │       └── templates/report.html
 │
-├── nl2sql.py           自然语言 → SQL
-├── execute.py          执行 SQL（含超时和上限）
-├── summarize.py        结果 → 自然语言
 ├── llm.py              模型调用（含重试）
 ├── session.py          会话管理与持久化
 ├── guard.py            安全检查
 ├── trace.py            可观测
-├── audit.py            审计日志
-├── cleanup.py          过期数据清理
-└── ingest.py           Excel → 数据库
+├── audit.py            审计（进库，和写入同事务）
+└── cleanup.py          过期数据清理
+
+scripts/fetch_model.py  下载 RAG 权重（不进版本库）
+models/                 权重落点（gitignore，打包时随安装包）
+eval/                   178 条评测（见 eval/README.md）
 ```
 
 ## 已知限制
 
 - **跨表关联未实现**：多表地基已经铺好（工具按表调用、schema 按表构建），但 JOIN 查询还没有
 - **无权限控制**，所有用户看到相同数据
-- **无 RAG 能力**，仅支持结构化数据查询
+- **扫描件依赖模型视觉能力**：当前模型不支持图片输入时明确报错，需换配置
+- **FAISS 索引在内存**：启动或数据变更后重建；它只是派生物，切片原文始终在 SQLite
 - **工具返回存的是截断版**（8000 字符），超长结果在历史会话里回看时不全
 
 ## Roadmap
@@ -326,12 +372,13 @@ src/
 - [x] 数据字典 + 数据库概览页
 - [x] 参数配置化 + 模型配置卡片
 - [x] 多表地基（工具带 table_name、按表构建上下文）
-- [ ] 数据源迁到 SQLite 单文件（弃 DuckDB 分支与视图约定）
-- [ ] 结构重组（文件按七层归位）
-- [ ] 接口按新设计逐层改造（工具返回格式 · 中断统一 · 执行前闸门 · audit 进库）
+- [x] 数据源迁到 SQLite 单文件（弃 DuckDB 分支与视图约定）
+- [x] 结构重组（文件按七层归位）
+- [x] 接口按新设计逐层改造（工具返回格式 · 中断统一 · 执行前闸门 · audit 进库）
 - [ ] 跨表关联查询
-- [ ] 评测重写
-- [ ] RAG（文档检索 + 向量 + FAISS）
+- [x] 评测重写（178 条 · 九维 · 全沙箱）
+- [x] RAG（文档检索 + 向量 + FAISS）
+- [x] 文档产物（PDF / Word / md / txt）+ 侧栏预览
 - [ ] 桌面打包（Inno Setup 安装包）
 
 ## 许可证

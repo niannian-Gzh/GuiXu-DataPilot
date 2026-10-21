@@ -3,8 +3,6 @@ import json
 import snapshot
 from guard import SecurityError
 from runner import using
-from nl2sql import get_schema, render_schema
-from schema_store import get_all_tables_schema
 from services import ServiceContext, UserInputRequired
 from services import (
     query_service, delete_service, create_service,
@@ -13,6 +11,8 @@ from services import (
 from services import import_service, restore_service
 from services import export_service
 from services import report_service
+from services import document_service
+from rag import service as rag_service
 
 
 # 工具定义里"表名参数"的统一描述——12 处复用
@@ -22,6 +22,30 @@ _TABLE_DESC = (
 
 
 TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_documents",
+            "description": (
+                "在文档库里检索资料。**只用于非结构化内容**：制度、手册、规范、"
+                "说明书、报告、资料。结构化表里的数据用 query_database，不要用它。\n"
+                "返回最相关的若干切片（原文 + 文档名 + 相似度）。\n"
+                "`status: empty` 表示文档库里没有相关内容——如实告诉用户，不要编。\n"
+                "query 用完整的问题或一句关键描述，不要只给一个词。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "检索词或完整问题"},
+                    "top_k": {
+                        "type": "integer",
+                        "description": "返回几条。不确定就别传，用设置里的检索条数",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -47,12 +71,46 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "write_document",
+            "description": (
+                "把内容写成一份可下载的文档，格式可选 PDF / Word(.docx) / "
+                "Markdown(.md) / 纯文本(.txt)。\n"
+                "content 用 Markdown 写：`#` 标题、`-` 列表、表格都可以。\n"
+                "产物会出现在右侧产物栏，用户可以直接预览或下载。\n"
+                "**不要用它写数据表**——表格数据用 export_to_excel；"
+                "固定版式的统计报告用 generate_report。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "文档标题，也用作文件名"},
+                    "content": {"type": "string", "description": "正文，Markdown 格式"},
+                    "format": {
+                        "type": "string",
+                        "enum": ["pdf", "docx", "md", "txt"],
+                        "description": "输出格式，默认 docx",
+                    },
+                    "to_library": {
+                        "type": "boolean",
+                        "description": (
+                            "用户明确说「收进文档库 / 加入资料库」时传 true。"
+                            "产物会复制一份进文档库，原文件仍留在产物栏"
+                        ),
+                    },
+                },
+                "required": ["title", "content", "format"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "request_delete",
             "description": (
-                "请求删除符合条件的记录（软删除，7 天内可恢复）。"
+                "请求删除符合条件的记录（软删除，保留期内可在回收站恢复）。"
                 "filter_question 是模糊筛选条件，系统会做模糊搜索并展示候选，"
                 "请用户确认后执行删除。"
-                "例：'家装项目'、'所有 web 类项目'、'所有项目'。"
+                "例：'所有已完成的记录'、'某个分类下的记录'。"
                 "【返回特征】如果返回 error_type 为 security，说明这是安全拒绝，不要重试，直接告知用户。"
             ),
             "parameters": {
@@ -84,7 +142,7 @@ TOOL_SCHEMAS = [
                         "type": "string",
                         "description": (
                             "自然语言筛选条件。用户说'刚才删的/最近删的'时传'最近删除的'；"
-                            "说'全部/所有'时传'全部'；也可传项目名或负责人做模糊匹配"
+                            "说'全部/所有'时传'全部'；也可传某一列的值做模糊匹配"
                         ),
                     },
                 },
@@ -206,7 +264,7 @@ TOOL_SCHEMAS = [
             "name": "export_to_excel",
             "description": (
                 "把符合条件的记录导出为 Excel 文件。"
-                "filter_question 是模糊筛选条件，例如'所有 web 类项目'、'已下证的项目'。"
+                "filter_question 是模糊筛选条件，例如'所有已完成的记录'、'某个分类下的记录'。"
                 "导出是只读操作，不会修改数据，无需用户确认。"
                 "返回文件路径和导出的记录数。"
             ),
@@ -285,7 +343,7 @@ TOOL_SCHEMAS = [
                 "对已有数据按【规则】批量重塑。\n"
                 "【和 request_update 的分界】\n"
                 "- request_update：新值由用户明确给出（'把 A 改成 B'）\n"
-                "- transform_data：新值由旧值通过规则算出（'所有打回次数加 1'、"
+                "- transform_data：新值由旧值通过规则算出（'所有计数加 1'、"
                 "'去掉 owner 的首尾空格'、'日期格式统一'）\n"
                 "系统会翻译成 UPDATE 语句、展示预览（改哪些行、改前改后）、"
                 "请用户确认后执行。\n"
@@ -607,7 +665,31 @@ def build_tool_functions(llm, trace):
     def rollback_version(snapshot_id):
         return structure_service.request_rollback(snapshot_id, base_ctx)
 
+    def search_documents(query, top_k=None):
+        # 默认必须是 None，不能写成 4：写死数字会让设置里的
+        # `rag.top_k` 永远轮不到生效——"没指定"和"指定 4"是两回事
+        return rag_service.search_json(query, top_k)
+
+    def write_document(title, content, format="docx", to_library=False):
+        try:
+            return json.dumps(
+                document_service.write(title, content, format, to_library),
+                ensure_ascii=False,
+            )
+        except ValueError as e:
+            return json.dumps(
+                {"ok": False, "error": str(e), "error_type": "invalid"},
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            return json.dumps(
+                {"ok": False, "error": str(e), "error_type": "unknown"},
+                ensure_ascii=False,
+            )
+
     return {
+        "search_documents": search_documents,
+        "write_document": write_document,
         "query_database": query_database,
         "request_delete": request_delete,
         "request_restore": request_restore,

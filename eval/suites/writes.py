@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from harness import case, check, eq, raises
+from harness import case, check, eq
 from services import create_service, delete_service, restore_service
 from services import update_service, transform_service, structure_service
 from services import import_service

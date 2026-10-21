@@ -20,7 +20,7 @@ import shutil
 import sys
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -121,7 +121,8 @@ class Sandbox:
     def start(self):
         if self.root.exists():
             shutil.rmtree(self.root)
-        for name in ("sessions", "exports", "reports", "uploads", "data"):
+        for name in ("sessions", "exports", "reports", "uploads", "data",
+                     "documents"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
 
         # 业务模块在替换路径之前导入，才能拿到模块对象
@@ -132,6 +133,9 @@ class Sandbox:
         import api
         import services.export_service as export_service
         import services.report_service as report_service
+        import rag.index as rag_index
+        import rag.service as rag_service
+        import services.document_service as document_service
 
         self._config = config
         self._config_store = config_store
@@ -140,6 +144,9 @@ class Sandbox:
         self._api = api
         self._export_service = export_service
         self._report_service = report_service
+        self._rag_index = rag_index
+        self._rag_service = rag_service
+        self._document_service = document_service
 
         # 库：写一份临时 config.yaml。db_path 给绝对路径——
         # config.resolve 拿 PROJECT_ROOT 去拼，Windows 下绝对路径会
@@ -151,6 +158,13 @@ class Sandbox:
         self._set(trace, "TRACE_FILE", self.root / "traces.jsonl")
         self._set(export_service, "EXPORT_DIR", self.root / "exports")
         self._set(report_service, "REPORT_DIR", self.root / "reports")
+        # 文档库的原文件。service 顶部 from rag import DOC_DIR 是值拷贝，
+        # 所以这里改的是 service 模块里的那个名字
+        self._set(rag_service, "DOC_DIR", self.root / "documents")
+        self._set(document_service, "EXPORT_DIR", self.root / "exports")
+        # 产物返回的是「相对项目根」的路径，api 又按 PROJECT_ROOT 拼回去。
+        # 两者在生产里是同一个根；沙箱里必须也改成同一个，否则预览拼不到
+        self._set(document_service, "PROJECT_ROOT", self.root)
 
         self._set(api, "PROJECT_ROOT", self.root)
         self._set(api, "ARCHIVE_DIR", self.root / "sessions")
@@ -200,18 +214,27 @@ class Sandbox:
             if p.exists():
                 p.unlink()
 
-        for folder in ("sessions", "exports", "reports", "uploads"):
+        for folder in ("sessions", "exports", "reports", "uploads", "documents"):
             d = self.root / folder
             if d.exists():
                 for f in d.iterdir():
                     if f.is_file():
                         f.unlink()
 
+        # FAISS 是进程内的派生索引。库删了它还在，下一条用例会命中
+        # 上一条的 chunk id——所以每条用例前必须让它失效
+        import rag.index as rag_index
+        rag_index.invalidate()
+
         trace_file = self.root / "traces.jsonl"
         if trace_file.exists():
             trace_file.unlink()
 
         self._api._sessions.clear()
+        # uvicorn 的 lifespan 会建一个真实 LLM 塞进 api._state。XSS 用例
+        # 起过服务之后，后面的文档 API 用例就会"有视觉能力"——顺序一变
+        # 结果就变。每条用例从"没有模型"开始，扫描件用例自己注入假模型
+        self._api._state["llm"] = None
 
         import storage
         con = storage.connect(self.db_path)

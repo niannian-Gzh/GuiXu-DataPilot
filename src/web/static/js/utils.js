@@ -225,7 +225,7 @@ const CONFIRM_SCOPE = {
 };
 
 const CONFIRM_NOTE = {
-  delete:    (n) => `确认后这 ${n} 条进入回收站，7 天内可恢复。`,
+  delete:    (n) => `确认后这 ${n} 条进入回收站，保留期内可恢复。`,
   restore:   (n) => `确认后这 ${n} 条重新回到台账。`,
   create:    () => '确认后写入台账。',
   update:    () => '确认后立即写入台账。',

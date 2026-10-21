@@ -13,6 +13,14 @@ CANCEL_WORDS = {"取消", "不", "不要", "算了", "放弃", "no", "n", "cance
 
 
 def request_delete(filter_question: str, ctx) -> str:
+    # 裸表没有 is_deleted，DELETE 下去就是真删——不能按软删的语义处理
+    if not using(storage.has_soft_delete, ctx.table_name):
+        return json.dumps({
+            "ok": False,
+            "error": "这张表没有软删除保护，不能按行删除",
+            "error_type": "invalid",
+        }, ensure_ascii=False)
+
     candidates = find_candidates(filter_question, ctx)
     if not candidates:
         return json.dumps(

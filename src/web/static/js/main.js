@@ -5,13 +5,14 @@ import {
   confirmColumns, confirmTitle, buildConfirm, settleConfirm,
 } from './utils.js';
 import * as api from './api.js';
-import { dict, fmt } from './i18n.js';
+import { dict, fmt } from './strings.js';
 import { guixuMark } from './mark.js';
 import ChatView from './components/ChatView.js';
 import FilesPanel from './components/FilesPanel.js';
 import SettingsView from './components/SettingsView.js';
 import SchemaView from './components/SchemaView.js';
 import RecoverView from './components/RecoverView.js';
+import DocsView from './components/DocsView.js';
 
 /* 应用入口。
 
@@ -24,7 +25,7 @@ import RecoverView from './components/RecoverView.js';
 const { createApp, ref, computed, watch, onMounted, nextTick, provide } = Vue;
 
 createApp({
-  components: { ChatView, FilesPanel, SettingsView, SchemaView, RecoverView },
+  components: { ChatView, FilesPanel, SettingsView, SchemaView, RecoverView, DocsView },
   setup() {
     /* ---------------- 状态 ---------------- */
     const turns = ref([]);
@@ -40,7 +41,7 @@ createApp({
     const overview = ref(null);            // 欢迎页读数：数据源 / 规模 / 模型
 
     /* ---------------- 设置 ---------------- */
-    const view = ref('chat');              // 'chat' | 'settings' | 'schema' | 'recover'
+    const view = ref('chat');              // 'chat' | 'settings' | 'schema' | 'recover' | 'docs'
     const settings = ref({ groups: [], params: [], info: {} });
     const activeGroup = ref('model');
     const leftTab = ref('sessions');        // 'sessions' | 'trace'
@@ -280,10 +281,16 @@ createApp({
       loadOverview();
     };
 
+    const goDocsRaw = () => {
+      view.value = 'docs';
+      loadOverview();
+    };
+
     const goSettings = guarded(goSettingsRaw);
     const goChat = guarded(goChatRaw);
     const goSchema = guarded(goSchemaRaw);
     const goRecover = guarded(goRecoverRaw);
+    const goDocs = guarded(goDocsRaw);
     const newSession = guarded(newSessionRaw);
 
     const saveSettings = async () => {
@@ -554,18 +561,30 @@ createApp({
     };
 
     /* ---------------- 事件处理 ---------------- */
+    // 产物类型由扩展名决定。五个预览分支：Excel 表格、PDF 内嵌、
+    // Word 段落、Markdown 渲染、纯文本等宽
+    const ARTIFACT_KINDS = {
+      pdf: ['pdf', 'PDF 报告'],
+      xlsx: ['xlsx', 'Excel 表格'],
+      xls: ['xlsx', 'Excel 表格'],
+      docx: ['docx', 'Word 文档'],
+      md: ['markdown', 'Markdown 文档'],
+      txt: ['text', '文本文件'],
+    };
+
     const collectArtifact = (turn, tool) => {
       const p = tool.parsed;
       if (!p || !p.file_path) return;
       const path = String(p.file_path).replace(/\\/g, '/');
       const name = path.split('/').pop();
-      const isPdf = name.toLowerCase().endsWith('.pdf');
+      const ext = (name.split('.').pop() || '').toLowerCase();
+      const [kind, label] = ARTIFACT_KINDS[ext] || ['other', '文件'];
       turn.artifacts.push({
         name,
         path: p.file_path,
-        kind: isPdf ? 'pdf' : 'xlsx',
-        rows: p.row_count != null ? p.row_count : null,
-        label: isPdf ? 'PDF 报告' : 'Excel 表格',
+        kind,
+        rows: kind === 'xlsx' && p.row_count != null ? p.row_count : null,
+        label,
       });
     };
 
@@ -916,6 +935,16 @@ createApp({
           };
         } else if (data.type === 'pdf') {
           viewer.value = { name: f.name, path: f.path, kind: 'pdf', url: data.url };
+        } else if (data.type === 'docx') {
+          viewer.value = {
+            name: f.name, path: f.path, kind: 'docx',
+            blocks: data.blocks || [], truncated: data.truncated,
+          };
+        } else if (data.type === 'markdown' || data.type === 'text') {
+          viewer.value = {
+            name: f.name, path: f.path, kind: data.type,
+            text: data.text || '', truncated: data.truncated,
+          };
         } else {
           // 不支持预览的类型不再偷偷下载，明说
           viewer.value = { name: f.name, path: f.path, kind: 'other' };
@@ -1014,7 +1043,7 @@ createApp({
     /* store 就是原来 setup 的返回值。组件里 return { ...store }，
        展开的是 ref 对象本身而不是它的值，所以模板里的 {{ turns }}、
        @click="send" 一个字都不用改 */
-    // 文案字典。模板里按属性取词：{{ t.newChat }}
+    // 文案字典。模板里按属性取词：{{ t.artifacts }}
     const t = dict();
 
     const store = {
@@ -1025,7 +1054,7 @@ createApp({
       allGroups, isLocalGroup, activeGroupParams, activeGroupDesc,
       dirty, groupDirty, dirtyCount, editValue, onEdit, resetField,
       discardDraft, loadSettings, loadOverview,
-      goSettings, goChat, goSchema, goRecover, saveSettings,
+      goSettings, goChat, goSchema, goRecover, goDocs, saveSettings,
 
       // 模型配置
       providers, configs, activeId, currentModel, editor, formModels, formState,
@@ -1108,15 +1137,18 @@ createApp({
             {{ src.tables != null ? src.tables + ' 表 · ' + (src.rows || 0).toLocaleString() + ' 行' : '—' }}
           </span>
         </button>
-        <!-- 文档库还没做（阶段④·RAG）。这里不编一个读数出来——
-             一个恒为「—」的计数是装饰，不是信息，而空态本该是待机 -->
-        <button class="asset" disabled>
+        <!-- 文档库：语料。和数据源同构——图标 + 名字 + 等宽计数 -->
+        <button class="asset" :class="{on: view === 'docs'}" @click="goDocs">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
             <path d="M9 1.5H4.5A1 1 0 0 0 3.5 2.5v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.5L9 1.5Z"/>
             <path d="M8.5 1.5v4h4"/>
           </svg>
           <span class="asset-n">文档库概览</span>
-          <span class="asset-m">—</span>
+          <span class="asset-m">
+            {{ overview && overview.docs
+                 ? overview.docs.docs + ' 份 · ' + overview.docs.chunks + ' 块'
+                 : '—' }}
+          </span>
         </button>
         <!-- 恢复：还能捞回几行、手上有几份快照。它是唯一能让用户
              知道"有东西可以回头"的地方 -->
@@ -1185,6 +1217,7 @@ createApp({
     <settings-view v-else-if="view === 'settings'"></settings-view>
     <schema-view v-else-if="view === 'schema'"></schema-view>
     <recover-view v-else-if="view === 'recover'"></recover-view>
+    <docs-view v-else-if="view === 'docs'"></docs-view>
   </div>
 </div>
 

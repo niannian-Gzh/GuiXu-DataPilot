@@ -26,3 +26,7 @@ eval/results/
 # ============ Python ============
 __pycache__/
 .venv/
+
+# ============ RAG embedding 权重（下载脚本准备，不进库）============
+models/
+data/documents/

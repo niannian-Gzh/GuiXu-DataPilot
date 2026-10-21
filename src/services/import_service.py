@@ -30,7 +30,7 @@ import pandas as pd
 
 import storage
 from audit import record
-from services import UserInputRequired, card_columns, card_records
+from services import UserInputRequired, card_columns
 from runner import query_df, transaction, using
 
 
