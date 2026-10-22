@@ -165,7 +165,7 @@ models/                     embedding 权重（gitignore，打包时随安装包
 ## 声明
 
 - **开机动画**：参考并改自 [dsh-startup-screen](https://github.com/6shenhonghong9/dsh-startup-screen)（作者：[6shenhonghong9](https://github.com/6shenhonghong9)），MIT License，Copyright (c) 2026 沈宏宏。原项目的版权与许可声明保留在 `src/web/static/js/boot.js` 和 `src/web/static/css/splash.css` 的文件头；完整许可见[上游 LICENSE](https://github.com/6shenhonghong9/dsh-startup-screen/blob/main/LICENSE)。本项目替换了标识、素材与时序。
-- **人声播报**：`src/web/static/audio/line-*.mp3` 由本项目使用 Microsoft Edge TTS（[edge-tts](https://github.com/rany2/edge-tts)）的 **Ava 英文女声**导出；界面音效由 WebAudio 现场合成。参考项目的第三方 mp3 未使用。
+- **人声播报**：`src/web/static/audio/line-*.mp3` 由本项目使用 Microsoft Edge TTS（[edge-tts](https://github.com/rany2/edge-tts)）的 **Ava 英文女声**导出；界面音效由 WebAudio 现场合成
 - **联系方式**：3401835026@qq.com
 
 ## 许可证
