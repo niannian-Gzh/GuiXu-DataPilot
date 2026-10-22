@@ -32,9 +32,7 @@
      留着这个文件是为了以后身份名称能接后端配置。 */
   window.__DSH_STARTUP__ = {
     enabled: true,
-    mode: 'session',
-    desktop: desktop,
-    requireInteraction: !desktop
+    mode: 'session'
   }
 
   if (shown) {

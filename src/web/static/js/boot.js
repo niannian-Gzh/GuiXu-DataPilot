@@ -38,7 +38,6 @@
     theme: 'dark',              // 归墟是深底，参考项目那套暖白浅色不用
     speed: 1,
     requireInteraction: true,   // 第 1、2 步等待用户确认
-    desktop: false,             // 桌面宿主：不要求点击，没配置时直接弹表单
     allowSkip: true,
 
     sound: true,                // 界面音效
@@ -802,13 +801,6 @@
 
   function waitAction(step) {
     return new Promise(function (resolve) {
-      /* 桌面宿主没配置时，不要求先点「授予访问权限」再弹表单——
-         直接把表单推出来；有配置时 requireInteraction 已经是 false，
-         下一步会直接放行。 */
-      if (step && step.action === 'grant' && !hasConfig() && C.desktop) {
-        showForm(resolve)
-        return
-      }
       if (skipped || !C.requireInteraction) return resolve()
       var done = false
       function fin() {
@@ -829,7 +821,7 @@
         /* 第 1 步：先判是不是首次启动。
            是 → 弹表单，等它填完再继续；不是 → 直接进下一步 */
         if (step && step.action === 'grant' && !hasConfig()) {
-          showForm(fin)
+          showForm(configDone(fin))
           return
         }
         fin()
@@ -1428,10 +1420,9 @@
         setStepCount(0, 'BOOT')
         setSlats(0)
         setSubtitle('系统自检中…', 'SYSTEM SELF-CHECK')
-        /* 首次启动不给跳过。配置卡还没建，跳过去进到应用里
-           每个功能都会报错——那比不跳更糟。填完表单后 hasConfig()
-           就是 true 了，SKIP 会跟着出现 */
-        if (C.allowSkip && hasConfig()) ui.skip.classList.add('dsu-in')
+        /* 首次启动也显示 SKIP，但不能直接揭幕：requestSkip() 会先把
+           配置表单补出来，填完再执行跳过——否则进到应用里每个功能都报错。 */
+        if (C.allowSkip) ui.skip.classList.add('dsu-in')
         /* 原来是 700ms 的干等：这一段画面是静的，声音也是静的，
            于是第一句人声要等到 4.9s 才开口，前面空得太久。
            压到 160ms（80 的倍数）——洗白一收，第一句就跟上。
@@ -1579,6 +1570,23 @@
   /* 弹配置表单。done 是"填完之后继续动画"的回调，
      由 waitAction 在用户点按钮时传进来 */
   var formDone = null
+  var pendingSkip = false
+
+  /* 首次启动点 SKIP：不能直接揭幕，否则进到应用里每个功能都报错。
+     先把配置表单补出来；填完之后再执行刚才那次跳过。
+     fin 是「授予访问权限」路径的继续回调；跳过路径传 null。 */
+  function configDone(fin) {
+    return function () {
+      if (pendingSkip) {
+        pendingSkip = false
+        skipped = true
+        releaseAll()
+        finish()
+        return
+      }
+      if (fin) fin()
+    }
+  }
 
   function showForm(done) {
     formDone = done || null
@@ -1967,6 +1975,13 @@
 
   function requestSkip() {
     if (skipped || finished) return
+    /* 首次启动还没有配置卡：SKIP 先把表单补出来，填完再跳。
+       表单已经开着就只记下「填完要跳」，由 configDone 收尾。 */
+    if (!hasConfig()) {
+      pendingSkip = true
+      if (ui.form.hidden) showForm(configDone(null))
+      return
+    }
     skipped = true
     releaseAll()
     finish()
