@@ -38,6 +38,7 @@
     theme: 'dark',              // 归墟是深底，参考项目那套暖白浅色不用
     speed: 1,
     requireInteraction: true,   // 第 1、2 步等待用户确认
+    desktop: false,             // 桌面宿主：不要求点击，没配置时直接弹表单
     allowSkip: true,
 
     sound: true,                // 界面音效
@@ -110,9 +111,10 @@
      实际停多久取 max(hold, 播报时长 + 收尾留白)，见 stepLoop()。 */
   var STEPS = [
     {
-      /* 第 1 步是 config.yaml 的建立点。
+      /* 第 1 步是配置卡的建立点。
          首次启动时它弹一个表单（供应商 / API Key / 模型），
-         填完写进 config.yaml 再往下走——而不是让用户事后自己去建一个文件。
+         填完写进 configs.json（密钥单独进 secrets.json）再往下走——
+         而不是让用户事后自己去建一个文件。
          名字不用改：「需要访问许可」本来就是在要一个访问凭证，
          而 API Key 就是那个凭证。 */
       zh: '需要访问许可',
@@ -529,8 +531,8 @@
         '<div class="dsu-form-err" hidden></div>' +
 
         '<div class="dsu-form-note">' +
-          '密钥只写入本机 config.yaml，不随任何请求外传。' +
-          '这里也是本项目唯一的网络依赖——数据源在本地。' +
+          '密钥只写入本机 secrets.json，不随安装包分发。' +
+          '模型调用会把它发给你选择的供应商；数据库和文件留在本机。' +
         '</div>' +
 
         '<div class="dsu-form-go">' +
@@ -800,6 +802,13 @@
 
   function waitAction(step) {
     return new Promise(function (resolve) {
+      /* 桌面宿主没配置时，不要求先点「授予访问权限」再弹表单——
+         直接把表单推出来；有配置时 requireInteraction 已经是 false，
+         下一步会直接放行。 */
+      if (step && step.action === 'grant' && !hasConfig() && C.desktop) {
+        showForm(resolve)
+        return
+      }
       if (skipped || !C.requireInteraction) return resolve()
       var done = false
       function fin() {
@@ -1419,7 +1428,7 @@
         setStepCount(0, 'BOOT')
         setSlats(0)
         setSubtitle('系统自检中…', 'SYSTEM SELF-CHECK')
-        /* 首次启动不给跳过。config.yaml 还没建，跳过去进到应用里
+        /* 首次启动不给跳过。配置卡还没建，跳过去进到应用里
            每个功能都会报错——那比不跳更糟。填完表单后 hasConfig()
            就是 true 了，SKIP 会跟着出现 */
         if (C.allowSkip && hasConfig()) ui.skip.classList.add('dsu-in')
