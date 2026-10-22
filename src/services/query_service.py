@@ -5,7 +5,8 @@ import math
 import pandas as pd
 
 from guard import SecurityError
-from nl2sql import generate_sql
+from nl2sql import generate_sql, render_query_schema
+from schema_store import get_query_schema
 from execute import execute_sql
 from runner import query_df
 
@@ -48,7 +49,10 @@ def run(question: str, ctx) -> str:
     try:
         # **不在这里自修正。** SQL 执行失败就如实返回，让模型自己决定
         # 换 SQL 还是换问法——工具内部悄悄重试，模型永远不知道刚才错在哪
-        sql = generate_sql(question, ctx.llm, ctx.schema, ctx.table_name)
+        # 查询比写操作多一层上下文：主表 + 数据字典里声明的一跳关联表。
+        # 写操作/导入仍然只用 ctx.schema（单表），避免它们误以为能跨表写。
+        schema = render_query_schema(get_query_schema(ctx.table_name))
+        sql = generate_sql(question, ctx.llm, schema, ctx.table_name)
         df = execute_sql(sql)
 
         result = {

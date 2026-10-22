@@ -6,7 +6,7 @@
 ;   - 只做 64 位；WebView2 / Edge 用系统的，不随包。
 
 #define MyAppName "归墟"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "GuiXu"
 #define MyAppExeName "GuiXu.exe"
 

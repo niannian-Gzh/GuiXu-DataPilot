@@ -9,9 +9,11 @@ SYSTEM_PROMPT = """你是一个 SQL 生成助手。用户会用自然语言提�
 1. 只返回SQL语句本身，不要解释、不要markdown代码块、不要结尾分号
 2. 只生成 SELECT 查询，禁止 DELETE / UPDATE / INSERT / DROP
 3. 严格使用下面提供的表名和列名，不要臆造
-4. 当前日期是 {today}，如果用户说"上个月""本周"等，以此为基准
+4. 需要跨表时，只能按「关联」里声明的字段 JOIN；不要引用未列出的表
+5. 多表查询要给选择列加表名或别名（如 devices.name AS device_name），避免重名
+6. 当前日期是 {today}，如果用户说"上个月""本周"等，以此为基准
 
-表名：{table_name}
+主表：{table_name}
 
 表结构：
 {schema}
@@ -42,6 +44,35 @@ def render_schema(schema: dict) -> str:
         tag = "可空" if f["nullable"] else "必填"
         desc = f["label"] or ""
         lines.append(f"  - {f['name']} ({f['type']}, {tag}): {desc}")
+    return "\n".join(lines)
+
+
+def render_query_schema(q: dict) -> str:
+    """查询用文本：主表 + 一跳关联表 + 关系条件。
+
+    和 `render_schema` 分开：后者还被写操作、导入、数据字典用，
+    那些地方只该看到一张表；把关联表塞进去会让它们误以为可以跨表写。
+    """
+    main = q["main"]
+    # 主表名已经在 SYSTEM_PROMPT 的「主表：{table_name}」里，这里不再重复
+    lines = [render_schema(main)]
+
+    relations = q.get("relations") or []
+    if relations:
+        lines.append("")
+        lines.append("关联（只允许按这些字段 JOIN）：")
+        for r in relations:
+            card = f"（{r['cardinality']}）" if r.get("cardinality") else ""
+            lines.append(
+                f"  - {r['from_table']}.{r['from_column']} = "
+                f"{r['to_table']}.{r['to_column']}{card}"
+            )
+
+    for name, schema in (q.get("related") or {}).items():
+        lines.append("")
+        lines.append(f"关联表：{name}")
+        lines.append(render_schema(schema))
+
     return "\n".join(lines)
 
 

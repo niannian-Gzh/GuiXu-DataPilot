@@ -56,7 +56,9 @@ TOOL_SCHEMAS = [
                 "拿到数据后自己判断怎么用——统计、对比、排序都可以，不要只复述。\n"
                 "`status: \"empty\"` 表示执行成功但没有符合条件的数据，"
                 "不是失败；可以看 `total_records_in_table` 判断是表空还是条件太窄。\n"
-                "`truncated: true` 表示只给了前 N 行，需要更多就换个更具体的问法。"
+                "`truncated: true` 表示只给了前 N 行，需要更多就换个更具体的问法。\n"
+                "数据字典里声明了关联时，可以按关联 JOIN 与主表直接相连的表；"
+                "更远的表不要猜。"
             ),
             "parameters": {
                 "type": "object",

@@ -18,7 +18,7 @@
 
 ## 能做什么
 
-- **查询**：「上个月新增了多少条记录」→ 生成 SQL、执行、回答
+- **查询**：「上个月新增了多少条记录」→ 生成 SQL、执行、回答；数据字典里声明了关联时，可以按关联做一跳 JOIN
 - **增删改**：单条或批量；删除是软删除，进回收站，确认后才执行
 - **导入导出**：扫描 Excel 与库的差异（新记录 / 冲突 / 已删除），确认后导入；导出中文列名的 Excel
 - **规则重塑**：「所有计数加 1」「某一列去掉首尾空格」→ 生成预览、确认、批量执行
@@ -33,7 +33,7 @@
 从 [GitHub Releases](https://github.com/niannian-Gzh/GuiXu-DataPilot/releases) 下载最新版：
 
 ```text
-GuiXu-Setup-1.1.0.exe
+GuiXu-Setup-1.2.0.exe
 ```
 
 双击安装即可。默认装到 `%LOCALAPPDATA%\Programs\GuiXu`，**不需要管理员权限**；用户数据在 `%LOCALAPPDATA%\GuiXu`，和安装目录分开，卸载不会删除。
@@ -70,7 +70,7 @@ uv run python src/desktop.py
 ```bash
 uv sync --extra desktop --group build
 uv run python scripts/build_app.py              # 文件夹版 dist/GuiXu/
-uv run python scripts/build_app.py --installer  # 安装包 dist/GuiXu-Setup-1.1.0.exe
+uv run python scripts/build_app.py --installer  # 安装包 dist/GuiXu-Setup-1.2.0.exe
 ```
 
 ## 第一次使用
@@ -102,9 +102,9 @@ uv run python scripts/build_app.py --installer  # 安装包 dist/GuiXu-Setup-1.1
 
 ## 评测
 
-**181 条用例，九个维度**：
+**182 条用例，九个维度**：
 
-- **离线 141 条**：不调模型，秒级。注入与越权、边界、并发、审计与快照、文档入库/软删/恢复、扫描件、四种产物、结构升级与备份
+- **离线 142 条**：不调模型，秒级。注入与越权、边界、并发、审计与快照、文档入库/软删/恢复、扫描件、四种产物、结构升级与备份
 - **Agent 40 条**：真调模型。20 个工具、确认/取消/跳过、提示注入、文档检索、不编造
 
 ```bash
@@ -114,7 +114,7 @@ uv run python eval/run.py --suite agent     # 需要可用 key
 
 期望值从 fixture 现算，不硬编码；每条用例一个临时库，不碰真实数据。攻击用例的判据是三件事同时成立：**被拒绝 + 数据零变化 + 该保护的还在**。
 
-最近一次结果：离线 **141/141**；Agent **39/40**，失败项是模型偶发生成了一条被只读闸门拒绝的 SQL，单独复跑通过。详见 [eval/README.md](eval/README.md)。
+最近一次结果：离线 **142/142**；Agent **39/40**，失败项是模型偶发生成了一条被只读闸门拒绝的 SQL，单独复跑通过。详见 [eval/README.md](eval/README.md)。
 
 ## 数据与升级
 
@@ -131,7 +131,7 @@ uv run python eval/run.py --suite agent     # 需要可用 key
 
 ## 已知限制
 
-- **跨表关联未实现**：多表地基已经铺好（工具按表调用、schema 按表构建），但 JOIN 查询还没有
+- **跨表关联只支持一跳**：查询主表时会把数据字典里直接关联的表结构带进 prompt，可以 JOIN 这些表；两跳以上或任意多表仍未支持
 - **无权限控制**：单用户本地应用，所有能打开数据目录的人看到相同数据
 - **扫描件依赖模型视觉能力**：当前模型不支持图片输入时会明确报错，需要换配置
 - **FAISS 索引在内存**：启动或数据变更后重建；它只是派生物，切片原文始终在 SQLite
@@ -156,7 +156,7 @@ src/
 
 scripts/                    fetch_model.py · build_app.py
 packaging/                  PyInstaller spec · Inno Setup 脚本
-eval/                       181 条评测
+eval/                       182 条评测
 models/                     embedding 权重（gitignore，打包时随安装包）
 ```
 

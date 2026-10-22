@@ -62,6 +62,34 @@ def empty_table(env):
     eq(data.get("total_records_in_table"), 0)
 
 
+@case("D5", "跨表 JOIN：只带一跳关联表进 prompt", "devices ↔ inspections",
+      "JOIN 能执行，关联表结构与关系条件进入 system prompt")
+def cross_table_join(env):
+    class _CapturingSqlLLM(_SqlLLM):
+        def __init__(self, sql):
+            super().__init__(sql)
+            self.system = ""
+
+        def chat(self, system, user):
+            self.system = system
+            return self.sql
+
+    sql = (
+        "SELECT d.name AS device_name, COUNT(i.id) AS inspection_count "
+        "FROM devices d LEFT JOIN inspections i ON i.device_id = d.id "
+        "GROUP BY d.id, d.name ORDER BY d.name"
+    )
+    llm = _CapturingSqlLLM(sql)
+    ctx = ServiceContext(llm=llm, trace=Trace("跨表")).for_table("devices")
+    data = json.loads(query_service.run("每台设备有多少条巡检记录", ctx))
+
+    eq(data.get("ok"), True)
+    eq(data.get("row_count"), env.scalar("SELECT COUNT(*) FROM devices"))
+    eq(sum(r[1] for r in data["rows"]), env.scalar("SELECT COUNT(*) FROM inspections"))
+    check("关联表：inspections" in llm.system, "关联表结构没进 prompt")
+    check("devices.id = inspections.device_id" in llm.system, "关系条件没进 prompt")
+
+
 @case("D5", "系统前缀的表名不能建", "create_table('_gx_evil')",
       "拒绝，否则建出来的表会被所有列表过滤掉")
 def edge_table_name_system_prefix(env):

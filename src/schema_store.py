@@ -108,6 +108,47 @@ def get_table_schema(table: str) -> dict:
     return using(_build)
 
 
+def get_query_schema(table: str) -> dict:
+    """查询用 schema：主表 + 与它直接关联的一跳表。
+
+    关系只取一跳。再远的关系不塞进 prompt——模型看不到的表，它不该
+    凭空 JOIN；真要支持两跳，应该由明确的多表查询接口来做，而不是
+    让它从一张表的关系里猜完整张图。
+    """
+    def _relations(con):
+        return [
+            {
+                "from_table": r[0], "from_column": r[1],
+                "to_table": r[2], "to_column": r[3],
+                "cardinality": r[4],
+            }
+            for r in con.execute(
+                f"SELECT from_table, from_column, to_table, to_column, cardinality "
+                f"FROM {storage.REL} WHERE from_table = ? OR to_table = ?",
+                (table, table),
+            )
+        ]
+
+    main = get_table_schema(table)
+    relations = using(_relations)
+    related: dict[str, dict] = {}
+    valid_relations = []
+    for r in relations:
+        other = r["to_table"] if r["from_table"] == table else r["from_table"]
+        if other == table:
+            valid_relations.append(r)
+            continue
+        if other not in related:
+            try:
+                related[other] = get_table_schema(other)
+            except Exception:
+                # 关系指向的表如果已经不在了，跳过它；不要让一条坏关系
+                # 把整次查询打翻。表存在性由 add_relation 校验，这里是兜底。
+                continue
+        valid_relations.append(r)
+    return {"main": main, "relations": valid_relations, "related": related}
+
+
 def refresh_from_db() -> dict:
     """跟库对账。**新设计里它只剩一件事**：把没保护的裸表补上。
 
