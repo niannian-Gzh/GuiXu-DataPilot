@@ -30,3 +30,8 @@ __pycache__/
 # ============ RAG embedding 权重（下载脚本准备，不进库）============
 models/
 data/documents/
+data/backups/
+
+# ============ 打包产物 ============
+build/
+dist/

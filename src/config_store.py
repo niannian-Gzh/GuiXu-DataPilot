@@ -23,6 +23,10 @@ from config import PROJECT_ROOT, load_config, save_config
 CONFIGS_PATH = PROJECT_ROOT / "configs.json"
 SECRETS_PATH = PROJECT_ROOT / "secrets.json"
 
+# 配置文件的结构版本。和数据库的 user_version 分开：一个管卡片，
+# 一个管库。以后加字段时按版本判断，不要靠"有没有这个键"猜。
+CONFIG_VERSION = 1
+
 _lock = threading.Lock()
 _cache = {"mtime": None, "data": None}
 
@@ -71,6 +75,8 @@ def _load() -> dict:
         return {"active_id": None, "configs": []}
     data.setdefault("configs", [])
     data.setdefault("active_id", None)
+    # 老文件没有 version：读的时候补上，不改磁盘；下次保存自然落盘
+    data.setdefault("version", CONFIG_VERSION)
     return data
 
 
@@ -90,7 +96,9 @@ def _cached() -> dict:
 
 
 def _save(data: dict) -> None:
+    data = {**data, "version": CONFIG_VERSION}
     with _lock:
+        CONFIGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         CONFIGS_PATH.write_text(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -115,6 +123,7 @@ def _read_secrets() -> dict:
 
 
 def _write_secrets(data: dict) -> None:
+    SECRETS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SECRETS_PATH.write_text(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -248,6 +257,12 @@ def migrate_if_needed() -> bool:
 
     cfg = load_config()
     old = cfg.get("llm") or {}
+    # 没有旧 llm 段就不要凭空造一张空卡：首次启动的表单会通过
+    # /configs 建一张真正带 key/model 的卡。旧逻辑会先塞一张空卡
+    # 并把它设为 active，后面新建的卡反而不会自动生效。
+    if not old:
+        return False
+
     item = {
         "id": uuid.uuid4().hex[:8],
         "name": "默认配置",

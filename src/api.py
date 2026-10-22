@@ -1,12 +1,15 @@
 from contextlib import asynccontextmanager
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Optional
 import json
 import math
 import queue
 import threading
+import urllib.error
+import urllib.request
 import uuid
 
 # Windows 控制台默认是 GBK，模型给的参数里可能出现任何字符（↔、emoji、
@@ -29,7 +32,7 @@ from session import Session
 from agent import run_agent, resume_entry
 from trace import Trace
 from config import (
-    resolve_db_path, PROJECT_ROOT, CONFIG_PATH,
+    resolve_db_path, PROJECT_ROOT, RESOURCE_ROOT,
     setting, get_config, save_config,
 )
 import config_store as store
@@ -49,11 +52,13 @@ import storage
 from storage import describe, list_tables
 from rag import RagError, SUPPORTED as RAG_SUFFIXES
 from rag import service as rag_service
+from version import __version__
 
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 EXPORT_DIR = PROJECT_ROOT / "data" / "exports"
 REPORT_DIR = PROJECT_ROOT / "data" / "reports"
-STATIC_DIR = PROJECT_ROOT / "src" / "web" / "static"
+# 前端是只读资源，打包后在 _internal/src/web/static，不在数据目录
+STATIC_DIR = RESOURCE_ROOT / "src" / "web" / "static"
 
 
 _state = {
@@ -181,14 +186,19 @@ def index():
     开机动画第 1 步就要决定弹不弹表单，所以这个判断不能留给前端启动后
     再异步问一次——那样会先闪一帧「没有配置」的样子再跳回来。
 
-    判定只看 config.yaml 在不在，不看内容完不完整：
-    用户手改过、只填了一半，那也是他的选择，不该每次启动都追着问。
+    判定看的是**当前生效的模型配置有没有 base_url + model**，不是
+    config.yaml 在不在：模型配置已经搬进 configs.json 卡片，空卡
+    （旧迁移逻辑会造一张）不算配置好。
     """
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    flag = "true" if CONFIG_PATH.exists() else "false"
+    active = store.get_active() or {}
+    configured = bool(active.get("base_url") and active.get("model"))
+    flag = "true" if configured else "false"
     html = html.replace(
         "<!--__DP_CONFIGURED__-->",
-        f"<script>window.__DP_CONFIGURED__ = {flag}</script>",
+        # 版本也在这里注入：前端是纯静态文件，读不到 pyproject
+        f"<script>window.__DP_CONFIGURED__ = {flag}; "
+        f"window.__DP_VERSION__ = {json.dumps(__version__)}</script>",
     )
     return HTMLResponse(html)
 
@@ -215,6 +225,62 @@ class FileInfo(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ============ 检查更新 ============
+# **只在这个接口被调用时联网。** 启动、心跳、其它接口都不碰 GitHub——
+# README 里"除 LLM API 外没有别的外连"仍然成立，除非用户主动点检查。
+
+UPDATE_REPO = "niannian-Gzh/GuiXu-DataPilot"
+UPDATE_API = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
+
+
+def _version_tuple(value: str) -> tuple[int, int, int]:
+    parts = [int(x) for x in re.findall(r"\d+", value or "")][:3]
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
+def _latest_release() -> dict:
+    """拉 GitHub 最新 Release。失败由调用方翻译成人话。"""
+    req = urllib.request.Request(
+        UPDATE_API,
+        headers={
+            # GitHub API 要求带 UA；不带会 403
+            "User-Agent": f"GuiXu/{__version__}",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+@app.get("/update/check")
+def check_update():
+    """手动检查更新：查最新 Release，比版本，不下载、不安装。"""
+    current = __version__
+    try:
+        data = _latest_release()
+    except urllib.error.HTTPError as e:
+        message = ("GitHub 上还没有发布版本" if e.code == 404
+                   else f"GitHub 返回 {e.code}")
+        return {"ok": False, "current": current, "message": message}
+    except Exception:
+        return {"ok": False, "current": current, "message": "暂时连不上 GitHub"}
+
+    tag = str(data.get("tag_name") or "").strip()
+    latest = tag.lstrip("vV")
+    if not latest:
+        return {"ok": False, "current": current, "message": "发布页没有版本号"}
+
+    return {
+        "ok": True,
+        "current": current,
+        "latest": latest,
+        "has_update": _version_tuple(latest) > _version_tuple(current),
+        "url": data.get("html_url") or f"https://github.com/{UPDATE_REPO}/releases/latest",
+        "name": data.get("name") or tag,
+    }
+
 
 @app.get("/db/ping")
 def db_ping():
@@ -737,7 +803,7 @@ def update_settings(req: SettingsUpdate):
 
     # .env 改过之后要重新灌进进程环境，否则 LLM 还是拿着旧 key。
     # override=True 是必须的：默认模式不会覆盖已存在的环境变量
-    load_dotenv(override=True)
+    load_dotenv(ENV_PATH, override=True)
 
     # LLM 实例在 __init__ 里固化了 model / base_url / temperature / api_key /
     # capabilities，配置一变就得重建——统一走 _rebuild_llm，别处不再各写一遍

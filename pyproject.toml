@@ -1,6 +1,6 @@
 [project]
 name = "guixu"
-version = "0.1.0"
+version = "1.0.0"
 description = "归墟 · 数据处理 Agent"
 readme = "README.md"
 authors = [
@@ -17,7 +17,6 @@ dependencies = [
     "openai>=3.11.0",
     "openpyxl>=3.1.5",
     "pandas>=3.0.5",
-    "playwright>=1.63.0",
     "pymupdf>=2.0",
     "pypdf>=6.21.1",
     "python-docx>=1.2.0",
@@ -43,6 +42,20 @@ dependencies = [
 desktop = [
     "pywebview>=5.0",
     "pythonnet>=3.0; sys_platform == 'win32'",
+]
+
+[dependency-groups]
+# 只给开发和评测用，不进安装包：
+#   - eval 的 XSS 用例要真浏览器
+#   - archive/brand/build.py 用 Chromium 渲染图标
+# 产品运行时不再需要 Playwright——PDF 交给系统 Edge（report/render.py）。
+dev = [
+    "playwright>=1.63.0",
+]
+
+# 打包用。只在本机构建时安装，不进应用，也不进运行时依赖。
+build = [
+    "pyinstaller>=6.0",
 ]
 
 [build-system]

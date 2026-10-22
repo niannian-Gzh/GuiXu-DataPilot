@@ -22,6 +22,11 @@
   var shown = false
   try { shown = sessionStorage.getItem('dsh-startup-screen:shown') === '1' } catch (e) {}
 
+  /* 桌面宿主（desktop.py）会带 desktop=1 打开页面。它已经把 WebView2
+     的自动播放限制关掉，所以不需要再等"按任意键"解锁音频；普通浏览器
+     仍然要等一次手势，否则第一句会被浏览器的 autoplay 策略吃掉。 */
+  var desktop = /(?:\?|&)desktop=1(?:&|$)/.test(location.search)
+
   /* 配置。运行时的 DEFAULTS 已经是归墟的值（见 js/boot.js），
      所以这里只列"要覆盖默认"的项 —— 空对象也是合法的。
      留着这个文件是为了以后身份名称能接后端配置。 */
@@ -68,9 +73,13 @@
     document.body.appendChild(s)
   }
 
-  /* 有任意交互就启动 —— 点、按、滚、触，谁先来算谁。
-     只挂一次，所以用一个开关兜住，避免四类事件各触发一遍。 */
-  ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(function (ev) {
-    document.addEventListener(ev, start, { capture: true })
-  })
+  /* 桌面宿主直接起播；普通浏览器等第一次交互，点、按、滚、触谁先来算谁。
+     只挂一次，用一个开关兜住，避免四类事件各触发一遍。 */
+  if (desktop) {
+    start()
+  } else {
+    ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(function (ev) {
+      document.addEventListener(ev, start, { capture: true })
+    })
+  }
 })()

@@ -108,8 +108,8 @@ D9 的语料在用例里现造（txt / GBK / docx 表格 / 扫描件 PDF / 提�
 
 修完重跑：**141/141，对抗/诚实用例 55/55**。
 
-加入 D9（文档库与产物）之后，总用例 **178 条**（离线 138 / Agent 40）。
-离线 **138/138**；Agent 最近一次全量 **39/40**：`agent_query_bool` 的模型生成了
+加入 D9（文档库与产物）之后，总用例 **181 条**（离线 141 / Agent 40）。
+离线 **141/141**；Agent 最近一次全量 **39/40**：`agent_query_bool` 的模型生成了
 一条被只读闸门拒绝的 SQL，随后按「security 不重试」的规则停下——单独复跑
 这条通过，属于模型侧偶发。**闸门拒绝对了，是 Agent 把"自己的 SQL 写错"和
 "用户越权"当成了同一种拒绝。**
@@ -136,7 +136,12 @@ def my_case(env):
 - `env.query/scalar/count/audit_count/snapshot_count/table_exists`：直接看库
 - `env.truth()`：fixture 的动态期望
 - `env.client()`：FastAPI TestClient（`raise_server_exceptions=False`）
-- `env.serve()`：真 HTTP 服务，给 Playwright 用
+- `env.serve()`：真 HTTP 服务，给 Playwright 的 XSS 用例用（dev 依赖，不进安装包）
 - Agent 层：`run_question(env, "问题", plan=...)`，返回 `AgentRun`
 
 离线用例放进 `suites/`，导入在 `run.py` 里登记一行。
+
+> 1.0 还补了两类“升级相关”的离线用例：D5 的 `update_check` 用 mock 覆盖
+> “有新版 / 连不上 GitHub”两种结果，确保手动检查不打翻接口；D8 的
+> `schema_upgrade_backup` / `schema_too_new_refused` 覆盖旧库升级前备份和
+> “库比程序新时拒绝打开”。迁移表在 1.0 为空，这两条是给以后的版本兜底。

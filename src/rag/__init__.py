@@ -25,11 +25,12 @@
 
 from __future__ import annotations
 
-from config import PROJECT_ROOT
+from config import DATA_ROOT, RESOURCE_ROOT
 
-# 原文件与权重。两个都是模块常量，评测的沙箱会替换 DOC_DIR
-DOC_DIR = PROJECT_ROOT / "data" / "documents"
-MODEL_DIR = PROJECT_ROOT / "models" / "bge-small-zh-v1.5"
+# 原文件与权重。两个都是模块常量，评测的沙箱会替换 DOC_DIR。
+# 文档原文件是用户数据（可写），权重是随包的只读资源。
+DOC_DIR = DATA_ROOT / "data" / "documents"
+MODEL_DIR = RESOURCE_ROOT / "models" / "bge-small-zh-v1.5"
 
 DOC_TABLE = "_gx_doc"
 CHUNK_TABLE = "_gx_chunk"

@@ -55,14 +55,18 @@ def wait_for_port(port: int, timeout: float = 20.0) -> bool:
 
 
 def serve(port: int) -> None:
-    # `app_dir` 是 uvicorn 命令行的开关，Config 里没有这个参数 ——
-    # 等价的做法是自己把 src/ 放进 sys.path，再用 "api:app" 这种模块串。
-    # （命令行那条路是 uvicorn 自己帮我们插的路径，这里得手动来。）
-    if str(SRC_DIR) not in sys.path:
-        sys.path.insert(0, str(SRC_DIR))
+    # 开发时把 src/ 放进 sys.path；打包后模块已经在 sys.path 里，
+    # 不要再用源码路径。
+    if not getattr(sys, "frozen", False):
+        if str(SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(SRC_DIR))
+
+    # 直接 import app 对象，不用 "api:app" 字符串：
+    # PyInstaller 靠静态导入收集模块，字符串它看不见，得另写 hiddenimports。
+    from api import app
 
     config = uvicorn.Config(
-        "api:app",
+        app,
         host=HOST,
         port=port,
         log_level="warning",
@@ -71,6 +75,18 @@ def serve(port: int) -> None:
 
 
 def main() -> int:
+    # 打包成窗口程序后没有控制台，stdout/stderr 都是 None；uvicorn 和
+    # 项目里的 print 会直接撞 AttributeError。给它们一个日志文件。
+    if getattr(sys, "frozen", False):
+        from config import DATA_ROOT
+        log_dir = DATA_ROOT / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = open(log_dir / "app.log", "a", encoding="utf-8", buffering=1)
+        if sys.stdout is None:
+            sys.stdout = log_file
+        if sys.stderr is None:
+            sys.stderr = log_file
+
     try:
         import webview
     except ImportError:
@@ -107,7 +123,9 @@ def main() -> int:
 
     webview.create_window(
         "归墟 · 数据处理 Agent",
-        f"http://{HOST}:{port}",
+        # desktop=1：告诉前端这是桌面宿主。WebView2 的自动播放限制
+        # 已经在上面关掉了，动画可以直接起播，不用再等“按任意键”。
+        f"http://{HOST}:{port}/?desktop=1",
         width=1440,
         height=900,
         min_size=(1024, 680),

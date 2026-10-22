@@ -42,9 +42,9 @@ PostgreSQL、向量数据库——它们的核心卖点全在**规模**和**多�
 | 2 | **向量** | SQLite 存向量 BLOB + **FAISS 索引** | 15.5 MB | 见第三节 |
 | 3 | **软删除隔离** | **视图** | — | SQLite 没有 RLS，退回视图 |
 | 4 | **交付形态** | **文件夹 + Inno Setup 安装包** | — | Python 依赖多，单 exe 每次要解压到临时目录，启动慢且易被杀软拦 |
-| 5 | **装到哪** | 默认 `%LOCALAPPDATA%`，**可自定义路径** | — | 不弹 UAC；且安装目录必须用户可写（`data/` 在里面） |
+| 5 | **装到哪** | 默认 `%LOCALAPPDATA%\Programs\GuiXu`，**可自定义路径** | — | 不弹 UAC；用户数据在 `%LOCALAPPDATA%\GuiXu`，和安装目录分开，卸载不删 |
 | 6 | **浏览器内核** | **不内置**，借系统 WebView2 | ~5 MB | 省 500MB+；两者都是 Chromium，渲染无差 |
-| 7 | **网络依赖** | **只有 LLM API** | — | 实测确认，全项目无其他外连 |
+| 7 | **网络依赖** | **LLM API** | — | 主链路只有 LLM API；手动点“检查更新”时才访问 GitHub Releases |
 | 8 | **RAG · embedding** | `bge-small-zh-v1.5`，**随包** | 91 MB | 中文够用，最小可用档 |
 | 9 | **RAG · reranker** | `gte-multilingual-reranker-base`，**留接口、按需下** | (584 MB) | 中文 reranker 的现实最低价 |
 | 10 | **RAG · 关键词召回** | **不做** | — | SQLite 无开箱中文分词（trigram 最少 3 字） |

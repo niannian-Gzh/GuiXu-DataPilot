@@ -647,6 +647,7 @@
   color: var(--dsu-muted);
 }
 .dsu-ff-box {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -667,12 +668,65 @@
   font-family: var(--dsu-mono);
   font-size: 12.5px;
   letter-spacing: 0.04em;
-  appearance: none;
   cursor: text;
 }
-.dsu-form-sel { cursor: pointer; }
+/* appearance:none 只能给 select。给 input[list] 会把浏览器自带的
+   datalist 下拉箭头一起藏掉——看起来像“模型没有下拉按钮”。 */
+.dsu-form-sel {
+  appearance: none;
+  cursor: pointer;
+  padding-right: 20px;
+}
+/* 模型下拉：自定义菜单。原生 datalist 在输入为空时不显示箭头，
+   预填又会把列表过滤成一条；这里自己画箭头和菜单。 */
+.dsu-ff-pick {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--dsu-muted);
+  cursor: pointer;
+}
+.dsu-ff-pick svg { width: 11px; height: 11px; }
+.dsu-ff-pick:hover { color: var(--dsu-ink); }
+.dsu-model-menu {
+  position: absolute;
+  left: 0; right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--dsu-hair);
+  background: var(--dsu-bg-2);
+}
+.dsu-model-opt {
+  padding: 8px 13px;
+  font-family: var(--dsu-mono);
+  font-size: 12px;
+  letter-spacing: .04em;
+  color: var(--dsu-ink);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dsu-model-opt:hover { background: rgba(255, 255, 255, .06); }
 .dsu-form-sel option { background: var(--dsu-bg-2); color: var(--dsu-ink); }
-.dsu-ff-chev { width: 11px; height: 11px; flex: none; color: var(--dsu-muted); }
+/* 箭头是装饰，不是按钮：绝对定位盖在 select 上，但让指针事件穿透，
+   点箭头等于点 select，原生下拉才会打开。 */
+.dsu-ff-chev {
+  position: absolute;
+  right: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 11px; height: 11px; flex: none;
+  color: var(--dsu-muted);
+  pointer-events: none;
+}
 /* 模型那格右边的小状态：「3 个可选」/「获取中…」/ 错误 */
 .dsu-ff-state {
   flex: none;

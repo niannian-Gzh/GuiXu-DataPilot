@@ -47,6 +47,13 @@
      闸门为什么非有不可：音频解锁只认用户手势，见 js/boot.config.js 的文件头 -->
 <div id="dsh-startup-root" class="dsu-root dsu-boot"></div>
 <div id="gate"><span>PRESS ANY KEY</span></div>
+<script>
+  /* 桌面宿主不需要这道闸门（它已关掉 WebView2 的自动播放限制）；
+     在 boot.config.js 加载前先藏掉，避免闪一下 "PRESS ANY KEY"。 */
+  if (location.search.indexOf('desktop=1') !== -1) {
+    document.getElementById('gate').style.display = 'none'
+  }
+</script>
 
 <!-- 挂载点。页面结构全部在 js/components/ 里，
      这里保持空壳，是让 index.html 只剩入口职责 -->

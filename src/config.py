@@ -1,16 +1,36 @@
 from pathlib import Path
 import os
+import sys
 import threading
 import yaml
 from dotenv import load_dotenv
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+# 源码根：开发时就是仓库根。
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent
+_FROZEN = bool(getattr(sys, "frozen", False))
+
+# 只读资源：前端静态文件、报告模板、RAG 权重。
+# PyInstaller one-folder 下 _MEIPASS 指向 _internal/；开发时就是仓库根。
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", _SOURCE_ROOT))
+
+# 可写数据：配置、密钥、库、导出、日志、会话。
+# 安装目录不该塞用户数据——打包后统一落到 %LOCALAPPDATA%\GuiXu。
+if _FROZEN:
+    _local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    DATA_ROOT = Path(os.environ.get("GUIXU_DATA_DIR") or (Path(_local) / "GuiXu"))
+else:
+    # 开发时仍写仓库根，和以前行为一致；GUIXU_DATA_DIR 可给评测/便携用
+    DATA_ROOT = Path(os.environ.get("GUIXU_DATA_DIR") or _SOURCE_ROOT)
+
+# 兼容旧名字：所有"相对项目根"的路径现在都相对【数据根】。
+# 要读静态资源/模型的代码请显式用 RESOURCE_ROOT。
+PROJECT_ROOT = DATA_ROOT
+CONFIG_PATH = DATA_ROOT / "config.yaml"
 
 
 # 这里加载一次，迁移时读 .env 里的老 key 才读得到。
 # 默认不覆盖已有的环境变量，所以和 api.py 里的 override=True 不冲突
-load_dotenv()
+load_dotenv(DATA_ROOT / ".env")
 
 _lock = threading.Lock()
 _cache = {"mtime": None, "data": {}}
@@ -85,6 +105,8 @@ def setting(key: str):
 def save_config(data: dict) -> None:
     """写回 config.yaml，并让缓存立即失效。"""
     with _lock:
+        # 打包后首次保存时 %LOCALAPPDATA%\GuiXu 可能还不存在
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             yaml.safe_dump(
                 data, f,
@@ -102,8 +124,13 @@ def save_config(data: dict) -> None:
 
 
 def resolve(relative_path: str) -> str:
-    """把配置里的相对路径，解析成基于项目根的绝对路径字符串。"""
-    return str(PROJECT_ROOT / relative_path)
+    """把配置里的相对路径解析成绝对路径；绝对路径原样返回。
+
+    相对路径的基准是**数据根**，不是源码/安装根——打包后
+    `data/guixu.db` 应该落到 `%LOCALAPPDATA%\GuiXu\data\`。
+    """
+    p = Path(relative_path)
+    return str(p if p.is_absolute() else DATA_ROOT / p)
 
 
 # 库文件，相对项目根。打包后 config.yaml 会把它指到

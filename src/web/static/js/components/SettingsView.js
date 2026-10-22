@@ -5,16 +5,50 @@
    左边是「这是什么 + 为什么」，右边是控件。原型那份里没有配置卡片，
    因为我们比它多一件事——同时存几套模型配置。卡片就按 .set-row
    的语言重画，不另起一套 */
+import * as api from '../api.js';
+
 export default {
   name: 'SettingsView',
   setup() {
     const store = Vue.inject('store');
+    const t = store.t;
+    const fmt = store.fmt;
 
     // 编辑页的连接测试。和卡片列表的 testState 分开：
     // 那边按配置 id 存结果，这边是"未保存的表单值"，没有 id
     const editorTest = Vue.ref({ running: false, ok: null, message: '' });
     const fadingTest = Vue.ref(false);     // 绿字是否正在消散
     let okTimer = null;                    // 两个计时器接力，共用这一个槽
+
+    /* 手动检查更新。只有点按钮才发请求；启动流程不碰 GitHub。 */
+    const updateState = Vue.ref({
+      running: false, hasUpdate: false, url: '', message: '',
+    });
+
+    async function checkUpdate() {
+      if (updateState.value.running) return;
+      updateState.value = {
+        running: true, hasUpdate: false, url: '', message: t.updateChecking,
+      };
+      const r = await api.checkUpdate();
+      if (!r || !r.ok) {
+        updateState.value = {
+          running: false, hasUpdate: false, url: '',
+          message: (r && r.message) || t.updateFailed,
+        };
+        return;
+      }
+      const latest = String(r.latest || '').replace(/^v/i, '');
+      const current = String(r.current || '').replace(/^v/i, '');
+      updateState.value = {
+        running: false,
+        hasUpdate: !!r.has_update,
+        url: r.url || '',
+        message: r.has_update
+          ? fmt(t.updateFound, { v: 'v' + latest })
+          : fmt(t.updateLatest, { v: 'v' + current }),
+      };
+    }
 
     function clearEditorTest() {
       if (okTimer) { clearTimeout(okTimer); okTimer = null; }
@@ -83,7 +117,11 @@ export default {
       if (p) store.applyPreset(p);
     };
 
-    return { ...store, editorTest, testEditor, fadingTest, onPresetChange };
+    return {
+      ...store, t, fmt,
+      editorTest, testEditor, fadingTest, onPresetChange,
+      updateState, checkUpdate,
+    };
   },
   template: `
 <main class="stage">
@@ -456,6 +494,25 @@ export default {
             </div>
             <div class="set-f">
               <a class="btn" :href="REPO_URL" target="_blank" rel="noopener">项目地址</a>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div class="set-l">
+              <div class="set-label">{{ t.updateTitle }}</div>
+              <div class="set-hint">
+                {{ t.updateHint }}
+                <template v-if="updateState.message"> · {{ updateState.message }}</template>
+              </div>
+            </div>
+            <div class="set-f wrap">
+              <a v-if="updateState.hasUpdate && updateState.url"
+                 class="btn solid" :href="updateState.url" target="_blank" rel="noopener">
+                {{ t.updateOpen }}
+              </a>
+              <button class="btn" :disabled="updateState.running" @click="checkUpdate">
+                {{ updateState.running ? t.updateChecking : t.updateCheck }}
+              </button>
             </div>
           </div>
         </section>

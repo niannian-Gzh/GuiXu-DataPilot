@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import threading
 
-from config import PROJECT_ROOT
+from config import RESOURCE_ROOT
 
-MODEL_DIR = PROJECT_ROOT / "models" / "gte-multilingual-reranker-base"
+MODEL_DIR = RESOURCE_ROOT / "models" / "gte-multilingual-reranker-base"
 
 _lock = threading.Lock()
 _session = None

@@ -108,6 +108,21 @@ export async function getOverview() {
   }
 }
 
+/* ---------------- 检查更新 ---------------- */
+
+/* 只有用户点“检查更新”时才会走到这里；启动流程不调用它。
+   失败不抛异常：调用方只是要把结果说清楚 */
+export async function checkUpdate() {
+  try {
+    const res = await fetch(API + '/update/check');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, message: data.detail || '检查更新失败' };
+    return data;
+  } catch (e) {
+    return { ok: false, message: e.message };
+  }
+}
+
 /* ---------------- 数据字典 ---------------- */
 
 /* 表结构一次拿全，不分页——一个数据源就那几张表，分了只会让

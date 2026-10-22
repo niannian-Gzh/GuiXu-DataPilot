@@ -11,7 +11,7 @@ import json
 
 import storage
 import snapshot as snapshot_mod
-from harness import case, check, eq
+from harness import case, check, eq, raises
 from cleanup import cleanup as run_cleanup
 from services import create_service, recover_service
 
@@ -314,3 +314,56 @@ def trace_written(env):
     row = json.loads(path.read_text(encoding="utf-8").strip().splitlines()[-1])
     eq(row["question"], "评测用问题")
     check(row["elapsed_ms"] is not None, "elapsed_ms 没填")
+
+
+# ============================================================ 结构升级
+
+@case("D8", "旧库升级：先备份，版本升到 1，数据不动",
+      "把库标成 user_version=0 再打开", "备份存在，行数不变")
+def schema_upgrade_backup(env):
+    import sqlite3
+
+    from migrations import schema_version
+
+    before = env.count("devices_all")
+    raw = sqlite3.connect(env.box.db_path)
+    try:
+        raw.execute("PRAGMA user_version = 0")
+        raw.commit()
+    finally:
+        raw.close()
+
+    con = env.connect()
+    try:
+        eq(schema_version(con), 1)
+        eq(con.execute("SELECT COUNT(*) FROM devices_all").fetchone()[0], before)
+    finally:
+        con.close()
+
+    backups = list((env.box.root / "backups").glob("guixu-v0-*.db"))
+    check(backups, "升级前没有留备份")
+
+
+@case("D8", "库比程序新时拒绝打开", "把 user_version 改成 99",
+      "抛 SchemaTooNewError，不碰表")
+def schema_too_new_refused(env):
+    import sqlite3
+
+    from migrations import SchemaTooNewError
+
+    raw = sqlite3.connect(env.box.db_path)
+    try:
+        raw.execute("PRAGMA user_version = 99")
+        raw.commit()
+    finally:
+        raw.close()
+
+    try:
+        raises(lambda: env.connect(), SchemaTooNewError)
+    finally:
+        raw = sqlite3.connect(env.box.db_path)
+        try:
+            raw.execute("PRAGMA user_version = 1")
+            raw.commit()
+        finally:
+            raw.close()

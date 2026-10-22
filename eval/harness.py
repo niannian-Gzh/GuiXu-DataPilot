@@ -171,7 +171,6 @@ class Sandbox:
         self._set(api, "UPLOAD_DIR", self.root / "uploads")
         self._set(api, "EXPORT_DIR", self.root / "exports")
         self._set(api, "REPORT_DIR", self.root / "reports")
-        self._set(api, "CONFIG_PATH", config.CONFIG_PATH)
         self._set(api, "ENV_PATH", self.root / ".env")
         api._sessions.clear()
 

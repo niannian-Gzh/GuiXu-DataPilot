@@ -83,6 +83,16 @@ export const STRINGS = {
     relAdded: '已添加关系',
     relRemoved: '已删除关系',
 
+    /* 版本更新 */
+    updateTitle: '版本更新',
+    updateCheck: '检查更新',
+    updateChecking: '检查中…',
+    updateLatest: '已是最新 {v}',
+    updateFound: '发现新版本 {v}',
+    updateFailed: '暂时连不上 GitHub',
+    updateOpen: '打开下载页',
+    updateHint: '只在你点按钮时联网；不会自动下载或安装',
+
     /* 恢复页 */
     /* 文档库 */
     docsTitle: '文档库',

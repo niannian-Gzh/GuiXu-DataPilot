@@ -511,17 +511,20 @@
         /* 模型这格用 datalist 而不是 select：能选也能打。
            拉得到就列出来选，拉不到（不是所有家都实现了 /models）
            用户还能自己填 —— select 会把这条路堵死 */
-        '<div class="dsu-ff">' +
+        '<div class="dsu-ff dsu-ff-model">' +
           '<div class="dsu-ff-l">' +
             '<span class="dsu-ff-k">模型</span>' +
             '<span class="dsu-ff-h">MODEL</span>' +
           '</div>' +
           '<div class="dsu-ff-box">' +
-            '<input class="dsu-form-inp" data-k="model" type="text" list="dsu-model-list" placeholder="填完密钥后自动获取" spellcheck="false">' +
+            '<input class="dsu-form-inp" data-k="model" type="text" placeholder="填完密钥后自动获取" spellcheck="false">' +
             '<span class="dsu-ff-state"></span>' +
+            '<button class="dsu-ff-pick" type="button" title="选择模型" aria-label="选择模型">' +
+              '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>' +
+            '</button>' +
+            '<div class="dsu-model-menu" hidden></div>' +
           '</div>' +
         '</div>' +
-        '<datalist id="dsu-model-list"></datalist>' +
 
         '<div class="dsu-form-err" hidden></div>' +
 
@@ -619,6 +622,25 @@
      否则每敲一个字发一个请求 */
   q('.dsu-form [data-k="key"]').addEventListener('blur', pullModels)
   q('.dsu-form [data-k="base_url"]').addEventListener('blur', pullModels)
+  /* 模型下拉：自定义菜单，不依赖原生 datalist 的箭头行为。
+     点箭头开合，点选项回填，点表单外/Esc 关闭。 */
+  var modelPick = q('.dsu-ff-pick')
+  var modelMenu = q('.dsu-model-menu')
+  if (modelPick && modelMenu) {
+    modelPick.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation()
+      modelMenu.hidden = !modelMenu.hidden
+    })
+    q('.dsu-form [data-k="model"]').addEventListener('focus', function () {
+      if (modelMenu.children.length) modelMenu.hidden = false
+    })
+    document.addEventListener('click', function (e) {
+      if (!modelMenu.hidden && !e.target.closest('.dsu-ff-model')) modelMenu.hidden = true
+    })
+    q('.dsu-form [data-k="model"]').addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') modelMenu.hidden = true
+    })
+  }
   /* 表单里按 Enter 是「提交」，不是「继续」——输入框里的回车和空白键的回车
      是两件事，不拦的话用户填完一按就跳过了整段动画 */
   q('.dsu-form').addEventListener('keydown', function (e) {
@@ -691,7 +713,7 @@
   /* 左侧六格阶段柱 + 品牌块下方的小字数据行 + 实时时钟 */
   ;(function slatsAndMeta() {
     for (var i = 0; i < STEPS.length + 1; i++) ui.slats.appendChild(el('i', 'dsu-slat'))
-    ui.meta1.textContent = 'REV 0.1.0 · WEB PROFILE'
+    ui.meta1.textContent = 'REV ' + (window.__DP_VERSION__ || '1.0.0') + ' · WEB PROFILE'
     paintClock()
     clockTimer = setInterval(paintClock, 1000)
   })()
@@ -1659,18 +1681,29 @@
   }
 
   function fillModels(models) {
-    var list = document.getElementById('dsu-model-list')
-    if (!list) return
-    list.innerHTML = ''
+    var menu = q('.dsu-model-menu')
+    if (!menu) return
+    menu.innerHTML = ''
     models.forEach(function (m) {
-      var o = document.createElement('option')
-      o.value = m
-      list.appendChild(o)
+      var o = document.createElement('div')
+      o.className = 'dsu-model-opt'
+      o.setAttribute('role', 'option')
+      o.textContent = m
+      o.addEventListener('click', function () {
+        var inp = q('.dsu-form [data-k="model"]')
+        if (inp) inp.value = m
+        menu.hidden = true
+      })
+      menu.appendChild(o)
     })
     setModelState(models.length + ' 个可选')
-    /* 默认选中第一个，但用户可以改 —— 只是省他一次点击 */
-    var inp = root.querySelector('.dsu-form [data-k="model"]')
-    if (inp && !inp.value) inp.value = models[0]
+    /* 不预填第一个模型：留空 + placeholder，用户点下拉才看到完整列表；
+       想用第一个，选一下就行，省得"预填后列表像被过滤了"。 */
+    var inp = q('.dsu-form [data-k="model"]')
+    if (inp) {
+      inp.placeholder = '从 ' + models.length + ' 个模型里选，或直接输入'
+      if (!inp.value) inp.value = ''
+    }
   }
 
   function pullModels() {
@@ -1742,19 +1775,12 @@
       return
     }
 
-    /* 密钥落到哪一格由供应商决定 —— 每家的环境变量名都不一样 */
-    var preset = providerOf(provId)
-    var envKey = (preset && preset.env) ? ('env.' + preset.env) : 'env.OPENAI_API_KEY'
-
     ui.formBtn.disabled = true
     formErr('')
 
     /* 先测再存。测连接那个接口本来就是为「未保存的表单值」准备的，
-       所以这一步不会把没验证过的配置写进 config.yaml。
+       所以这一步不会把没验证过的配置写进库。
        存一个连不通的 key，等于给用户埋一个"为什么什么都不工作"的雷。 */
-    var values = { 'llm.base_url': baseUrl, 'llm.model': model }
-    values[envKey] = key
-
     fetch('/settings/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1776,21 +1802,45 @@
           ui.formBtn.disabled = false
           return null
         }
-        return fetch('/settings', {
+        /* 模型配置现在是一张卡片（configs.json），不是 config.yaml
+           的 llm 段。首次启动要建卡 + 激活，否则后面自动重建的 LLM
+           拿到的还是一张空配置。 */
+        return fetch('/configs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ values: values })
+          body: JSON.stringify({
+            name: '默认配置',
+            provider: custom ? null : provId,
+            base_url: baseUrl,
+            model: model,
+            key: key
+          })
+        }).then(function (r) {
+          return r.json().catch(function () { return {} }).then(function (j) {
+            return { ok: r.ok, body: j }
+          })
+        }).then(function (r) {
+          if (!r.ok || !r.body.config) {
+            formErr(r.body.detail || '配置写入失败')
+            ui.formBtn.disabled = false
+            return null
+          }
+          return fetch('/configs/' + r.body.config.id + '/activate', {
+            method: 'POST'
+          }).then(function (r2) {
+            if (!r2.ok) {
+              formErr('配置已创建，但激活失败')
+              ui.formBtn.disabled = false
+              return null
+            }
+            return true
+          })
         })
       })
-      .then(function (r) {
-        if (!r) return
-        if (!r.ok) {
-          formErr('配置写入失败')
-          ui.formBtn.disabled = false
-          return
-        }
-        /* 存好了才放行。config.yaml 这时已经落盘，hasConfig() 也是 true 了，
-           动画从第 2 步接着往下走 */
+      .then(function (ok) {
+        if (!ok) return
+        /* 存好并激活才放行。hasConfig() 这时读到的已经是带
+           base_url + model 的活动卡，动画从第 2 步接着往下走 */
         window.__DP_CONFIGURED__ = true
         finishForm()
       })

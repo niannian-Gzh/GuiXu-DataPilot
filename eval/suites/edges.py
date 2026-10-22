@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import threading
 
-from harness import case, eq
+from harness import case, check, eq
 from services import ServiceContext, UserInputRequired
 from services import create_service, query_service
 from services.structure_service import request_create_table
@@ -177,3 +177,29 @@ def edge_concurrent_insert_same(env):
     eq(env.scalar("SELECT COUNT(*) FROM devices WHERE device_code = 'D-703'"), 1)
     # 失败那条不能留下半条审计
     eq(env.audit_count("create"), 1)
+
+
+@case("D5", "检查更新：成功和失败都不打翻接口",
+      "mock GitHub Release", "有新版 has_update；断网时 ok:false，不 500")
+def update_check(env):
+    from unittest.mock import patch
+
+    import api
+
+    current = api.__version__
+    with patch("api._latest_release", return_value={
+        "tag_name": "v1.0.1",
+        "html_url": "https://example.com/releases/v1.0.1",
+    }):
+        data = env.client().get("/update/check").json()
+    eq(data.get("ok"), True)
+    eq(data.get("current"), current)
+    eq(data.get("latest"), "1.0.1")
+    eq(data.get("has_update"), True)
+    eq(data.get("url"), "https://example.com/releases/v1.0.1")
+
+    with patch("api._latest_release", side_effect=OSError("no network")):
+        fail = env.client().get("/update/check").json()
+    eq(fail.get("ok"), False)
+    eq(fail.get("current"), current)
+    check(fail.get("message"), "失败时没有一句能看懂的话")

@@ -59,18 +59,46 @@ def connect(path: str | Path) -> sqlite3.Connection:
     由调用方自己 BEGIN/COMMIT。理由是我们有"落快照 + 改结构"这类
     必须整体成败的多步操作，隐式提交会在中间插一脚。
     """
-    con = sqlite3.connect(str(path), isolation_level=None)
+    # 打包后第一次启动时 %LOCALAPPDATA%\GuiXu\data 还不存在。
+    # SQLite 只认文件，不会替你建目录——不建就报
+    # "unable to open database file"，而且是在启动清理里炸。
+    p = Path(path)
+    memory = str(p) == ":memory:"
+    was_new = not memory and not p.exists()
+    if not memory:
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+    con = sqlite3.connect(str(p), isolation_level=None)
     con.execute("PRAGMA foreign_keys = ON")
-    ensure_meta(con)
-    # 快照表也在"库的完整形状"里。以前它只在 snapshot 自己的自测里建过，
-    # 于是全新库第一次删表/删列/看版本历史就报 no such table——而开发机上
-    # 那张表是历史运行留下的，谁都没发现。延迟导入是为了避开
-    # storage → snapshot → storage 的模块级循环。
-    from snapshot import ensure_meta as ensure_snapshot_meta
-    ensure_snapshot_meta(con)
-    # 文档库的两张系统表同理：新库第一次打开文档库页时不该是 500
-    from rag import ensure_meta as ensure_rag_meta
-    ensure_rag_meta(con)
+
+    # 结构版本检查必须在 ensure_meta 之前：库比程序新时，连一张表都不该碰。
+    # 版本落后则先在 ensure_meta 之前备份，迁移失败还有退路。
+    from migrations import (
+        backup_before_upgrade,
+        check_compatible,
+        ensure_schema,
+    )
+
+    try:
+        version = check_compatible(con)
+        backup_before_upgrade(con, p, version, was_new)
+
+        ensure_meta(con)
+        # 快照表也在"库的完整形状"里。以前它只在 snapshot 自己的自测里建过，
+        # 于是全新库第一次删表/删列/看版本历史就报 no such table——而开发机上
+        # 那张表是历史运行留下的，谁都没发现。延迟导入是为了避开
+        # storage → snapshot → storage 的模块级循环。
+        from snapshot import ensure_meta as ensure_snapshot_meta
+        ensure_snapshot_meta(con)
+        # 文档库的两张系统表同理：新库第一次打开文档库页时不该是 500
+        from rag import ensure_meta as ensure_rag_meta
+        ensure_rag_meta(con)
+
+        ensure_schema(con)
+    except Exception:
+        con.close()
+        raise
+
     return con
 
 
