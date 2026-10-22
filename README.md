@@ -33,7 +33,7 @@
 从 [GitHub Releases](https://github.com/niannian-Gzh/GuiXu-DataPilot/releases) 下载最新版：
 
 ```text
-GuiXu-Setup-1.0.0.exe
+GuiXu-Setup-1.1.0.exe
 ```
 
 双击安装即可。默认装到 `%LOCALAPPDATA%\Programs\GuiXu`，**不需要管理员权限**；用户数据在 `%LOCALAPPDATA%\GuiXu`，和安装目录分开，卸载不会删除。
@@ -70,7 +70,7 @@ uv run python src/desktop.py
 ```bash
 uv sync --extra desktop --group build
 uv run python scripts/build_app.py              # 文件夹版 dist/GuiXu/
-uv run python scripts/build_app.py --installer  # 安装包 dist/GuiXu-Setup-1.0.0.exe
+uv run python scripts/build_app.py --installer  # 安装包 dist/GuiXu-Setup-1.1.0.exe
 ```
 
 ## 第一次使用
@@ -138,6 +138,7 @@ uv run python eval/run.py --suite agent     # 需要可用 key
 - **工具返回存的是截断版**（8000 字符）：超长结果在历史会话里回看时不全
 - **Word 预览只保留内容结构**：标题 / 段落 / 表格，不还原字体、字号、行距
 - **PDF 依赖系统 Edge**：Edge 被卸载或损坏时会明确报错，不影响其余功能
+- **无边框窗口不支持拖边缩放**：可以最大化/还原，窗口有最小尺寸 1024×680
 - **安装包未签名**：SmartScreen 会提示；更新也不会自动下载安装
 
 ## 项目结构
@@ -148,7 +149,7 @@ src/
 ├── agent.py / tools.py      Agent Loop / 20 个工具
 ├── storage.py / runner.py   SQLite 结构、软删隔离 / 连接、事务、超时
 ├── snapshot.py             快照与回滚
-├── migrations.py           数据库结构版本与迁移（1.0 基线）
+├── migrations.py           数据库结构版本与迁移（schema 1 基线）
 ├── services/               业务逻辑（CRUD、导入导出、报告、文档）
 ├── rag/                    文档解析、分块、embedding、FAISS、检索
 └── web/static/             前端（Vue 3 + marked，无构建步骤）

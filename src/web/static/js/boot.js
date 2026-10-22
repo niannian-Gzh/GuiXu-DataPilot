@@ -713,7 +713,7 @@
   /* 左侧六格阶段柱 + 品牌块下方的小字数据行 + 实时时钟 */
   ;(function slatsAndMeta() {
     for (var i = 0; i < STEPS.length + 1; i++) ui.slats.appendChild(el('i', 'dsu-slat'))
-    ui.meta1.textContent = 'REV ' + (window.__DP_VERSION__ || '1.0.0') + ' · WEB PROFILE'
+    ui.meta1.textContent = 'REV ' + (window.__DP_VERSION__ || '1.1.0') + ' · WEB PROFILE'
     paintClock()
     clockTimer = setInterval(paintClock, 1000)
   })()

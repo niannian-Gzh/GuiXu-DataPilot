@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 0, 0),
-    prodvers=(1, 0, 0, 0),
+    filevers=(1, 1, 0, 0),
+    prodvers=(1, 1, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -14,11 +14,11 @@ VSVersionInfo(
       StringTable('080404B0', [
         StringStruct('CompanyName', 'GuiXu'),
         StringStruct('FileDescription', '归墟 · 数据处理 Agent'),
-        StringStruct('FileVersion', '1.0.0'),
+        StringStruct('FileVersion', '1.1.0'),
         StringStruct('InternalName', 'GuiXu'),
         StringStruct('OriginalFilename', 'GuiXu.exe'),
         StringStruct('ProductName', '归墟'),
-        StringStruct('ProductVersion', '1.0.0'),
+        StringStruct('ProductVersion', '1.1.0'),
       ])
     ]),
     VarFileInfo([VarStruct('Translation', [2052, 1200])]),

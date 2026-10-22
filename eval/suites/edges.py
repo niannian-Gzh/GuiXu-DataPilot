@@ -187,16 +187,21 @@ def update_check(env):
     import api
 
     current = api.__version__
+    # 期望值按当前版本现算：写死一个「比当前大」的 tag，版本一升这条用例
+    # 就会从「有新版」变成「已是最新」，然后无辜地红掉。
+    major, minor, micro = (int(x) for x in current.split("."))
+    latest = f"{major}.{minor}.{micro + 1}"
+    tag = f"v{latest}"
     with patch("api._latest_release", return_value={
-        "tag_name": "v1.0.1",
-        "html_url": "https://example.com/releases/v1.0.1",
+        "tag_name": tag,
+        "html_url": f"https://example.com/releases/{tag}",
     }):
         data = env.client().get("/update/check").json()
     eq(data.get("ok"), True)
     eq(data.get("current"), current)
-    eq(data.get("latest"), "1.0.1")
+    eq(data.get("latest"), latest)
     eq(data.get("has_update"), True)
-    eq(data.get("url"), "https://example.com/releases/v1.0.1")
+    eq(data.get("url"), f"https://example.com/releases/{tag}")
 
     with patch("api._latest_release", side_effect=OSError("no network")):
         fail = env.client().get("/update/check").json()

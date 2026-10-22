@@ -28,7 +28,7 @@
      那次调的是【明度】，不是色温：一开始理解成"往冷走"，
      结果整块泛蓝，和四周的暖灰割裂。要的是同一个暖黑里再深一层，
      不是换一个色相 */
-  --void:      #050504;   /* 工作台【之外】：只有一圈 8px */
+  --void:      #050504;   /* 页面底色：满窗口后只在启动和边角露出 */
   --side:      #1a1917;   /* 两侧栏与顶栏：比工作台沉一档 */
   --bg:        #0c0c0b;   /* 工作台面：中栏 */
   --raise:     #161513;   /* 抬起的块：对话轮、结果框、产物栏 */
@@ -120,89 +120,53 @@ body {
 
 
 /* ===================== 三 · 应用骨架 =====================
-   一整块黑场 + 1px 线分区。没有卡片，没有缝，没有投影 */
-/* 工作台是一块【浮在暗底上的面板】。这一圈 8px 和那个圆角，
-   是让「面」成立的最低代价 */
+   满窗口：左栏和顶栏贴住窗口边，工作区保留自己的内缩、圆角和投影 */
 .app {
-  position: relative;           /* 品牌区绝对定位在左栏顶部 */
   display: flex; flex-direction: column;
-  height: calc(100vh - 16px); margin: 8px;
+  height: 100vh;
   background: var(--side);
-  border: 1px solid var(--hair-soft);
-  border-radius: var(--r-app);
-  box-shadow: 0 14px 44px rgba(0, 0, 0, .42);
   overflow: hidden;
 }
 
-/* 品牌区：**只占左栏顶部**，不再是一条横贯全宽的顶栏。
-   工作区因此能从应用顶端开始，不用先让出一条带子。
-   图标在最左、跨两行；两行文字左对齐——和左栏下面的导航共用一条左边距。
-
-   64px 是图标 34 + 上下各 15 的呼吸；比原来的 41 高，
-   但它只占左栏，不挤压工作区。 */
-.rail {
-  position: absolute; top: 0; left: 0; z-index: 3;
-  width: 240px; height: 64px;
-  padding: 0 23px;
-  display: flex; align-items: center; gap: 11px;
+/* 顶栏：唯一的页头，52px 横贯全宽。
+   左边是品牌，右边是窗口按钮，中间整段留给拖动 */
+.titlebar {
+  flex: none; height: 52px;
+  display: flex; align-items: center;
   background: var(--side);
+  user-select: none;
 }
 
-/* 文字两行竖排。用 flex 而不是 grid：grid 的行高会被跨两行的图标
-   拉扯，两行会贴到一起；这里间距由 margin 说了算 */
-.rail-text { display: flex; flex-direction: column; justify-content: center; }
-
-/* 左栏收起时品牌区跟着走——它不属于工作区 */
-.rail.shut { display: none; }
-
-/* 分隔线：两端渐隐。中间用最弱那档线，两端各留 22% 淡出——
-   硬线会把左栏切成两段，渐隐只提示「这里是两块」 */
-.rail::after {
-  content: '';
-  position: absolute; left: 23px; right: 23px; bottom: 0;
-  height: 1px;
-  background: linear-gradient(90deg,
-    transparent,
-    var(--hair-soft) 22%,
-    var(--hair-soft) 78%,
-    transparent);
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 0% 100%;
+/* 品牌锁排：标记 + 名字 + 竖线 + 副标题。
+   竖线把副标题从「挂在名字后面的尾巴」变成有从属位置的第二层信息 */
+.tb-brand {
+  flex: none; height: 100%; padding: 0 16px;
+  display: flex; align-items: center; gap: 10px;
+}
+.tb-brand .tb-mark { width: 28px; height: 28px; flex: none; }
+.tb-name {
+  font-size: 18px; font-weight: 700; line-height: 1;
+  letter-spacing: .16em; padding-right: .16em; color: var(--ink);
+}
+.tb-divider { width: 1px; height: 16px; flex: none; background: var(--hair); }
+.tb-sub {
+  font-size: 11px; line-height: 1; letter-spacing: .1em;
+  color: var(--muted); white-space: nowrap;
 }
 
-/* 中心光点：加载时先亮一下，撑开、淡出——线看起来是「从点里长出来的」 */
-.rail::before {
-  content: '';
-  position: absolute; left: 50%; bottom: -1px;
-  width: 44px; height: 3px;
-  transform: translateX(-50%);
-  background: radial-gradient(closest-side, rgba(255, 255, 255, .42), transparent);
-  opacity: 0;
-  pointer-events: none;
-}
+.tb-drag { flex: 1; height: 100%; }
 
-/* 用 background-size 展开，不用 scaleX：scaleX 会把渐变一起拉长，
-   展开过程中两端是硬切口；background-size 相对线本身计算，
-   两端一路保持渐隐。节奏沿用 .void-rule 的 .9s + --ease。 */
-/* 挂载时播一次，不需要额外的触发类 */
-.rail::after { animation: rail-line-in .9s var(--ease) both .1s; }
-.rail::before { animation: rail-spark .7s ease-out both; }
-
-@keyframes rail-line-in {
-  to { background-size: 100% 100%; }
+.win-controls { display: flex; align-items: stretch; height: 100%; }
+.win-btn {
+  width: 46px; height: 100%;
+  display: grid; place-items: center;
+  background: none; border: none; border-radius: 0;
+  color: var(--muted); cursor: pointer;
+  transition: color .16s var(--ease), background .16s var(--ease);
 }
-
-@keyframes rail-spark {
-  0%   { opacity: 0; transform: translateX(-50%) scaleX(.25); }
-  30%  { opacity: 1; }
-  100% { opacity: 0; transform: translateX(-50%) scaleX(1.8); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .rail::after { animation: none; background-size: 100% 100%; }
-  .rail::before { animation: none; }
-}
+.win-btn:hover { color: var(--ink); background: rgba(255, 255, 255, .08); }
+.win-btn.close:hover { color: #fff; background: #c42b1c; }
+.win-btn svg { width: 12px; height: 12px; }
 /* 归墟标记。八片与中心光点【同一种】暖白，两个动作都做在填充上，
    没有一处模糊半径（见 design-language 二章） */
 .mark, .void-mark { color: var(--ink); }
@@ -229,35 +193,14 @@ body {
   0%, 100% { transform: scale(1);   opacity: .62; }
   50%      { transform: scale(1.8); opacity: 1; }
 }
-/* 顶栏那枚只有 26px，光点折算下来才 1px，动起来既看不见又白耗 GPU */
+/* 品牌锁排里那枚只有 28px，光点折算下来才 1px，动起来既看不见又白耗 GPU */
 .mark .gx-petals, .mark .gx-core { animation: none; }
 @media (prefers-reduced-motion: reduce) {
   .gx-petals, .gx-core { animation: none; }
 }
 
-/* 「归墟」两字做渐变上色：浅蓝起手，落到强调色同一个蓝 */
-.brand {
-  font-size: 20px; font-weight: 700; line-height: 1;
-  letter-spacing: .14em; padding-right: .14em;   /* 字距会让末字贴边 */
-  /* 倾斜。中文黑体没有真斜体，font-style:italic 只会得到浏览器伪斜——
-     伪斜的角度不由你定，而且不同浏览器还不一样。
-     skewX 是几何变换，角度可控、跨浏览器一致。
-     负角度是因为 CSS 的 y 轴朝下，要把上边往右推得用负值 */
-  transform: skewX(-10deg);
-  background: linear-gradient(102deg, #dbe7ff 0%, #a8c4ff 46%, #4d8dff 100%);
-  -webkit-background-clip: text; background-clip: text;
-  color: transparent;
-}
-/* 副标题：和标题走同一条左线，不再是一段带竖线的尾巴。
-   4px 是两行的间距——再大就成了两块，再小就贴住了 */
-.brand-sub {
-  font-size: 11px; letter-spacing: .08em; line-height: 1.1;
-  color: var(--muted);
-  margin-top: 4px;
-}
-
-/* 产物栏的开关常驻顶栏。它不能放在产物栏自己身上——
-   栏收起来之后，那个按钮就跟着一起没了 */
+/* 工作区头部的小图标按钮：返回对话、展开左栏。
+   它不放在被收起的那一栏里——栏收起来之后，按钮就跟着一起没了 */
 .rail-icon {
   width: 28px; height: 28px; flex: none; display: grid; place-items: center;
   background: none; border: none; cursor: pointer; border-radius: 7px;
@@ -271,7 +214,6 @@ body {
 .body { flex: 1; min-height: 0; display: flex; }
 .side {
   width: 240px; flex: none; display: flex; flex-direction: column;
-  padding-top: 64px;            /* 给绝对定位的品牌区让位 */
   background: var(--side);
 }
 /* 左栏收起。用 display 而不是宽度归零：栏里全是文字和图标，
@@ -280,22 +222,12 @@ body {
 /* 工作区改成 grid。产物栏现在是【工作区内部】的一列，
    不再是页面的第三栏——三行两列：head 和 composer 横跨，
    中间那行左边是内容、右边是产物栏 */
-/* 工作区要能从四周【站出来】。
-   单靠投影在深色底上没用：四周是 --side(#1a1917)，叠一层 50% 黑不过是
-   #0d0d0c，而工作区自己是 #0f0f0e —— 两个色几乎一样，看不出谁被谁挡住了。
-   所以这里真正起作用的是那一圈 1px 的暖白边；投影只负责把下沿收一下，
-   让它不像一张贴纸。分层做实了才轮到线出场（见 design-language 一章），
-   这里是分层不够，所以两者一起上 */
-/* 上面、右边、下面各多留 5px（8 → 13），只有左边保持 8。
-   这三面都没有东西撑着：左边是 240px 的左栏，一直抵着；
-   另外三面不是贴着窗口边，就是贴着顶栏或产物栏。
-   一样的 8px 放在那儿就显得满 —— 不是工作区太大，是那三面没有呼吸。
-   上面那 5px 是顶栏压掉 5px 换来的，所以工作区的顶端位置没动 */
+/* 工作区从右侧/下方站出来：右、下 20px，左侧 8px 贴着左栏；
+   顶端直接接在顶栏下面，不再留空。靠一圈 1px 暖白边和短投影把面立住 */
 .stage {
   flex: 1; min-width: 0; position: relative;
   background: var(--bg); overflow: hidden;
-  /* 上 / 右 / 下 一致 20px，左边 8px 贴着左栏 */
-  margin: 20px 20px 20px 8px;
+  margin: 0 20px 20px 8px;
   border-radius: var(--r-pane);
   border: 1px solid var(--hair-soft);
   box-shadow: 0 4px 20px rgba(0, 0, 0, .5);

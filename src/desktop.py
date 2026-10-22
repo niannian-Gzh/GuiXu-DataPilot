@@ -74,6 +74,38 @@ def serve(port: int) -> None:
     uvicorn.Server(config).run()
 
 
+class WindowApi:
+    """无边框窗口的按钮。前端只调这三个方法，不碰窗口句柄。"""
+
+    def __init__(self) -> None:
+        self._maximized = False
+
+    def minimize(self) -> None:
+        import webview
+        webview.windows[0].minimize()
+
+    def toggle_maximize(self) -> bool:
+        import webview
+        window = webview.windows[0]
+        self._maximized = not self._maximized
+        if self._maximized:
+            # 无边框窗口默认会连任务栏一起盖住；把最大化边界压到工作区。
+            try:
+                import System.Windows.Forms as WinForms
+                form = window.native
+                form.MaximizedBounds = WinForms.Screen.FromControl(form).WorkingArea
+            except Exception:
+                pass
+            window.maximize()
+        else:
+            window.restore()
+        return self._maximized
+
+    def close(self) -> None:
+        import webview
+        webview.windows[0].destroy()
+
+
 def main() -> int:
     # 打包成窗口程序后没有控制台，stdout/stderr 都是 None；uvicorn 和
     # 项目里的 print 会直接撞 AttributeError。给它们一个日志文件。
@@ -129,6 +161,13 @@ def main() -> int:
         width=1440,
         height=900,
         min_size=(1024, 680),
+        # 系统标题栏不要了，换成前端那条 52px 页头。easy_drag 关掉：
+        # 它会把整窗的按下都当成拖动，按钮就点不动了；拖动只认
+        # .pywebview-drag-region，见 js/main.js 的 .tb-brand / .tb-drag
+        frameless=True,
+        easy_drag=False,
+        background_color="#050504",
+        js_api=WindowApi(),
     )
     # 不指定 gui，让 pywebview 自己挑系统内核：
     # Windows → edgechromium(WebView2) / macOS → cocoa(WKWebView) / Linux → gtk。

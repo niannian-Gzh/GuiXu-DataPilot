@@ -321,7 +321,7 @@ createApp({
     // 关于页的常量。前端是纯静态文件，读不到 pyproject.toml，
     // 所以版本号在这儿手写一份——改版本时记得两边一起改
     // 版本由后端在首页注入（见 api.index），前端不再各自写死
-    const APP_VERSION = 'v' + (window.__DP_VERSION__ || '1.0.0');
+    const APP_VERSION = 'v' + (window.__DP_VERSION__ || '1.1.0');
     const REPO_URL = 'https://github.com/niannian-Gzh/GuiXu-DataPilot';
 
     const providers = ref([]);        // 供应商预设，新建配置时的模板
@@ -1022,6 +1022,23 @@ createApp({
     };
 
     /* ---------------- 挂载 ---------------- */
+    /* ---------------- 无边框窗口 ----------------
+       窗口去掉了系统标题栏，最小化/最大化/关闭只能通过 pywebview 的
+       Python 桥接。浏览器开发模式没有这个桥，按钮整组不渲染。 */
+    const isDesktop = ref(false);
+    const winMax = ref(false);
+    const winCall = async (method) => {
+      const api = window.pywebview && window.pywebview.api;
+      if (!api || typeof api[method] !== 'function') return null;
+      try { return await api[method](); } catch (e) { return null; }
+    };
+    const winMin = () => winCall('minimize');
+    const winToggle = async () => {
+      const next = await winCall('toggle_maximize');
+      if (typeof next === 'boolean') winMax.value = next;
+    };
+    const winClose = () => winCall('close');
+
     /* 开机动画不在这里驱动。它是 js/boot.js 那套独立运行时 ——
        自己建 DOM、自己盖在应用上面演，演完写 sessionStorage 再退场，
        全程不经过 Vue（见 docs/splash.md）。
@@ -1030,6 +1047,8 @@ createApp({
        以前那套 sleep(2500) 估时长已经删掉了 —— 用秒表猜动画什么时候演完
        本来就是错的，动画改一次就得跟着改一次。 */
     onMounted(async () => {
+      if (window.pywebview && window.pywebview.api) isDesktop.value = true;
+      else window.addEventListener('pywebviewready', () => { isDesktop.value = true; }, { once: true });
       await loadSessions();
       // 不 await：这三样慢一点没关系，别挡着界面出来。
       // 配置列表和参数表在对话页也要用——输入框里那个切换器显示模型名，
@@ -1050,6 +1069,7 @@ createApp({
     const store = {
       turns, input, busy, sessionId, sessions,
       rail, railOpen, leftShut, viewer, dragging, overview,
+      isDesktop, winMax, winMin, winToggle, winClose,
       view, settings, activeGroup, draft, advanced, saving, saveMsg,
       leaveGuard,
       allGroups, isLocalGroup, activeGroupParams, activeGroupDesc,
@@ -1092,19 +1112,34 @@ createApp({
   template: `
 <div class="app">
 
-  <!-- 顶栏：应用级的那条带子。品牌 + 功能按钮，
-       不管你打开哪个会话、切到哪一屏，上面都一样。
-       「已就绪」不在这儿——它是「你要不要发这句话」的读数，
-       归输入区（见 ChatView 的 .hint） -->
-  <!-- 品牌区只占左栏顶部，不是一条横贯全宽的顶栏。
-       产物开关搬进了工作区的页签行；设置/字典页的返回也搬进了各自的 stage-bar -->
-  <header class="rail" :class="{shut: leftShut}">
-    <div class="mark">${guixuMark()}</div>
-    <div class="rail-text">
-      <div class="brand">归墟</div>
-      <div class="brand-sub">数据处理 Agent</div>
+  <!-- 顶栏：唯一的页头。品牌在左，窗口按钮在右，中间是拖动区 -->
+  <div class="titlebar">
+    <div class="tb-brand pywebview-drag-region" @dblclick="winToggle">
+      <div class="mark tb-mark">${guixuMark()}</div>
+      <div class="tb-name">归墟</div>
+      <div class="tb-divider"></div>
+      <div class="tb-sub">数据处理 Agent</div>
     </div>
-  </header>
+    <div class="tb-drag pywebview-drag-region" @dblclick="winToggle"></div>
+    <div class="win-controls" v-if="isDesktop">
+      <button class="win-btn" @click="winMin" title="最小化" aria-label="最小化">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+             stroke-linecap="round"><path d="M3 8h10"/></svg>
+      </button>
+      <button class="win-btn" @click="winToggle"
+              :title="winMax ? '还原' : '最大化'" :aria-label="winMax ? '还原' : '最大化'">
+        <svg v-if="!winMax" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+             stroke-width="1.4"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg>
+        <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor"
+             stroke-width="1.4"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/>
+          <path d="M5.5 5.5V3.5h7v7h-2"/></svg>
+      </button>
+      <button class="win-btn close" @click="winClose" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+             stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+      </button>
+    </div>
+  </div>
 
   <!-- 三栏。线在栏上，不在栏之间——所以左栏收起时线也跟着走。
        左栏和顶栏是常驻的：切到设置或数据字典时它们不走，
@@ -1112,7 +1147,7 @@ createApp({
   <div class="body">
 
     <aside class="side" :class="{hidden: leftShut}">
-      <!-- 品牌搬到顶栏去了。左栏从「动作」开始 ——
+      <!-- 品牌在顶栏里。左栏从「动作」开始 ——
            它管的是「有哪些会话」，不该再重复一遍「这是什么应用」 -->
       <div class="side-pad">
         <button class="btn solid" @click="newSession">
