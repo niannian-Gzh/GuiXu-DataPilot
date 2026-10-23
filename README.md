@@ -30,15 +30,23 @@
 
 ### 安装包（推荐）
 
-从 [GitHub Releases](https://github.com/niannian-Gzh/GuiXu-DataPilot/releases) 下载最新版：
+从 [GitHub Releases](https://github.com/niannian-Gzh/GuiXu-DataPilot/releases) 下载最新版，优先下载 ZIP：
+
+```text
+GuiXu-Setup-1.2.0.zip
+```
+
+解压后运行里面的 `GuiXu-Setup-1.2.0.exe`。Chrome 对裸 `.exe` 可能提示“通常不会下载”，ZIP 一般能正常下载；如果你不介意多这一步，直接用压缩包更省事。
+
+也可以直接下载裸安装包：
 
 ```text
 GuiXu-Setup-1.2.0.exe
 ```
 
-双击安装即可。默认装到 `%LOCALAPPDATA%\Programs\GuiXu`，**不需要管理员权限**；用户数据在 `%LOCALAPPDATA%\GuiXu`，和安装目录分开，卸载不会删除。
+默认装到 `%LOCALAPPDATA%\Programs\GuiXu`，**不需要管理员权限**；用户数据在 `%LOCALAPPDATA%\GuiXu`，和安装目录分开，卸载不会删除。
 
-安装包未做代码签名，Windows SmartScreen 可能提示“未知发布者”；选择“更多信息 → 仍要运行”即可。
+安装包未做代码签名，Windows SmartScreen 可能提示“未知发布者”；选择“更多信息 → 仍要运行”即可。若解压后提示“此文件来自其他计算机”，右键 exe → 属性 → 解除锁定，或执行 `Unblock-File .\GuiXu-Setup-1.2.0.exe`。
 
 **环境要求**：Windows 10/11 x64；界面依赖系统 WebView2（Win11 预装，Win10 通常随 Edge 更新下发）；PDF 依赖系统 Edge。
 
