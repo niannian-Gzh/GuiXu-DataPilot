@@ -96,6 +96,10 @@ uv run python scripts/build_app.py --installer  # 安装包 dist/GuiXu-Setup-1.3
 
 ## 设计
 
+![归墟的请求生命周期](archive/docs/architecture.svg)
+
+<sub>一次请求：模型只做判断，工具只做转述，业务逻辑在 `services/`；写操作先挂起，确认后从断点续跑。</sub>
+
 **Agent Loop**：模型返回 `tool_calls` 就执行工具、把结果放回消息、继续循环；没有就返回最终答案。核心循环不到 100 行。
 
 **20 个工具**，按性质分四类：读 / 写 / 结构 / 产出。工具只做“菜单 + 传话筒”，业务逻辑在 `services/`；加功能 = 加 service + 注册工具。
