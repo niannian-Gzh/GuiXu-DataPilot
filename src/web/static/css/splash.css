@@ -99,6 +99,15 @@
 .dsu-w3 svg { fill: currentColor; }
 
 /* 深色主题：同一套版式，换成暗底板 */
+/* 桌面宿主：开机层顶部留一条拖动带。
+   无边框窗口没有系统标题栏，配置表单在的时候也必须能拖窗口。 */
+.dsu-drag {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 44px;
+  z-index: 100;
+}
+
 #dsh-startup-root.dsu-dark {
   --dsu-bg: #0b0b0c;
   --dsu-bg-2: #131315;

@@ -416,7 +416,9 @@
 
   var ui = {}
   var clockTimer = null
+  var desktop = /(?:\?|&)desktop=1(?:&|$)/.test(location.search)
   var html =
+    (desktop ? '<div class="dsu-drag pywebview-drag-region"></div>' : '') +
     '<div class="dsu-plate"></div>' +
     '<div class="dsu-vignette"></div>' +
     '<div class="dsu-watermark"></div>' +
@@ -611,9 +613,12 @@
   ui.formBtn.addEventListener('click', submitForm)
   ui.formProvider.addEventListener('change', function () {
     syncCustom()
-    /* 换供应商 = 换端点，之前那份列表作废 */
-    var list = document.getElementById('dsu-model-list')
-    if (list) list.innerHTML = ''
+    /* 换供应商 = 换端点，之前那份列表作废。
+       菜单现在是 .dsu-model-menu，不再是旧的 #dsu-model-list；
+       同时把请求序号推进一格，飞在路上的旧响应回来也覆盖不了新列表。 */
+    pullSeq++
+    var menu = root.querySelector('.dsu-model-menu')
+    if (menu) menu.innerHTML = ''
     var m = root.querySelector('.dsu-form [data-k="model"]')
     if (m) m.value = ''
     setModelState('')
@@ -714,7 +719,7 @@
   /* 左侧六格阶段柱 + 品牌块下方的小字数据行 + 实时时钟 */
   ;(function slatsAndMeta() {
     for (var i = 0; i < STEPS.length + 1; i++) ui.slats.appendChild(el('i', 'dsu-slat'))
-    ui.meta1.textContent = 'REV ' + (window.__DP_VERSION__ || '1.2.0') + ' · WEB PROFILE'
+    ui.meta1.textContent = 'REV ' + (window.__DP_VERSION__ || '1.3.0') + ' · WEB PROFILE'
     paintClock()
     clockTimer = setInterval(paintClock, 1000)
   })()
@@ -1688,7 +1693,7 @@
      密钥填完就自动去问端点要一份列表 —— 拉到了顺带说明 key 是通的，
      验证和取列表本来就是一回事。
      拉不到不当错误：不是所有家都实现了 /models，那时他还能自己填。 */
-  var pulling = false
+  var pullSeq = 0
 
   function setModelState(txt, bad) {
     var s = root.querySelector('.dsu-ff-state')
@@ -1728,16 +1733,22 @@
     var custom = isCustom()
     var baseUrl = custom ? formVal('base_url') : ''
     var key = formVal('key')
-    if (!provId || !key || pulling) return
+    if (!provId) return
     if (custom && !baseUrl) return
 
     /* 预设里本来就带一份模型清单 —— 先铺上，让用户马上能选。
-       再去问端点要真的：拉到了替换掉（可能更新），
-       拉不到就留着预设那份（不是所有家都实现了 /models） */
+       没填 key 也先铺，换供应商时至少列表和下拉框是同一家的。 */
     var preset = providerOf(provId)
     if (preset && preset.models && preset.models.length) fillModels(preset.models)
+    if (!key) {
+      setModelState(preset && preset.models ? preset.models.length + ' 个（预设）' : '填完密钥后自动获取',
+        !(preset && preset.models))
+      return
+    }
 
-    pulling = true
+    /* 每次请求带自己的序号。换供应商/改 key 后旧的响应即使晚到，
+       也不能再改现在的菜单——这就是刚才 DeepSeek 却列出 OpenAI 模型的原因。 */
+    var seq = ++pullSeq
     setModelState('核对中…')
     fetch('/settings/models', {
       method: 'POST',
@@ -1750,7 +1761,7 @@
     })
       .then(function (r) { return r.json().catch(function () { return {} }) })
       .then(function (j) {
-        pulling = false
+        if (seq !== pullSeq) return
         if (j && j.ok && (j.models || []).length) {
           fillModels(j.models)
           return
@@ -1760,7 +1771,7 @@
           !(preset && preset.models))
       })
       .catch(function () {
-        pulling = false
+        if (seq !== pullSeq) return
         setModelState('连不上后端服务', true)
       })
   }
