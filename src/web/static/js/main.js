@@ -321,7 +321,7 @@ createApp({
     // 关于页的常量。前端是纯静态文件，读不到 pyproject.toml，
     // 所以版本号在这儿手写一份——改版本时记得两边一起改
     // 版本由后端在首页注入（见 api.index），前端不再各自写死
-    const APP_VERSION = 'v' + (window.__DP_VERSION__ || '1.2.0');
+    const APP_VERSION = 'v' + (window.__DP_VERSION__ || '1.3.0');
     const REPO_URL = 'https://github.com/niannian-Gzh/GuiXu-DataPilot';
 
     const providers = ref([]);        // 供应商预设，新建配置时的模板
